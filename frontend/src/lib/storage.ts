@@ -8,6 +8,7 @@ const CONN_KEY = 'sqli_connection';
 const PARAMS_KEY = 'sqli_params';
 const MESSAGES_KEY = 'sqli_messages';
 const SETTINGS_KEY = 'sqli_settings';
+const DASHBOARD_KEY = 'sqli_dashboard';
 
 export interface PersistedSettings {
   showSQL: boolean;
@@ -46,7 +47,7 @@ export function saveParams(params: ConnectionParams): void {
   if (typeof window === 'undefined') return;
   try {
     // Strip password — never persist credentials to any storage
-    const { password: _pw, ...safe } = params;
+    const { password: _password, ...safe } = params; // eslint-disable-line @typescript-eslint/no-unused-vars
     sessionStorage.setItem(PARAMS_KEY, JSON.stringify(safe));
   } catch { /* noop */ }
 }
@@ -102,6 +103,21 @@ export function loadSettings(): PersistedSettings {
       ? { showSQL: true, dashboardEnabled: true, autoApprove: true, ...JSON.parse(raw) }
       : { showSQL: true, dashboardEnabled: true, autoApprove: true };
   } catch { return { showSQL: true, dashboardEnabled: true, autoApprove: true }; }
+}
+
+// ── Dashboard Persistence ────────────────────
+
+export function saveDashboardState(state: any): void {
+  if (typeof window === 'undefined') return;
+  try { localStorage.setItem(DASHBOARD_KEY, JSON.stringify(state)); } catch { /* noop */ }
+}
+
+export function loadDashboardState(): any | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(DASHBOARD_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 }
 
 // ── Connection History ──────────────────────

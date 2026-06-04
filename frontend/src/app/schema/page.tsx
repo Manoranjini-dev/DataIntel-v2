@@ -288,7 +288,6 @@ export default function SchemaPage() {
 
   const connectorFamily = getConnectorFamily(connectorType);
   const isES = connectorFamily === 'elasticsearch';
-  const entityLabel = isES ? 'index' : 'table';
   const entityLabelPlural = isES ? 'indices' : 'tables';
 
   const handleExplainDB = async () => {

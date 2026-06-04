@@ -7,14 +7,28 @@
 // Module-level singleton store using useSyncExternalStore pattern.
 // Hydrates initial state from localStorage on first load.
 
-import type { ConnectionResponse, TableInfo, ChatMessage } from './types';
+import type { ConnectionResponse, TableInfo, ChatMessage, DashboardWidgetResult } from './types';
 import {
   saveConnection,
   loadConnection,
   clearPersistedConnection,
   saveMessages,
   loadMessages,
+  saveDashboardState,
+  loadDashboardState,
 } from './storage';
+
+interface LayoutItem {
+  i: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  minW?: number;
+  minH?: number;
+  maxW?: number;
+  maxH?: number;
+}
 
 interface SessionState {
   sessionId: string | null;
@@ -22,6 +36,11 @@ interface SessionState {
   tables: TableInfo[];
   messages: ChatMessage[];
   isConnected: boolean;
+}
+
+interface DashboardState {
+  widgets: DashboardWidgetResult[];
+  layouts: LayoutItem[];
 }
 
 function initState(): SessionState {
@@ -47,10 +66,18 @@ function initState(): SessionState {
 // Hydrate from localStorage on module load
 let state: SessionState = initState();
 
+// In-memory dashboard state (survives page navigations within tab)
+let dashboardState: DashboardState = loadDashboardState() || { widgets: [], layouts: [] };
+
 const listeners: Set<() => void> = new Set();
+const dashboardListeners: Set<() => void> = new Set();
 
 function notify() {
   listeners.forEach((l) => l());
+}
+
+function notifyDashboard() {
+  dashboardListeners.forEach((l) => l());
 }
 
 export function getSessionState(): SessionState {
@@ -111,3 +138,53 @@ export function subscribeToSession(listener: () => void) {
   listeners.add(listener);
   return () => listeners.delete(listener);
 }
+
+// ── Dashboard In-Memory Store ────────────────
+
+export function getDashboardState(): DashboardState {
+  return dashboardState;
+}
+
+export function setDashboardWidgets(widgets: DashboardWidgetResult[]) {
+  dashboardState = { ...dashboardState, widgets };
+  saveDashboardState(dashboardState);
+  notifyDashboard();
+}
+
+export function setDashboardLayouts(layouts: LayoutItem[]) {
+  dashboardState = { ...dashboardState, layouts };
+  saveDashboardState(dashboardState);
+  notifyDashboard();
+}
+
+export function addDashboardWidget(widget: DashboardWidgetResult, layout: LayoutItem) {
+  dashboardState = {
+    widgets: [...dashboardState.widgets, widget],
+    layouts: [...dashboardState.layouts, layout],
+  };
+  saveDashboardState(dashboardState);
+  notifyDashboard();
+}
+
+export function removeDashboardWidget(id: string) {
+  dashboardState = {
+    widgets: dashboardState.widgets.filter((w) => w.id !== id),
+    layouts: dashboardState.layouts.filter((l) => l.i !== id),
+  };
+  saveDashboardState(dashboardState);
+  notifyDashboard();
+}
+
+export function clearDashboardState() {
+  dashboardState = { widgets: [], layouts: [] };
+  saveDashboardState(dashboardState);
+  notifyDashboard();
+}
+
+export function subscribeToDashboard(listener: () => void) {
+  dashboardListeners.add(listener);
+  return () => dashboardListeners.delete(listener);
+}
+
+export type { LayoutItem, DashboardState };
+

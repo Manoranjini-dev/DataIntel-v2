@@ -37,7 +37,6 @@ import {
   Loader2,
   AlertCircle,
   Maximize2,
-  Download,
 } from 'lucide-react';
 
 // ── Layout constants ───────────────────────────
@@ -241,7 +240,6 @@ function buildGraph(topology: SchemaTopology): { nodes: Node[]; edges: Edge[] } 
 // ── ERD Inner (needs ReactFlowProvider context) ─
 
 function ERDInner({ topology }: { topology: SchemaTopology }) {
-  const router = useRouter();
   const { fitView } = useReactFlow();
 
   const { nodes: initNodes, edges: initEdges } = useMemo(

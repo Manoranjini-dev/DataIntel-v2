@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { X, Zap, Loader2 } from 'lucide-react';
+import { X, Zap } from 'lucide-react';
 import type { PaletteItem } from './widget-palette';
 
 interface WidgetPromptDialogProps {

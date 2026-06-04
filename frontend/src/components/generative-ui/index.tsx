@@ -35,7 +35,7 @@ function resolveComponent(
   execution: QueryExecutionResult,
   hint?: UIHint,
 ): UIHint {
-  const { rows, columns, rowCount } = execution;
+  const { rows, columns } = execution;
 
   // No data → table (shows "no data" message)
   if (!rows || rows.length === 0) return 'data_table';

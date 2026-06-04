@@ -16,7 +16,6 @@ import {
   Network as NetworkIcon,
   Star,
   X,
-  HelpCircle,
   Keyboard,
   RefreshCw,
   LayoutDashboard,
@@ -28,6 +27,7 @@ import {
   Copy,
   Check,
   Shield,
+  Plus,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -51,8 +51,9 @@ import {
   loadPinnedQueries,
   removePinnedQuery,
 } from '@/lib/storage';
+import { addDashboardWidget } from '@/lib/store';
 import type { PinnedQuery } from '@/lib/storage';
-import type { ChatMessage, ConnectorType, UIHint } from '@/lib/types';
+import type { ChatMessage, ConnectorType, UIHint, DashboardWidgetResult } from '@/lib/types';
 import { getConnectorFamily } from '@/lib/types';
 
 const GenerativeUIRenderer = dynamic(
@@ -430,17 +431,20 @@ export default function ChatPage() {
               <EmptyState onSuggestion={(s) => setInput(s)} tables={tables.map((t) => t.name)} isES={isES} />
             )}
             <AnimatePresence mode="popLayout">
-              {messages.map((msg, idx) => (
+              {messages.map((msg, idx) => {
+                const prevMsg = idx > 0 ? messages[idx - 1] : undefined;
+                return (
                 <motion.div key={msg.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
                   {msg.role === 'user' ? (
                     <UserMessage content={msg.content} />
                   ) : (
                     <AssistantMessage message={msg} showSQL={showSQL} onRerun={handleRerun}
                       onFollowUp={(q) => { setInput(q); setTimeout(() => inputRef.current?.focus(), 50); }}
-                      isLatest={idx === messages.length - 1} />
+                      isLatest={idx === messages.length - 1}
+                      userPrompt={prevMsg?.role === 'user' ? prevMsg.content : undefined} />
                   )}
                 </motion.div>
-              ))}
+              );})}
             </AnimatePresence>
             <div ref={bottomRef} />
           </div>
@@ -587,10 +591,11 @@ function generateFallbackInsight(execution: { rows: Record<string, unknown>[]; c
   return `Found **${count}** result${count !== 1 ? 's' : ''} covering **${colNames}**${columns.length > 3 ? ` and ${columns.length - 3} more column${columns.length - 3 !== 1 ? 's' : ''}` : ''}.`;
 }
 
-function AssistantMessage({ message, showSQL, onRerun, onFollowUp, isLatest }: {
+function AssistantMessage({ message, showSQL, onRerun, onFollowUp, isLatest, userPrompt }: {
   message: ChatMessage; showSQL: boolean; onRerun: (message: ChatMessage) => void;
-  onFollowUp: (question: string) => void; isLatest: boolean;
+  onFollowUp: (question: string) => void; isLatest: boolean; userPrompt?: string;
 }) {
+  const [addedToDashboard, setAddedToDashboard] = useState(false);
   const effectiveHint: UIHint | undefined = message.plan?.ui_hint || message.execution?.ui_hint;
   const followUps = message.plan?.follow_up_questions || message.execution?.follow_up_questions || [];
 
@@ -733,6 +738,39 @@ function AssistantMessage({ message, showSQL, onRerun, onFollowUp, isLatest }: {
               className="flex items-center justify-center rounded-lg p-1.5 text-zinc-500 transition-colors hover:bg-white/5 hover:text-zinc-300">
               <RefreshCw className="h-3 w-3" />
             </button>
+          )}
+          {message.execution && message.execution.rows && message.execution.rows.length > 0 && (
+            addedToDashboard ? (
+              <span className="flex items-center gap-1 rounded-lg bg-emerald-500/10 px-2.5 py-1.5 text-[11px] font-medium text-emerald-400">
+                <Check className="h-3 w-3" />
+                Added!
+              </span>
+            ) : (
+              <button
+                onClick={() => {
+                  const title = (userPrompt || message.plan?.explanation || 'Chat Widget').slice(0, 40);
+                  const uiHint: UIHint = message.plan?.ui_hint || message.execution?.ui_hint || 'bar_chart';
+                  const widget: DashboardWidgetResult = {
+                    id: `chat-widget-${Date.now()}`,
+                    title,
+                    prompt: userPrompt || title,
+                    ui_hint: uiHint,
+                    size: 'md',
+                    loading: false,
+                    execution: message.execution,
+                  };
+                  addDashboardWidget(widget, { i: widget.id, x: 0, y: Infinity, w: 6, h: 5, minW: 3, minH: 3 });
+                  setAddedToDashboard(true);
+                  setTimeout(() => setAddedToDashboard(false), 2500);
+                }}
+                title="Add this visualization to dashboard"
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-700/50 bg-zinc-800/40 px-2.5 py-1.5 text-[11px] font-medium text-zinc-400 transition-all hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:text-emerald-300"
+              >
+                <LayoutDashboard className="h-3 w-3" />
+                <Plus className="h-2.5 w-2.5" />
+                Add to Dashboard
+              </button>
+            )
           )}
         </div>
 

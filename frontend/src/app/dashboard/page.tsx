@@ -39,6 +39,8 @@ import {
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useSession } from '@/hooks/use-session';
+import { useDashboard } from '@/hooks/use-dashboard';
+import { getDashboardState } from '@/lib/store';
 import {
   getDashboardWidgets,
   executeDashboardWidget,
@@ -69,11 +71,6 @@ const WidgetPalette = dynamic(
 
 const WidgetPromptDialog = dynamic(
   () => import('@/components/dashboard/widget-prompt-dialog').then((m) => m.WidgetPromptDialog),
-  { ssr: false },
-);
-
-const DashboardCopilot = dynamic(
-  () => import('@/components/dashboard/dashboard-copilot').then((m) => m.DashboardCopilot),
   { ssr: false },
 );
 
@@ -123,19 +120,22 @@ export default function DashboardPage() {
     connect: setConnected,
   } = useSession();
 
-  const [widgetResults, setWidgetResults] = useState<DashboardWidgetResult[]>([]);
-  const [layouts, setLayouts] = useState<LayoutItem[]>([]);
+  const dashboard = useDashboard();
+
+  const [isMounted, setIsMounted] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tablesExpanded, setTablesExpanded] = useState(true);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
   const [pendingDrop, setPendingDrop] = useState<PaletteItem | null>(null);
   const [activeDragItem, setActiveDragItem] = useState<PaletteItem | null>(null);
   const [searchTables, setSearchTables] = useState('');
   const [editingWidget, setEditingWidget] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [isDownloading, setIsDownloading] = useState(false);
-  const [copilotEnabled, setCopilotEnabled] = useState(false);
-  const [openCopilotOnMount, setOpenCopilotOnMount] = useState(false);
   const widgetRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const contentRef = useRef<HTMLDivElement>(null);
   const initialized = useRef(false);
@@ -165,6 +165,8 @@ export default function DashboardPage() {
   useEffect(() => {
     if (isConnected && sessionId && !initialized.current) {
       initialized.current = true;
+      // If we already have widgets in the in-memory store (from chat or previous visit), skip regeneration
+      if (dashboard.widgets.length > 0) return;
       generateDashboard();
     }
   }, [isConnected, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -172,7 +174,6 @@ export default function DashboardPage() {
   /* ── Build layout from widget results (bin-packing) ── */
   const buildLayoutForWidgets = useCallback((widgets: DashboardWidgetResult[]): LayoutItem[] => {
     const cols = 12;
-    // Track the lowest y occupied per column
     const colHeights = new Array(cols).fill(0);
 
     return widgets.map((w) => {
@@ -180,11 +181,9 @@ export default function DashboardPage() {
       const gw = Math.min(grid.w, cols);
       const gh = grid.h;
 
-      // Find the position where this widget fits with the lowest y
       let bestX = 0;
       let bestY = Infinity;
       for (let startCol = 0; startCol <= cols - gw; startCol++) {
-        // The y this widget would sit at = max height of the columns it would span
         let maxH = 0;
         for (let c = startCol; c < startCol + gw; c++) {
           maxH = Math.max(maxH, colHeights[c]);
@@ -195,7 +194,6 @@ export default function DashboardPage() {
         }
       }
 
-      // Update column heights
       for (let c = bestX; c < bestX + gw; c++) {
         colHeights[c] = bestY + gh;
       }
@@ -212,51 +210,67 @@ export default function DashboardPage() {
     try {
       const { widgets } = await getDashboardWidgets(sessionId);
       const initial: DashboardWidgetResult[] = widgets.map((w) => ({ ...w, loading: true }));
-      setWidgetResults(initial);
-      setLayouts(buildLayoutForWidgets(initial));
+      let currentWidgets = initial;
+      dashboard.setWidgets(currentWidgets);
+      dashboard.setLayouts(buildLayoutForWidgets(initial));
       const batchSize = 3;
       for (let i = 0; i < widgets.length; i += batchSize) {
         const batch = widgets.slice(i, i + batchSize);
         const results = await Promise.allSettled(
           batch.map((w) => executeDashboardWidget(sessionId, w.prompt)),
         );
-        setWidgetResults((prev) => {
-          const updated = [...prev];
-          results.forEach((result, j) => {
-            const idx = i + j;
+        const updated = [...currentWidgets];
+        results.forEach((result, j) => {
+          const idx = i + j;
+          if (idx < updated.length) {
             if (result.status === 'fulfilled') {
-              updated[idx] = { ...updated[idx], loading: false, execution: result.value, ui_hint: result.value.ui_hint || updated[idx].ui_hint };
+              if (!result.value.sql) {
+                updated[idx] = { ...updated[idx], loading: false, error: result.value.explanation || 'Query generation failed' };
+              } else {
+                updated[idx] = { ...updated[idx], loading: false, execution: result.value, ui_hint: updated[idx].ui_hint || result.value.ui_hint };
+              }
             } else {
               updated[idx] = { ...updated[idx], loading: false, error: result.reason?.message || 'Widget failed' };
             }
-          });
-          return updated;
+          }
         });
+        currentWidgets = updated;
+        dashboard.setWidgets(currentWidgets);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to generate dashboard');
     } finally { setIsGenerating(false); }
-  }, [sessionId, isGenerating, buildLayoutForWidgets]);
+  }, [sessionId, isGenerating, buildLayoutForWidgets, dashboard]);
 
   const addWidget = useCallback(async (prompt: string, uiHint: UIHint, size: 'sm' | 'md' | 'lg') => {
     if (!sessionId) return;
     const id = nextWidgetId();
     const newWidget: DashboardWidgetResult = { id, title: prompt.slice(0, 40), prompt, ui_hint: uiHint, size, loading: true };
-    setWidgetResults((prev) => [...prev, newWidget]);
     const { w, h, minW, minH } = sizeToGrid(size, uiHint);
-    setLayouts((prev) => [...prev, { i: id, x: 0, y: Infinity, w, h, minW, minH }]);
+    dashboard.addWidget(newWidget, { i: id, x: 0, y: Infinity, w, h, minW, minH });
     try {
       const execution = await executeDashboardWidget(sessionId, prompt);
-      setWidgetResults((prev) => prev.map((ww) => ww.id === id ? { ...ww, loading: false, execution, title: prompt.slice(0, 40), ui_hint: execution.ui_hint || uiHint } : ww));
+      const currentWidgets = getDashboardState().widgets;
+      if (!execution.sql) {
+        dashboard.setWidgets(
+          currentWidgets.map((ww) => ww.id === id ? { ...ww, loading: false, error: execution.explanation || 'Query generation failed' } : ww),
+        );
+      } else {
+        dashboard.setWidgets(
+          currentWidgets.map((ww) => ww.id === id ? { ...ww, loading: false, execution, title: prompt.slice(0, 40), ui_hint: uiHint || execution.ui_hint } : ww),
+        );
+      }
     } catch (err) {
-      setWidgetResults((prev) => prev.map((ww) => ww.id === id ? { ...ww, loading: false, error: err instanceof Error ? err.message : 'Failed' } : ww));
+      const currentWidgets = getDashboardState().widgets;
+      dashboard.setWidgets(
+        currentWidgets.map((ww) => ww.id === id ? { ...ww, loading: false, error: err instanceof Error ? err.message : 'Failed' } : ww),
+      );
     }
-  }, [sessionId]);
+  }, [sessionId, dashboard]);
 
   const removeWidget = useCallback((id: string) => {
-    setWidgetResults((prev) => prev.filter((w) => w.id !== id));
-    setLayouts((prev) => prev.filter((l) => l.i !== id));
-  }, []);
+    dashboard.removeWidget(id);
+  }, [dashboard]);
 
   const downloadWidget = useCallback(async (id: string, title: string) => {
     const el = widgetRefs.current[id];
@@ -293,8 +307,8 @@ export default function DashboardPage() {
   }, [isDownloading, connection?.database]);
 
   const handleLayoutChange = useCallback((newLayout: LayoutItem[]) => {
-    setLayouts(newLayout);
-  }, []);
+    dashboard.setLayouts(newLayout);
+  }, [dashboard]);
 
   const handleDisconnect = useCallback(async () => {
     if (sessionId) await disconnectApi(sessionId).catch(() => {});
@@ -316,11 +330,13 @@ export default function DashboardPage() {
   }, []);
 
   const handleSaveTitle = useCallback((id: string) => {
-    setWidgetResults((prev) => prev.map((w) => w.id === id ? { ...w, title: editTitle } : w));
+    dashboard.setWidgets(
+      dashboard.widgets.map((w) => w.id === id ? { ...w, title: editTitle } : w),
+    );
     setEditingWidget(null);
-  }, [editTitle]);
+  }, [editTitle, dashboard]);
 
-  if (!isConnected) {
+  if (!isMounted || !isConnected) {
     return (
       <div className="flex h-screen items-center justify-center bg-zinc-950">
         <Loader2 className="h-6 w-6 animate-spin text-zinc-500" />
@@ -419,22 +435,10 @@ export default function DashboardPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 <span className="text-[11px] font-medium uppercase text-zinc-500">{connection?.connectorType}</span>
               </div>
-              <button onClick={downloadDashboard} disabled={isDownloading || widgetResults.length === 0} className="flex items-center gap-2 rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800 disabled:opacity-40" title="Download dashboard as PNG">
+              <button onClick={downloadDashboard} disabled={isDownloading || dashboard.widgets.length === 0} className="flex items-center gap-2 rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-800 disabled:opacity-40" title="Download dashboard as PNG">
                 {isDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5" />}
                 Export
               </button>
-              {!copilotEnabled && (
-                <button
-                  onClick={() => {
-                    setCopilotEnabled(true);
-                    setOpenCopilotOnMount(true);
-                  }}
-                  className="flex items-center gap-2 rounded-xl border border-indigo-500/40 bg-indigo-500/10 px-4 py-2 text-sm font-medium text-indigo-300 transition-colors hover:bg-indigo-500/20"
-                >
-                  <MessageSquare className="h-3.5 w-3.5" />
-                  Enable AI Assistant
-                </button>
-              )}
               <button onClick={generateDashboard} disabled={isGenerating} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50">
                 {isGenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 {isGenerating ? 'Generating…' : 'Regenerate'}
@@ -443,8 +447,8 @@ export default function DashboardPage() {
           </header>
 
           <DashboardDropZone
-            widgetResults={widgetResults}
-            layouts={layouts}
+            widgetResults={dashboard.widgets}
+            layouts={dashboard.layouts}
             isGenerating={isGenerating}
             error={error}
             isES={isES}
@@ -490,18 +494,6 @@ export default function DashboardPage() {
           tables={tables.map((t) => t.name)}
           onConfirm={(prompt) => { addWidget(prompt, pendingDrop.type, pendingDrop.defaultSize); setPendingDrop(null); }}
           onCancel={() => setPendingDrop(null)}
-        />
-      )}
-
-      {copilotEnabled && (
-        <DashboardCopilot
-          database={connection?.database}
-          connectorType={connection?.connectorType}
-          tables={tables}
-          widgetResults={widgetResults}
-          addWidget={addWidget}
-          regenerateDashboard={generateDashboard}
-          openOnMount={openCopilotOnMount}
         />
       )}
     </DndContext>
@@ -678,7 +670,7 @@ function DashboardDropZone({
   );
 }
 
-function WidgetSkeleton({ title, uiHint }: { title: string; uiHint: UIHint }) {
+function WidgetSkeleton({ title }: { title: string; uiHint: UIHint }) {
   return (
     <div className="animate-pulse h-full flex flex-col items-center justify-center">
       <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-700 mb-3">{title}</p>

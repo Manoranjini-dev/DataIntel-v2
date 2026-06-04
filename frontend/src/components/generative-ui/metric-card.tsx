@@ -1,6 +1,5 @@
 'use client';
 
-import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import type { QueryExecutionResult } from '@/lib/types';
 
 interface MetricCardProps {
