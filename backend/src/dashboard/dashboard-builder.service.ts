@@ -488,7 +488,7 @@ export class DashboardBuilderService {
     
     const execution = await this.db.queryOne(
       `SELECT w.id, w.status, w.error, w.duration_ms, w.started_at, w.cached,
-              q.raw_query, q.rows_returned 
+              q.generated_query, q.row_count AS rows_returned
        FROM widget_executions w
        LEFT JOIN query_executions q ON w.execution_id = q.id
        WHERE w.widget_id = $1 AND w.org_id = $2
@@ -584,6 +584,56 @@ export class DashboardBuilderService {
        WHERE v.dashboard_id = $1 ORDER BY v.version DESC`,
       [dashId]
     );
+  }
+
+  async restoreVersion(dashId: string, versionId: string, orgId: string, requester: SafeAccount) {
+    await this.verifyDashboardOwnership(dashId, orgId);
+    await this.orgPermissions.requireMember(orgId, requester.id);
+
+    const vrow = await this.db.queryOne(
+      `SELECT snapshot_data FROM dashboard_versions WHERE id = $1 AND dashboard_id = $2`,
+      [versionId, dashId]
+    );
+    if (!vrow) throw new Error('Version not found');
+
+    const snap = vrow.snapshot_data as any;
+    const pages: any[] = snap.pages || [];
+    const widgets: any[] = snap.widgets || [];
+
+    await this.db.transaction(async (query) => {
+      // Delete existing pages (cascades to widgets via FK)
+      await query(`DELETE FROM dashboard_pages WHERE dashboard_id = $1`, [dashId]);
+
+      // Recreate pages in order
+      for (const p of pages) {
+        await query(
+          `INSERT INTO dashboard_pages (id, dashboard_id, name, order_index, config)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, order_index = EXCLUDED.order_index`,
+          [p.id, dashId, p.name, p.order_index, JSON.stringify(p.config || {})]
+        );
+      }
+
+      // Recreate widgets
+      for (const w of widgets) {
+        await query(
+          `INSERT INTO dashboard_widgets_v2
+             (id, page_id, org_id, title, widget_type, grid_x, grid_y, grid_w, grid_h, query_definition, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')
+           ON CONFLICT (id) DO UPDATE SET
+             title = EXCLUDED.title, widget_type = EXCLUDED.widget_type,
+             grid_x = EXCLUDED.grid_x, grid_y = EXCLUDED.grid_y,
+             grid_w = EXCLUDED.grid_w, grid_h = EXCLUDED.grid_h,
+             query_definition = EXCLUDED.query_definition`,
+          [w.id, w.page_id, orgId, w.title, w.widget_type,
+           w.grid_x, w.grid_y, w.grid_w, w.grid_h,
+           JSON.stringify(w.query_definition || {})]
+        );
+      }
+    });
+
+    await this.invalidateDashboardCache(dashId);
+    return { success: true };
   }
 
   // ── Cache Helpers ──────────────────────────────────────

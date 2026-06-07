@@ -439,6 +439,13 @@ export const dashboardApi = {
     });
     return handleResponse<{ version: any }>(r);
   },
+
+  restoreVersion: async (orgId: string, dashId: string, versionId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/versions/${versionId}/restore`, {
+      method: 'POST',
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
 };
 
 // ── Combo API ──────────────────────────────

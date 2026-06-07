@@ -309,4 +309,16 @@ export class DashboardController {
     const version = await this.builder.saveVersion(dashId, orgId, user, message);
     return { version };
   }
+
+  @Post(':dashId/versions/:versionId/restore')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Restore dashboard to a saved version' })
+  async restoreVersion(
+    @OrgId() orgId: string,
+    @Param('dashId') dashId: string,
+    @Param('versionId') versionId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    return this.builder.restoreVersion(dashId, versionId, orgId, user);
+  }
 }

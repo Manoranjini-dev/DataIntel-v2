@@ -814,21 +814,36 @@ function QueryInspectorModal({ widgetId, orgId, dashId, pageId, onClose }: {
 }
 
 // ── Edit Query Dialog ──────────────────────────────────────────
-function EditQueryDialog({ widget, orgId, chatId, connectionId, onUpdate, onClose }: {
+function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, onUpdate, onClose }: {
   widget: WidgetData;
   orgId: string;
+  dashId: string;
+  pageId: string;
   chatId?: string;
   connectionId?: string;
   onUpdate: (patch: Partial<WidgetData>) => void;
   onClose: () => void;
 }) {
-  const [prompt, setPrompt] = useState(widget.query_prompt);
+  const [mode, setMode] = useState<'prompt' | 'sql'>('prompt');
+  const [prompt, setPrompt] = useState(widget.query_prompt || '');
+  const [sql, setSql] = useState('');
+  const [sqlLoading, setSqlLoading] = useState(false);
   const [running, setRunning] = useState(false);
   const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; columns: string[]; ui_hint: string } | null>(null);
   const [error, setError] = useState('');
 
+  // Load current SQL when switching to SQL mode
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (mode !== 'sql' || sql) return;
+    setSqlLoading(true);
+    dashboardApi.inspect(orgId, dashId, pageId, widget.id)
+      .then(res => { if (res.execution?.generated_query) setSql(res.execution.generated_query); })
+      .catch(() => {/* no prior execution - ok */})
+      .finally(() => setSqlLoading(false));
+  }, [mode]);
+
   async function handleRun() {
-    if (!prompt.trim() || (!chatId && !connectionId)) return;
     setRunning(true); setError(''); setPreview(null);
     try {
       let activeChatId = chatId;
@@ -836,12 +851,26 @@ function EditQueryDialog({ widget, orgId, chatId, connectionId, onUpdate, onClos
         const { chat } = await chatApi.create(orgId, { connectionId });
         activeChatId = chat.id;
       }
-      const result = await chatApi.ask(orgId, activeChatId!, prompt, true);
-      const exec = (result as any).execution;
-      if (exec?.rows?.length) {
-        setPreview({ rows: exec.rows.slice(0, 5), columns: exec.columns || [], ui_hint: exec.ui_hint || widget.widget_type });
+      if (!activeChatId) { setError('No chat or connection available'); return; }
+
+      if (mode === 'prompt') {
+        if (!prompt.trim()) return;
+        const result = await chatApi.ask(orgId, activeChatId, prompt, true);
+        const exec = (result as any).execution;
+        if (exec?.rows?.length) {
+          setPreview({ rows: exec.rows.slice(0, 5), columns: exec.columns || [], ui_hint: exec.ui_hint || widget.widget_type });
+        } else {
+          setError('Query returned no rows. Try a different prompt.');
+        }
       } else {
-        setError('Query returned no rows. Try a different prompt.');
+        if (!sql.trim()) return;
+        const result = await chatApi.executeDraft(orgId, activeChatId, '', sql);
+        const exec = result.execution ?? result;
+        if ((exec?.rows?.length ?? exec?.row_count) > 0) {
+          setPreview({ rows: (exec.rows || []).slice(0, 5), columns: exec.columns || [], ui_hint: widget.widget_type });
+        } else {
+          setError('Query returned no rows. Try a different SQL.');
+        }
       }
     } catch (e: any) { setError(e?.message || 'Query failed'); }
     finally { setRunning(false); }
@@ -864,17 +893,56 @@ function EditQueryDialog({ widget, orgId, chatId, connectionId, onUpdate, onClos
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><X className="w-4 h-4" /></button>
         </div>
 
+        {/* Mode toggle */}
+        <div className="flex gap-1 px-5 pt-4">
+          <button
+            onClick={() => { setMode('prompt'); setPreview(null); setError(''); }}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${mode === 'prompt' ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'}`}
+          >
+            Natural language prompt
+          </button>
+          <button
+            onClick={() => { setMode('sql'); setPreview(null); setError(''); }}
+            className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${mode === 'sql' ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'}`}
+          >
+            Direct SQL
+          </button>
+        </div>
+
         <div className="p-5 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data prompt</label>
-            <textarea
-              value={prompt}
-              onChange={e => setPrompt(e.target.value)}
-              rows={3}
-              disabled={running}
-              className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
-            />
-          </div>
+          {mode === 'prompt' ? (
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data prompt</label>
+              <textarea
+                value={prompt}
+                onChange={e => { setPrompt(e.target.value); setPreview(null); }}
+                rows={3}
+                disabled={running}
+                placeholder="e.g. Show top 10 customers by revenue"
+                className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
+              />
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">SQL query</label>
+              {sqlLoading ? (
+                <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
+                  <span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
+                  Loading current SQL…
+                </div>
+              ) : (
+                <textarea
+                  value={sql}
+                  onChange={e => { setSql(e.target.value); setPreview(null); }}
+                  rows={6}
+                  disabled={running}
+                  placeholder="SELECT * FROM table LIMIT 100"
+                  className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y min-h-[100px] disabled:opacity-50 transition-all"
+                  spellCheck={false}
+                />
+              )}
+            </div>
+          )}
 
           {error && (
             <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
@@ -899,7 +967,9 @@ function EditQueryDialog({ widget, orgId, chatId, connectionId, onUpdate, onClos
 
         <div className="flex gap-2 px-5 pb-5">
           <button onClick={onClose} className="px-4 py-2 border border-border text-muted-foreground rounded-xl text-sm hover:bg-muted transition-colors">Cancel</button>
-          <button onClick={handleRun} disabled={running || !prompt.trim() || (!chatId && !connectionId)}
+          <button
+            onClick={handleRun}
+            disabled={running || (mode === 'prompt' ? !prompt.trim() : !sql.trim()) || (!chatId && !connectionId)}
             className="flex-1 py-2 bg-muted hover:bg-muted/80 border border-border rounded-xl text-sm font-medium text-foreground disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
             {running ? <><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Running…</> : <><Play className="w-3.5 h-3.5 text-primary" />Run Query</>}
           </button>
@@ -935,6 +1005,7 @@ export function DashboardBuilder({
   const [filters, setFilters] = useState<any[]>([]);
   const [versions, setVersions] = useState<any[]>([]);
   const [showVersions, setShowVersions] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
   const [showAddWidget, setShowAddWidget] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -1029,7 +1100,8 @@ export function DashboardBuilder({
     setSaving(true);
     try {
       await dashboardApi.updateLayout(String(org.id), dashId, widgets.map(w => ({ i: w.id, x: w.position_x, y: w.position_y, w: w.width, h: w.height })));
-      await dashboardApi.save(String(org.id), dashId);
+      const result = await dashboardApi.saveVersion(String(org.id), dashId, undefined);
+      setVersions(vs => [result.version, ...vs]);
     } catch (e) { console.error(e); }
     finally { setSaving(false); }
   }
@@ -1180,14 +1252,7 @@ export function DashboardBuilder({
           </button>
 
           {/* Save */}
-          <button onClick={async () => {
-            await handleSave();
-            const msg = window.prompt('Version message (optional):');
-            if (msg !== null) {
-              dashboardApi.saveVersion(String(org?.id), dashId, msg || undefined)
-                .then(res => setVersions(vs => [res.version, ...vs])).catch(console.error);
-            }
-          }} disabled={saving}
+          <button onClick={handleSave} disabled={saving}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-all">
             <Save className="w-3.5 h-3.5" />
             {saving ? 'Saving…' : 'Save'}
@@ -1428,7 +1493,26 @@ export function DashboardBuilder({
                     <span className="text-[10px] text-muted-foreground">{new Date(v.created_at).toLocaleDateString()}</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{v.commit_message || 'No message'}</p>
-                  <button onClick={() => alert('Restore coming soon')} className="text-[10px] text-primary hover:opacity-80 font-semibold">Restore</button>
+                  <button
+                    disabled={restoringVersionId === v.id}
+                    onClick={async () => {
+                      if (!org) return;
+                      setRestoringVersionId(v.id);
+                      try {
+                        await dashboardApi.restoreVersion(String(org.id), dashId, v.id);
+                        // Reload pages + widgets from server
+                        const data = await dashboardApi.get(String(org.id), dashId);
+                        setPages(data.pages || []);
+                        const first = data.pages?.[0];
+                        if (first) { setActivePage(String(first.id)); buildWidgets(first as any); }
+                        setShowVersions(false);
+                      } catch (e) { console.error(e); }
+                      finally { setRestoringVersionId(null); }
+                    }}
+                    className="text-[10px] text-primary hover:opacity-80 font-semibold disabled:opacity-40"
+                  >
+                    {restoringVersionId === v.id ? 'Restoring…' : 'Restore'}
+                  </button>
                 </div>
               ))}
             </div>
@@ -1471,6 +1555,8 @@ export function DashboardBuilder({
           <EditQueryDialog
             widget={w}
             orgId={String(org.id)}
+            dashId={dashId}
+            pageId={activePage!}
             chatId={activeChatId}
             connectionId={dashboard?.connection_id as string | undefined}
             onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
