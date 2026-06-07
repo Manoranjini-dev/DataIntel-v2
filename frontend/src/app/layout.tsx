@@ -13,8 +13,8 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: 'DataIntel — SQL Intelligence Platform',
-  description: 'Conversational SQL intelligence with validated, safe query execution',
+  title: 'C1X — Data Intelligence Platform',
+  description: 'Query, visualize, and explore your data with AI-powered intelligence',
 };
 
 export default function RootLayout({
@@ -23,7 +23,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`dark ${outfit.variable}`}>
+    <html lang="en" className={outfit.variable}>
       <body className="font-sans antialiased">
         <QueryProvider>
           <AppShell>

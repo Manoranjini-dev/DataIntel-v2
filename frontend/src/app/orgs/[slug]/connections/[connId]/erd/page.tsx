@@ -29,7 +29,7 @@ function TableNode({ data }: NodeProps) {
   return (
     <div className="bg-card rounded-xl border border-border shadow-[0_8px_32px_rgba(0,0,0,0.4)] overflow-hidden min-w-[220px]">
       <div className="bg-primary/20 px-4 py-2.5 border-b border-primary/20">
-        <h3 className="text-white font-mono font-bold text-sm tracking-tight">{label}</h3>
+        <h3 className="text-foreground font-mono font-bold text-sm tracking-tight">{label}</h3>
       </div>
       <div className="py-1.5 relative">
         {columns.map((col: any) => (
@@ -220,7 +220,7 @@ export default function ERDPage() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden relative overflow-hidden">
       <header className="absolute top-0 left-0 right-0 z-10 px-6 py-4 flex items-center justify-between pointer-events-none">
-        <Link href={`/orgs/${slug}/connections/${connId}/schema`} className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-black/60 border border-border rounded-xl text-sm font-medium hover:bg-black/80 hover:border-white/20 backdrop-blur-md transition-all text-foreground shadow-xl shadow-black/20">
+        <Link href={`/orgs/${slug}/connections/${connId}/schema`} className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-card/90 border border-border rounded-xl text-sm font-medium hover:bg-muted backdrop-blur-md transition-all text-foreground shadow-xl">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
           Back to Schema
         </Link>

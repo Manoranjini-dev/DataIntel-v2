@@ -128,7 +128,7 @@ export default function SchemaExplorerPage() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
             Schema Explorer
           </Link>
-          <div className="h-4 w-px bg-white/10" />
+          <div className="h-4 w-px bg-border" />
           <div className="flex items-center gap-2">
             <span className="text-xl">🗄️</span>
             <span className="font-semibold">{conn?.database_name || conn?.name}</span>
@@ -139,7 +139,7 @@ export default function SchemaExplorerPage() {
         <div className="flex items-center gap-2">
           <button 
             onClick={() => alert('Explain DB is coming soon!')}
-            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs font-medium text-primary transition-colors flex items-center gap-2">
+            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/60 rounded-lg text-xs font-medium text-primary transition-colors flex items-center gap-2">
             ✨ Explain {dbTerm}
           </button>
           <Link href={`/orgs/${slug}/connections/${connId}/erd`} className="px-3 py-1.5 bg-primary hover:opacity-90 rounded-lg text-xs font-medium text-white transition-colors flex items-center gap-2">
@@ -147,7 +147,7 @@ export default function SchemaExplorerPage() {
           </Link>
           <button 
             onClick={() => alert('Copy ERD is coming soon!')}
-            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2">
+            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/60 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2">
             📋 Copy ERD
           </button>
           <span className="text-xs text-muted-foreground ml-4">{tables.length} {tableTermPlural.toLowerCase()}</span>
@@ -159,12 +159,12 @@ export default function SchemaExplorerPage() {
       <div className="flex flex-1 min-h-0">
         {/* Sidebar: Tables */}
         <div className="w-64 border-r border-border flex flex-col flex-shrink-0 bg-card/60">
-          <div className="p-3 border-b border-white/5">
+          <div className="p-3 border-b border-border">
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder={`Filter ${tableTermPlural.toLowerCase()}...`}
-              className="w-full px-3 py-1.5 bg-muted/50 border border-border rounded-lg text-sm text-white placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
+              className="w-full px-3 py-1.5 bg-muted/50 border border-border rounded-lg text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-primary/50"
             />
           </div>
           <div className="flex-1 overflow-y-auto">
@@ -177,7 +177,7 @@ export default function SchemaExplorerPage() {
                 <button key={`${t.schema_name}.${t.table_name}`}
                   onClick={() => loadColumns(t.table_name)}
                   className={`w-full text-left px-4 py-2 flex items-center justify-between hover:bg-muted/20 transition-colors
-                    ${selectedTable === t.table_name ? 'bg-primary/10 border-l-2 border-primary text-white' : 'border-l-2 border-transparent text-muted-foreground'}`}>
+                    ${selectedTable === t.table_name ? 'bg-primary/10 border-l-2 border-primary text-foreground' : 'border-l-2 border-transparent text-muted-foreground'}`}>
                   <span className="text-sm truncate font-mono">{t.table_name}</span>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     {Number(t.fk_count) > 0 && (
@@ -215,7 +215,7 @@ export default function SchemaExplorerPage() {
                   </div>
                   <button 
                     onClick={() => alert('Preview data is coming soon!')}
-                    className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2">
+                    className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/60 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2">
                     Preview data
                   </button>
                   <Link href={`/orgs/${slug}/chats/new?connectionId=${connId}`} className="px-3 py-1.5 bg-primary hover:opacity-90 rounded-lg text-xs font-medium text-white transition-colors flex items-center gap-2">

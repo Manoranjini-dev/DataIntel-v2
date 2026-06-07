@@ -7,8 +7,13 @@ export default function DashboardEditorPage() {
   const { slug, dashId } = useParams<{ slug: string; dashId: string }>();
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <DashboardBuilder orgSlug={slug} dashId={dashId} />
+    <div className="h-full flex flex-col overflow-hidden">
+      <DashboardBuilder
+        orgSlug={slug}
+        dashId={dashId}
+        backUrl={`/orgs/${slug}/dashboards`}
+        backLabel="Dashboards"
+      />
     </div>
   );
 }

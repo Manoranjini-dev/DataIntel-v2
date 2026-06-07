@@ -35,7 +35,7 @@ async function bootstrap() {
       ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Id', 'App-Current-Org'],
     credentials: true,
   });
 

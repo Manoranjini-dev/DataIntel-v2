@@ -446,13 +446,13 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
               rows={3} className={`${inputCls} resize-none`} />
           </div>
 
-          {!chatId && (
+          {!chatId && !connectionId && (
             <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2">
               No linked chat. Connect a data source to this dashboard first.
             </div>
           )}
 
-          <button onClick={handleGenerate} disabled={!prompt.trim() || loading || !chatId}
+          <button onClick={handleGenerate} disabled={!prompt.trim() || loading || (!chatId && !connectionId)}
             className="w-full py-2.5 bg-primary/10 border border-primary/20 hover:bg-primary/20 rounded-xl text-sm text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold">
             {loading ? <span className="flex items-center justify-center gap-2"><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Generating…</span> : 'Preview Data'}
           </button>
@@ -500,7 +500,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
   const [done, setDone] = useState(false);
 
   async function handleGenerate() {
-    if (!description.trim() || !chatId) return;
+    if (!description.trim() || (!chatId && !connectionId)) return;
     setGenerating(true);
     setProgress([]);
 
@@ -589,7 +589,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
                 </p>
               </div>
 
-              {!chatId && (
+              {!chatId && !connectionId && (
                 <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2.5">
                   No data connection linked. Go to dashboard settings and connect a data source first.
                 </div>
@@ -606,7 +606,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
                 </div>
               )}
 
-              <button onClick={handleGenerate} disabled={!description.trim() || generating || !chatId}
+              <button onClick={handleGenerate} disabled={!description.trim() || generating || (!chatId && !connectionId)}
                 className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-opacity hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
                 {generating
