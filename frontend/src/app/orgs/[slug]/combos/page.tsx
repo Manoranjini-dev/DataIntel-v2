@@ -151,9 +151,13 @@ export default function CombosPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Link href={`/orgs/${slug}/combos/${combo.id}/chat`}
-                    className="px-3 py-1.5 bg-primary/20 border border-primary/30 hover:bg-primary/30 rounded-lg text-xs text-primary transition-colors">
-                    Chat
+                  <Link href={`/orgs/${slug}/combos/${combo.id}/chat?chatId=new`}
+                    className="px-3 py-1.5 bg-primary/20 border border-primary/30 hover:bg-primary/30 rounded-lg text-xs text-primary font-medium transition-colors">
+                    New Chat
+                  </Link>
+                  <Link href={`/orgs/${slug}/chats?comboId=${combo.id}`}
+                    className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs text-muted-foreground transition-colors">
+                    History
                   </Link>
                   <Link href={`/orgs/${slug}/combos/${combo.id}/dashboard`}
                     className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs text-muted-foreground transition-colors">

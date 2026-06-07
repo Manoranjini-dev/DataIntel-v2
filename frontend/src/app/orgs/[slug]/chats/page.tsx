@@ -3,206 +3,318 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { chatApi, connectionApi, orgApi } from '@/lib/api';
+import { chatApi, connectionApi, orgApi, comboApi } from '@/lib/api';
+import { MessageSquare, Plus, Archive, Trash2 } from 'lucide-react';
 
 export default function ChatsPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const connectionId = searchParams.get('connectionId');
+  const connectionId = searchParams.get('connectionId') || undefined;
+  const comboId      = searchParams.get('comboId')      || undefined;
 
   const [org, setOrg] = useState<any>(null);
   const [chats, setChats] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [selectedConn, setSelectedConn] = useState<string>(connectionId || '');
-  const [loading, setLoading] = useState(true);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [creating, setCreating] = useState(false);
-
+  const [combos, setCombos] = useState<any[]>([]);
   const [isArchived, setIsArchived] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadData(); }, [slug, connectionId, isArchived]);
+  useEffect(() => { loadData(); }, [slug, connectionId, comboId, isArchived]);
 
   async function loadData() {
+    setLoading(true);
     try {
-      setLoading(true);
       const { org: o } = await orgApi.get(slug);
       setOrg(o);
-      const [{ chats: c }, { connections: conns }] = await Promise.all([
-        chatApi.list(o.id, { connectionId: connectionId || undefined, isArchived }),
+      const [{ chats: c }, { connections: conns }, { combos: cbs }] = await Promise.all([
+        chatApi.list(o.id, { connectionId, comboId, isArchived }),
         connectionApi.list(o.id),
+        comboApi.list(o.id),
       ]);
       setChats(c);
       setConnections(conns);
+      setCombos(cbs);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
 
-  async function createChat(connId: string) {
-    router.push(`/orgs/${slug}/chats/new?connectionId=${connId}`);
-  }
-
   async function handleArchive(chatId: string, e: React.MouseEvent) {
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     if (!org) return;
     try {
       await chatApi.archive(org.id, chatId);
-      setChats(c => c.filter(chat => chat.id !== chatId));
-    } catch (error) { console.error(error); }
+      setChats(c => c.filter(ch => ch.id !== chatId));
+    } catch (err) { console.error(err); }
   }
 
   async function handleUnarchive(chatId: string, e: React.MouseEvent) {
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     if (!org) return;
     try {
       await chatApi.unarchive(org.id, chatId);
-      setChats(c => c.filter(chat => chat.id !== chatId));
-    } catch (error) { console.error(error); }
+      setChats(c => c.filter(ch => ch.id !== chatId));
+    } catch (err) { console.error(err); }
   }
 
   async function handleDelete(chatId: string, e: React.MouseEvent) {
-    e.preventDefault();
-    if (!org) return;
-    if (!window.confirm('Are you sure you want to delete this chat?')) return;
+    e.preventDefault(); e.stopPropagation();
+    if (!org || !window.confirm('Delete this chat?')) return;
     try {
       await chatApi.delete(org.id, chatId);
-      setChats(c => c.filter(chat => chat.id !== chatId));
-    } catch (error) { console.error(error); }
+      setChats(c => c.filter(ch => ch.id !== chatId));
+    } catch (err) { console.error(err); }
   }
 
-  if (loading && !org) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+  // Build "start new chat" href
+  function newChatHref(connId?: string, cmbId?: string) {
+    if (connId) return `/orgs/${slug}/connections/${connId}/chat?chatId=new`;
+    if (cmbId)  return `/orgs/${slug}/combos/${cmbId}/chat?chatId=new`;
+    return null;
   }
+
+  const activeConnName = connections.find(c => c.id === connectionId)?.name;
+  const activeComboName = combos.find(c => c.id === comboId)?.name;
+
+  const cardCls = 'bg-card border border-border rounded-2xl';
+
+  if (loading && !org) return (
+    <div className="flex-1 flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="max-w-4xl mx-auto px-6 py-8">
+      <div className="max-w-4xl mx-auto px-6 py-8 space-y-6">
+
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-3">
-            <Link href={`/orgs/${slug}`} className="text-muted-foreground hover:text-foreground">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
-            </Link>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Chats</h1>
-              <p className="text-muted-foreground text-sm">{org?.name}</p>
-            </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Chats</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              {activeConnName ? `${activeConnName} · ` : activeComboName ? `${activeComboName} · ` : ''}
+              {org?.name}
+            </p>
           </div>
-          <div className="flex items-center gap-2 bg-muted/50 p-1 rounded-xl">
-            <button
-              onClick={() => setIsArchived(false)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${!isArchived ? 'bg-white/10 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Active
-            </button>
-            <button
-              onClick={() => setIsArchived(true)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${isArchived ? 'bg-white/10 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              Archived
-            </button>
+
+          {/* Active / Archived toggle */}
+          <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-xl border border-border">
+            {(['Active', 'Archived'] as const).map(label => {
+              const archived = label === 'Archived';
+              return (
+                <button
+                  key={label}
+                  onClick={() => setIsArchived(archived)}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                    isArchived === archived
+                      ? 'bg-card shadow-sm text-foreground border border-border'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Connection filter chips */}
-        {connections.length > 0 && !isArchived && (
-          <div className="flex flex-wrap gap-2 mb-6">
-            <button
-              onClick={() => router.push(`/orgs/${slug}/chats`)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                !connectionId ? 'bg-primary/20 border-primary/30 text-primary' : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
-              }`}>
-              All
-            </button>
-            {connections.map((c: any) => (
-              <button key={c.id}
-                onClick={() => router.push(`/orgs/${slug}/chats?connectionId=${c.id}`)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
-                  connectionId === c.id ? 'bg-primary/20 border-primary/30 text-primary' : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
-                }`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${c.status === 'active' ? 'bg-success' : 'bg-muted-foreground/30'}`} />
-                {c.name}
+        {/* Filter chips — Connections */}
+        {connections.length > 0 && (
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Connections</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => router.push(`/orgs/${slug}/chats`)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                  !connectionId && !comboId
+                    ? 'bg-primary/10 border-primary/40 text-primary'
+                    : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground hover:border-border'
+                }`}
+              >
+                All chats
               </button>
-            ))}
+              {connections.map((c: any) => (
+                <button
+                  key={c.id}
+                  onClick={() => router.push(`/orgs/${slug}/chats?connectionId=${c.id}`)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                    connectionId === c.id
+                      ? 'bg-primary/10 border-primary/40 text-primary'
+                      : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${c.status === 'active' ? 'bg-success' : 'bg-muted-foreground/30'}`} />
+                  {c.name}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
-        {/* New Chat */}
-        {!isArchived && (
-          <div className="bg-muted/30 border border-border rounded-2xl p-5 mb-6">
-            <h2 className="text-sm font-medium text-foreground mb-3">Start a new chat</h2>
-            {connections.length === 0 ? (
-              <div className="text-center py-4">
-                <p className="text-muted-foreground text-sm mb-3">No connections yet. Create one first.</p>
-                <Link href={`/orgs/${slug}/connections/new`}
-                  className="px-4 py-2 bg-primary hover:opacity-90 rounded-xl text-sm font-medium transition-colors">
-                  Add Connection
-                </Link>
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {connections.map((conn: any) => (
-                  <button key={conn.id} onClick={() => createChat(conn.id)}
-                    disabled={creating}
-                    className="group flex items-center gap-2 px-4 py-2.5 bg-muted/50 border border-border hover:border-primary/30 hover:bg-muted/30 rounded-xl text-sm transition-all">
+        {/* Filter chips — Combos */}
+        {combos.length > 0 && (
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Combos</p>
+            <div className="flex flex-wrap gap-2">
+              {combos.map((cb: any) => (
+                <button
+                  key={cb.id}
+                  onClick={() => router.push(`/orgs/${slug}/chats?comboId=${cb.id}`)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                    comboId === cb.id
+                      ? 'bg-primary/10 border-primary/40 text-primary'
+                      : 'bg-muted/50 border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  🔗 {cb.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Start a new chat — shown only for active tab */}
+        {!isArchived && (connectionId || comboId) && (
+          <div className={`${cardCls} p-5 border-dashed`} style={{ boxShadow: 'var(--shadow-soft)' }}>
+            {connectionId ? (
+              <Link
+                href={`/orgs/${slug}/connections/${connectionId}/chat?chatId=new`}
+                className="flex items-center justify-center gap-2 w-full py-2 text-sm font-semibold text-primary hover:opacity-80 transition-opacity"
+              >
+                <Plus className="w-4 h-4" /> Start a new chat with {activeConnName}
+              </Link>
+            ) : comboId ? (
+              <Link
+                href={`/orgs/${slug}/combos/${comboId}/chat?chatId=new`}
+                className="flex items-center justify-center gap-2 w-full py-2 text-sm font-semibold text-primary hover:opacity-80 transition-opacity"
+              >
+                <Plus className="w-4 h-4" /> Start a new chat with {activeComboName}
+              </Link>
+            ) : null}
+          </div>
+        )}
+
+        {/* No filter selected — quick-start grid */}
+        {!isArchived && !connectionId && !comboId && (connections.length > 0 || combos.length > 0) && (
+          <div className={`${cardCls} p-5`} style={{ boxShadow: 'var(--shadow-soft)' }}>
+            <h2 className="text-sm font-semibold text-foreground mb-3">Start a new chat</h2>
+            <div className="flex flex-wrap gap-2">
+              {connections.map((conn: any) => {
+                const href = newChatHref(conn.id);
+                return href ? (
+                  <Link key={conn.id} href={href}
+                    className="group flex items-center gap-2 px-4 py-2.5 bg-muted/50 border border-border hover:border-primary/30 hover:bg-primary/5 rounded-xl text-sm transition-all">
                     <span className={`w-2 h-2 rounded-full ${conn.status === 'active' ? 'bg-success' : 'bg-muted-foreground/30'}`} />
                     <span className="text-foreground">{conn.name}</span>
                     <span className="text-muted-foreground/60 text-xs">{conn.connector_type}</span>
-                  </button>
-                ))}
-              </div>
-            )}
+                  </Link>
+                ) : null;
+              })}
+              {combos.map((cb: any) => {
+                const href = newChatHref(undefined, cb.id);
+                return href ? (
+                  <Link key={cb.id} href={href}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-muted/50 border border-border hover:border-primary/30 hover:bg-primary/5 rounded-xl text-sm transition-all">
+                    🔗 <span className="text-foreground">{cb.name}</span>
+                    <span className="text-muted-foreground/60 text-xs">combo</span>
+                  </Link>
+                ) : null;
+              })}
+            </div>
           </div>
         )}
 
-        {/* Existing Chats */}
-        <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">
-            {isArchived ? 'Archived Chats' : connectionId ? `Chats in ${connections.find(c => c.id === connectionId)?.name || 'connection'}` : 'Recent Chats'}
-          </h2>
+        {/* Chat list */}
+        <div className={cardCls} style={{ boxShadow: 'var(--shadow-soft)' }}>
+          <div className="flex items-center gap-3 px-5 py-3.5 border-b border-border">
+            <MessageSquare className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">
+              {isArchived ? 'Archived Chats' : connectionId ? `${activeConnName} chats` : comboId ? `${activeComboName} chats` : 'All Chats'}
+            </h2>
+            {!loading && (
+              <span className="ml-auto text-xs text-muted-foreground">{chats.length} total</span>
+            )}
+          </div>
+
           {loading ? (
-            <div className="flex justify-center py-12">
+            <div className="flex justify-center py-16">
               <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             </div>
           ) : chats.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground/60">
-              {isArchived ? 'No archived chats found.' : connectionId ? 'No chats for this connection yet.' : 'No chats yet. Start one above!'}
+            <div className="flex flex-col items-center justify-center py-16 text-center gap-3">
+              <MessageSquare className="w-10 h-10 text-muted-foreground/25" />
+              <p className="text-sm text-muted-foreground">
+                {isArchived ? 'No archived chats.' : 'No chats yet — start one above.'}
+              </p>
             </div>
           ) : (
-            chats.map((chat: any) => (
-              <Link key={chat.id} href={`/orgs/${slug}/chats/${chat.id}${connectionId ? `?connectionId=${connectionId}` : ''}`}
-                className="flex items-center gap-4 px-4 py-3 bg-muted/30 border border-white/[0.06] hover:border-white/20 hover:bg-muted/30 rounded-xl transition-all group">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-base">💬</div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground group-hover:text-foreground truncate">{chat.title || 'Untitled Chat'}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {chat.message_count} messages · {new Date(chat.updated_at).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {isArchived ? (
-                    <button onClick={(e) => handleUnarchive(chat.id, e)} className="px-2 py-1 bg-muted/50 hover:bg-white/10 border border-border rounded text-xs text-foreground transition-colors">
-                      Unarchive
-                    </button>
-                  ) : (
-                    <button onClick={(e) => handleArchive(chat.id, e)} className="px-2 py-1 bg-muted/50 hover:bg-white/10 border border-border rounded text-xs text-foreground transition-colors">
-                      Archive
-                    </button>
-                  )}
-                  <button onClick={(e) => handleDelete(chat.id, e)} className="px-2 py-1 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded text-xs text-red-400 transition-colors">
-                    Delete
-                  </button>
-                </div>
-              </Link>
-            ))
+            <div className="divide-y divide-border">
+              {chats.map((chat: any) => {
+                const chatHref = chat.connection_id
+                  ? `/orgs/${slug}/connections/${chat.connection_id}/chat?chatId=${chat.id}`
+                  : chat.combo_id
+                  ? `/orgs/${slug}/combos/${chat.combo_id}/chat?chatId=${chat.id}`
+                  : `/orgs/${slug}/chats/${chat.id}`;
+
+                return (
+                  <Link
+                    key={chat.id}
+                    href={chatHref}
+                    className="flex items-center gap-4 px-5 py-3.5 hover:bg-muted/40 transition-colors group"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-base shrink-0">
+                      {chat.combo_id ? '🔗' : '💬'}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors">
+                        {chat.title || 'Untitled Chat'}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {chat.message_count || 0} messages · {new Date(chat.updated_at).toLocaleDateString()}
+                        {chat.connection_name && (
+                          <span className="ml-1.5 px-1.5 py-0.5 bg-muted rounded text-[10px]">{chat.connection_name}</span>
+                        )}
+                        {chat.combo_name && (
+                          <span className="ml-1.5 px-1.5 py-0.5 bg-muted rounded text-[10px]">🔗 {chat.combo_name}</span>
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      {isArchived ? (
+                        <button
+                          onClick={e => handleUnarchive(chat.id, e)}
+                          className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                          title="Unarchive"
+                        >
+                          <Archive className="w-3.5 h-3.5" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={e => handleArchive(chat.id, e)}
+                          className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                          title="Archive"
+                        >
+                          <Archive className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button
+                        onClick={e => handleDelete(chat.id, e)}
+                        className="p-1.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
           )}
         </div>
+
       </div>
     </div>
   );

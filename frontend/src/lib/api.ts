@@ -242,8 +242,13 @@ export const connectionApi = {
 
 export const chatApi = {
   list: async (orgId: string, params: { connectionId?: string; comboId?: string; isArchived?: boolean }) => {
-    const qs = new URLSearchParams(params as any).toString();
-    const r = await apiFetch(`/orgs/${orgId}/chats?${qs}`);
+    // Strip undefined/null so they never appear as "key=undefined" in the URL
+    const filtered: Record<string, string> = {};
+    if (params.connectionId) filtered.connectionId = params.connectionId;
+    if (params.comboId)      filtered.comboId      = params.comboId;
+    if (params.isArchived !== undefined) filtered.isArchived = String(params.isArchived);
+    const qs = new URLSearchParams(filtered).toString();
+    const r = await apiFetch(`/orgs/${orgId}/chats${qs ? `?${qs}` : ''}`);
     return handleResponse<{ chats: any[] }>(r);
   },
 
@@ -345,6 +350,11 @@ export const dashboardApi = {
       body: JSON.stringify({ name }),
     });
     return handleResponse<{ page: any }>(r);
+  },
+
+  deletePage: async (orgId: string, dashId: string, pageId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}`, { method: 'DELETE' });
+    return handleResponse<{ success: boolean }>(r);
   },
 
   addWidget: async (orgId: string, dashId: string, pageId: string, data: any) => {

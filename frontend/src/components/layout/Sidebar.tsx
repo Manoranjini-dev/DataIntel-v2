@@ -62,7 +62,7 @@ export function Sidebar() {
             <Zap className="w-5 h-5 text-white" />
           </div>
           <div>
-            <p className="font-bold text-sm text-foreground leading-none">DataIntel</p>
+            <p className="font-bold text-sm text-foreground leading-none">C1X</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 truncate max-w-[160px]">
               {user?.displayName ?? activeSlug}
             </p>
