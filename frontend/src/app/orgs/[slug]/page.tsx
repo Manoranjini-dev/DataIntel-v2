@@ -4,10 +4,25 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { orgApi } from '@/lib/api';
+import { Database, Plus, MessageSquare, LayoutDashboard, ArrowRight, Activity, Users, Clock } from 'lucide-react';
 
-const ICONS = {
-  mysql: '🔵', postgres: '🐘', elasticsearch: '🟡', mongodb: '🍃', databricks: '⚡',
-} as const;
+const CONNECTOR_COLORS: Record<string, string> = {
+  mysql:         'bg-blue-500/10 text-blue-500',
+  postgres:      'bg-sky-500/10 text-sky-500',
+  elasticsearch: 'bg-yellow-500/10 text-yellow-500',
+  mongodb:       'bg-green-500/10 text-green-500',
+  databricks:    'bg-orange-500/10 text-orange-500',
+  mssql:         'bg-indigo-500/10 text-indigo-500',
+  snowflake:     'bg-cyan-500/10 text-cyan-500',
+  bigquery:      'bg-primary/10 text-primary',
+};
+
+const STATUS_DOT: Record<string, string> = {
+  active:   'bg-green-400',
+  error:    'bg-red-400',
+  inactive: 'bg-muted-foreground',
+  testing:  'bg-yellow-400',
+};
 
 export default function OrgOverviewPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -15,9 +30,7 @@ export default function OrgOverviewPage() {
   const [overview, setOverview] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadData();
-  }, [slug]);
+  useEffect(() => { loadData(); }, [slug]);
 
   async function loadData() {
     try {
@@ -25,159 +38,155 @@ export default function OrgOverviewPage() {
       setOrg(orgData);
       const data = await orgApi.getOverview(orgData.id);
       setOverview(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }
 
-  if (loading) return (
-    <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
 
-  if (!org) return <div className="min-h-screen bg-[#0a0a0f] text-white flex items-center justify-center">Not found</div>;
-
-  const healthColors: Record<string, string> = {
-    active: 'text-emerald-400', error: 'text-red-400',
-    inactive: 'text-zinc-500', testing: 'text-amber-400',
-  };
-
-  const navItems = [
-    { label: 'Overview', href: `/orgs/${slug}`, icon: '◉' },
-    { label: 'Connections', href: `/orgs/${slug}/connections`, icon: '⚡' },
-    { label: 'Chats', href: `/orgs/${slug}/chats`, icon: '💬' },
-    { label: 'Combos', href: `/orgs/${slug}/combos`, icon: '🔗' },
-    { label: 'Dashboards', href: `/orgs/${slug}/dashboards`, icon: '📊' },
-    { label: 'Members', href: `/orgs/${slug}/members`, icon: '👥' },
-    { label: 'Audit Log', href: `/orgs/${slug}/audit`, icon: '📋' },
-    { label: 'Settings', href: `/orgs/${slug}/settings`, icon: '⚙️' },
-  ];
+  if (!org) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <p className="text-muted-foreground">Organization not found</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white flex">
-      {/* Sidebar */}
-      <aside className="w-56 border-r border-white/10 flex flex-col h-screen sticky top-0">
-        <div className="p-4 border-b border-white/10">
-          <Link href="/orgs" className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white transition-colors mb-3">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
-            All orgs
-          </Link>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-violet-500/20 border border-violet-500/20 flex items-center justify-center text-violet-400 font-bold text-sm">
-              {org.name?.charAt(0)}
-            </div>
-            <div>
-              <p className="text-sm font-medium text-white truncate">{org.name}</p>
-              <p className="text-xs text-zinc-500 capitalize">{org.member_role}</p>
-            </div>
-          </div>
+    <div className="flex-1 p-8 overflow-auto animate-fade-in">
+      <div className="max-w-4xl mx-auto space-y-8">
+
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold text-foreground tracking-tight">{org.name}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{org.description || 'Your workspace overview'}</p>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
-          {navItems.map(item => (
-            <Link key={item.href} href={item.href}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-sm text-zinc-400 hover:text-white hover:bg-white/5 transition-all">
-              <span>{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-      </aside>
 
-      {/* Main */}
-      <main className="flex-1 p-8 overflow-auto">
-        <div className="max-w-4xl">
-          <h1 className="text-2xl font-bold text-white mb-1">{org.name} Overview</h1>
-          <p className="text-zinc-400 text-sm mb-8">{org.description || 'Your organization dashboard'}</p>
-
-          {/* Stat Cards */}
-          <div className="grid grid-cols-4 gap-4 mb-8">
-            {[
-              { label: 'Connections', value: overview?.healthSummary?.total ?? 0, color: 'text-violet-400' },
-              { label: 'Active', value: overview?.healthSummary?.active ?? 0, color: 'text-emerald-400' },
-              { label: 'Members', value: overview?.memberCount ?? 0, color: 'text-blue-400' },
-              { label: 'Queries (24h)', value: overview?.queryStats?.queries_24h ?? 0, color: 'text-amber-400' },
-            ].map(stat => (
-              <div key={stat.label} className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <p className="text-xs text-zinc-500 mb-1">{stat.label}</p>
+        {/* Stat cards */}
+        <div className="grid grid-cols-4 gap-4">
+          {[
+            { label: 'Connections', value: overview?.healthSummary?.total ?? 0, icon: Database, color: 'text-primary', bg: 'bg-primary/10' },
+            { label: 'Active',      value: overview?.healthSummary?.active ?? 0, icon: Activity, color: 'text-green-500', bg: 'bg-green-500/10' },
+            { label: 'Members',     value: overview?.memberCount ?? 0,            icon: Users,    color: 'text-secondary', bg: 'bg-secondary/10' },
+            { label: 'Queries 24h', value: overview?.queryStats?.queries_24h ?? 0, icon: Clock,   color: 'text-accent',    bg: 'bg-accent/10' },
+          ].map(stat => {
+            const Icon = stat.icon;
+            return (
+              <div key={stat.label}
+                className="bg-card border border-border rounded-2xl p-5"
+                style={{ boxShadow: '0 1px 4px rgba(0,0,0,.06)' }}>
+                <div className={`w-9 h-9 rounded-xl ${stat.bg} flex items-center justify-center mb-3`}>
+                  <Icon className={`w-[18px] h-[18px] ${stat.color}`} />
+                </div>
                 <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{stat.label}</p>
               </div>
-            ))}
-          </div>
+            );
+          })}
+        </div>
 
-          <div className="grid grid-cols-2 gap-6">
-            {/* Connection Health */}
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-white">Datasource Health</h2>
-                <Link href={`/orgs/${slug}/connections`} className="text-xs text-violet-400 hover:text-violet-300">
-                  Manage →
+        {/* Two-col content */}
+        <div className="grid grid-cols-2 gap-6">
+
+          {/* Connection health */}
+          <div className="bg-card border border-border rounded-2xl p-5"
+            style={{ boxShadow: '0 1px 4px rgba(0,0,0,.06)' }}>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-foreground">Datasource Health</h2>
+              <Link href={`/orgs/${slug}/connections`}
+                className="text-xs text-primary hover:opacity-80 flex items-center gap-1 transition-opacity">
+                Manage <ArrowRight className="w-3 h-3" />
+              </Link>
+            </div>
+            {!overview?.connections?.length ? (
+              <div className="text-center py-8">
+                <Database className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-muted-foreground text-xs">No connections yet</p>
+                <Link href={`/orgs/${slug}/connections/new`}
+                  className="text-primary text-xs mt-1.5 inline-block hover:opacity-80">
+                  Add one →
                 </Link>
               </div>
-              {!overview?.connections?.length ? (
-                <p className="text-zinc-500 text-sm">No connections yet</p>
-              ) : (
-                <div className="space-y-2">
-                  {overview.connections.slice(0, 5).map((c: any) => (
-                    <div key={c.id} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">{ICONS[c.connector_type as keyof typeof ICONS] || '🔌'}</span>
-                        <span className="text-sm text-zinc-300">{c.name}</span>
+            ) : (
+              <div className="space-y-1">
+                {overview.connections.slice(0, 6).map((c: any) => (
+                  <Link key={c.id} href={`/orgs/${slug}/connections/${c.id}`}
+                    className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-muted/50 transition-colors group">
+                    <div className="flex items-center gap-3">
+                      <div className={`w-7 h-7 rounded-lg text-[11px] font-bold flex items-center justify-center ${CONNECTOR_COLORS[c.connector_type] ?? 'bg-muted text-muted-foreground'}`}>
+                        {(c.connector_type?.[0] ?? '?').toUpperCase()}
                       </div>
-                      <div className={`text-xs font-medium ${healthColors[c.status] || 'text-zinc-500'}`}>
-                        ● {c.status}
-                      </div>
+                      <span className="text-sm text-foreground group-hover:text-primary transition-colors">{c.name}</span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Recent Queries */}
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
-              <h2 className="text-sm font-semibold text-white mb-4">Recent Queries</h2>
-              {!overview?.recentQueries?.length ? (
-                <p className="text-zinc-500 text-sm">No queries yet</p>
-              ) : (
-                <div className="space-y-2">
-                  {overview.recentQueries.slice(0, 5).map((q: any) => (
-                    <div key={q.id} className="py-2 border-b border-white/5 last:border-0">
-                      <p className="text-xs text-zinc-300 truncate">{q.prompt || q.generated_query?.slice(0, 60)}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span className={`text-xs ${q.status === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {q.status}
-                        </span>
-                        {q.execution_time_ms && (
-                          <span className="text-xs text-zinc-600">{q.execution_time_ms}ms</span>
-                        )}
-                        <span className="text-xs text-zinc-600">{q.executor_name}</span>
-                      </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[c.status] ?? STATUS_DOT.inactive}`} />
+                      <span className="text-xs text-muted-foreground capitalize">{c.status}</span>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Quick actions */}
-          <div className="mt-6 grid grid-cols-3 gap-4">
-            {[
-              { label: 'New Connection', href: `/orgs/${slug}/connections/new`, desc: 'Connect a datasource', icon: '⚡' },
-              { label: 'Start a Chat', href: `/orgs/${slug}/chats`, desc: 'Query with AI', icon: '💬' },
-              { label: 'New Dashboard', href: `/orgs/${slug}/dashboards`, desc: 'Build analytics', icon: '📊' },
-            ].map(action => (
-              <Link key={action.href} href={action.href}
-                className="group p-4 bg-white/5 border border-white/10 rounded-2xl hover:border-violet-500/30 hover:bg-white/[0.07] transition-all">
-                <div className="text-2xl mb-2">{action.icon}</div>
-                <p className="text-sm font-medium text-white group-hover:text-violet-300 transition-colors">{action.label}</p>
-                <p className="text-xs text-zinc-500 mt-0.5">{action.desc}</p>
-              </Link>
-            ))}
+          {/* Recent queries */}
+          <div className="bg-card border border-border rounded-2xl p-5"
+            style={{ boxShadow: '0 1px 4px rgba(0,0,0,.06)' }}>
+            <h2 className="text-sm font-semibold text-foreground mb-4">Recent Queries</h2>
+            {!overview?.recentQueries?.length ? (
+              <div className="text-center py-8">
+                <MessageSquare className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                <p className="text-muted-foreground text-xs">No queries yet</p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {overview.recentQueries.slice(0, 5).map((q: any) => (
+                  <div key={q.id} className="py-2.5 px-3 rounded-xl hover:bg-muted/50 transition-colors">
+                    <p className="text-sm text-foreground truncate">
+                      {q.prompt || q.generated_query?.slice(0, 55) + '…'}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className={`w-1.5 h-1.5 rounded-full ${q.status === 'success' ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className="text-xs text-muted-foreground capitalize">{q.status}</span>
+                      {q.execution_time_ms && (
+                        <span className="text-xs text-muted-foreground">{q.execution_time_ms}ms</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      </main>
+
+        {/* Quick actions */}
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            { label: 'New Connection', href: `/orgs/${slug}/connections/new`, desc: 'Connect a datasource', icon: Plus, color: 'text-primary', bg: 'bg-primary/10' },
+            { label: 'Start a Chat',   href: `/orgs/${slug}/chats`,           desc: 'Query with AI',       icon: MessageSquare, color: 'text-secondary', bg: 'bg-secondary/10' },
+            { label: 'New Dashboard',  href: `/orgs/${slug}/dashboards`,      desc: 'Build analytics',     icon: LayoutDashboard, color: 'text-accent', bg: 'bg-accent/10' },
+          ].map(action => {
+            const Icon = action.icon;
+            return (
+              <Link key={action.href} href={action.href}
+                className="group p-5 bg-card border border-border rounded-2xl hover:border-primary/30 hover:shadow-md transition-all"
+                style={{ boxShadow: '0 1px 4px rgba(0,0,0,.06)' }}>
+                <div className={`w-10 h-10 rounded-xl ${action.bg} flex items-center justify-center mb-3 group-hover:scale-105 transition-transform`}>
+                  <Icon className={`w-5 h-5 ${action.color}`} />
+                </div>
+                <p className="text-sm font-semibold text-foreground group-hover:text-primary transition-colors">{action.label}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">{action.desc}</p>
+              </Link>
+            );
+          })}
+        </div>
+
+      </div>
     </div>
   );
 }

@@ -93,4 +93,16 @@ export class PersistentConnectionController {
     const schema = await this.svc.getSchema(orgId, connId, user.id);
     return { schema };
   }
+
+  @Post(':connId/credentials/rotate')
+  @HttpCode(HttpStatus.OK)
+  async rotateCredentials(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('connId') connId: string,
+    @Body('password') newPassword?: string,
+  ) {
+    await this.svc.rotateCredentials(orgId, connId, user, newPassword);
+    return { success: true };
+  }
 }

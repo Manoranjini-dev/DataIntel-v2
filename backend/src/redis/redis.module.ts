@@ -9,9 +9,12 @@ import { REDIS_CLIENT } from './redis.constants';
 
 export { REDIS_CLIENT } from './redis.constants';
 
+import { RedisService } from './redis.service';
+
 @Global()
 @Module({
   providers: [
+    RedisService,
     {
       provide: REDIS_CLIENT,
       useFactory: (configService: ConfigService) => {
@@ -40,6 +43,6 @@ export { REDIS_CLIENT } from './redis.constants';
       inject: [ConfigService],
     },
   ],
-  exports: [REDIS_CLIENT],
+  exports: [REDIS_CLIENT, RedisService],
 })
 export class RedisModule {}

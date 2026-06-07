@@ -26,6 +26,12 @@ import { MySQLConnector } from './connectors/mysql.connector';
 import { PostgresConnector } from './connectors/postgres.connector';
 import { MongoDBConnector } from './connectors/mongo.connector';
 import { ElasticsearchConnector } from './connectors/elasticsearch.connector';
+import { MSSQLConnector } from './connectors/mssql.connector';
+import { SnowflakeConnector } from './connectors/snowflake.connector';
+import { BigQueryConnector } from './connectors/bigquery.connector';
+import { RedshiftConnector } from './connectors/redshift.connector';
+import { OracleConnector } from './connectors/oracle.connector';
+import { DatabricksConnector } from './connectors/databricks.connector';
 
 @Injectable()
 export class MCPService implements OnModuleDestroy {
@@ -63,6 +69,12 @@ export class MCPService implements OnModuleDestroy {
       [ConnectorType.POSTGRES, new PostgresConnector()],
       [ConnectorType.MONGODB, new MongoDBConnector()],
       [ConnectorType.ELASTICSEARCH, new ElasticsearchConnector()],
+      [ConnectorType.MSSQL, new MSSQLConnector()],
+      [ConnectorType.SNOWFLAKE, new SnowflakeConnector()],
+      [ConnectorType.BIGQUERY, new BigQueryConnector()],
+      [ConnectorType.REDSHIFT, new RedshiftConnector()],
+      [ConnectorType.ORACLE, new OracleConnector()],
+      [ConnectorType.DATABRICKS, new DatabricksConnector()],
     ]);
 
     this.logger.log(

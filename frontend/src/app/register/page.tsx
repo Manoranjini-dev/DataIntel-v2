@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/auth-store';
+import { Zap, AlertCircle } from 'lucide-react';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -30,75 +31,66 @@ export default function RegisterPage() {
     }
   }
 
+  const inputCls = 'w-full px-4 py-2.5 bg-muted/50 border border-border rounded-xl text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all';
+
   return (
-    <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md">
+
+        {/* Logo / branding */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-violet-500/25">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-              </svg>
+          <div className="inline-flex items-center gap-3 mb-4">
+            <div
+              className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg"
+              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+            >
+              <Zap className="w-6 h-6 text-white" />
             </div>
-            <span className="text-xl font-bold text-white tracking-tight">DataIntel</span>
+            <span className="text-2xl font-bold text-foreground tracking-tight">DataIntel</span>
           </div>
-          <h1 className="text-2xl font-semibold text-white">Create your account</h1>
-          <p className="text-sm text-zinc-400 mt-1">Start managing your data sources in minutes</p>
+          <h1 className="text-2xl font-bold text-foreground">Create your account</h1>
+          <p className="text-sm text-muted-foreground mt-1">Start managing your data sources in minutes</p>
         </div>
 
-        <div className="bg-white/5 border border-white/10 rounded-2xl p-8 backdrop-blur-sm shadow-2xl">
+        {/* Card */}
+        <div className="bg-card border border-border rounded-2xl p-8"
+          style={{ boxShadow: '0 4px 24px rgba(0,0,0,.08)' }}>
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1.5">Full name</label>
-              <input
-                type="text"
-                value={displayName}
+              <label className="block text-xs font-semibold text-foreground mb-1.5">Full name</label>
+              <input type="text" value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                required
-                minLength={2}
-                placeholder="Alex Johnson"
-                className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition-all"
-              />
+                required minLength={2} placeholder="Alex Johnson"
+                className={inputCls} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1.5">Email address</label>
-              <input
-                type="email"
-                value={email}
+              <label className="block text-xs font-semibold text-foreground mb-1.5">Email address</label>
+              <input type="email" value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
-                placeholder="you@company.com"
-                className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition-all"
-              />
+                required placeholder="you@company.com"
+                className={inputCls} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-zinc-300 mb-1.5">Password</label>
-              <input
-                type="password"
-                value={password}
+              <label className="block text-xs font-semibold text-foreground mb-1.5">Password</label>
+              <input type="password" value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={8}
-                placeholder="Min. 8 characters"
-                className="w-full px-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-zinc-500 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition-all"
-              />
+                required minLength={8} placeholder="Min. 8 characters"
+                className={inputCls} />
             </div>
 
             {error && (
-              <div className="px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
                 {error}
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 px-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-medium rounded-xl transition-all duration-200 shadow-lg shadow-violet-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-            >
+            <button type="submit" disabled={loading}
+              className="w-full py-2.5 px-4 text-white font-semibold rounded-xl transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
-                  <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeOpacity=".25" strokeWidth="4"/><path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="4" strokeLinecap="round"/></svg>
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                   Creating account…
                 </span>
               ) : 'Create account'}
@@ -106,14 +98,15 @@ export default function RegisterPage() {
           </form>
 
           <div className="mt-6 text-center">
-            <p className="text-sm text-zinc-500">
+            <p className="text-sm text-muted-foreground">
               Already have an account?{' '}
-              <Link href="/login" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">
+              <Link href="/login" className="text-primary hover:opacity-80 font-semibold transition-opacity">
                 Sign in
               </Link>
             </p>
           </div>
         </div>
+
       </div>
     </div>
   );

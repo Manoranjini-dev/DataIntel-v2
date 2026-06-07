@@ -107,6 +107,44 @@ export class ComboService {
     return { success: true };
   }
 
+  async addMember(orgId: string, comboId: string, connectionId: string, user: SafeAccount, alias?: string) {
+    await this.orgService.requireRole(orgId, user.id, 'editor');
+    
+    const member = await this.db.queryOne(
+      `INSERT INTO datasource_combo_members (combo_id, connection_id, alias)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (combo_id, connection_id) DO UPDATE SET alias = EXCLUDED.alias
+       RETURNING *`,
+      [comboId, connectionId, alias || null]
+    );
+
+    await this.audit.log({
+      orgId, accountId: user.id,
+      eventType: 'combo_updated',
+      resourceType: 'combo', resourceId: comboId,
+      details: { action: 'member_added', connectionId },
+    });
+
+    return member;
+  }
+
+  async removeMember(orgId: string, comboId: string, connectionId: string, user: SafeAccount) {
+    await this.orgService.requireRole(orgId, user.id, 'editor');
+    
+    await this.db.query(
+      `DELETE FROM datasource_combo_members
+       WHERE combo_id = $1 AND connection_id = $2`,
+      [comboId, connectionId]
+    );
+
+    await this.audit.log({
+      orgId, accountId: user.id,
+      eventType: 'combo_updated',
+      resourceType: 'combo', resourceId: comboId,
+      details: { action: 'member_removed', connectionId },
+    });
+  }
+
   /** Get merged schema from all connections in a combo */
   async getMergedSchema(orgId: string, comboId: string, accountId: string) {
     await this.orgService.requireMember(orgId, accountId);

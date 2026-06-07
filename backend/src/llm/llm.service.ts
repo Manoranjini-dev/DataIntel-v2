@@ -126,7 +126,7 @@ export class LLMService {
     columns: string[],
     rows: Record<string, unknown>[],
     rowCount: number,
-    connectorFamily: 'sql' | 'elasticsearch' | 'document' = 'sql',
+    connectorFamily: 'sql' | 'elasticsearch' | 'document' | 'databricks' = 'sql',
   ): Promise<string> {
     const isES = connectorFamily === 'elasticsearch';
     const queryLabel = isES ? 'Elasticsearch DSL' : 'SQL';

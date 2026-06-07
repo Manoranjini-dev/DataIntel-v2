@@ -73,7 +73,7 @@ export class QueryService {
       conversationSummary: contextWindow.summary,
       recentMessages: contextWindow.recentMessages,
       userPrompt: prompt,
-      connectorFamily,
+      connectorFamily: connectorFamily as any, // patched
     });
 
     // Generate query via LLM
@@ -335,7 +335,7 @@ export class QueryService {
       conversationSummary: contextWindow.summary,
       recentMessages: contextWindow.recentMessages,
       userPrompt: prompt,
-      connectorFamily,
+      connectorFamily: connectorFamily as any,
     });
 
     // Stream explanation

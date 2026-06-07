@@ -8,17 +8,30 @@ export enum ConnectorType {
   POSTGRES = 'postgres',
   MONGODB = 'mongodb',
   ELASTICSEARCH = 'elasticsearch',
+  SNOWFLAKE = 'snowflake',
+  BIGQUERY = 'bigquery',
+  DATABRICKS = 'databricks',
+  MSSQL = 'mssql',
+  ORACLE = 'oracle',
+  REDSHIFT = 'redshift',
 }
 
 /** Connector family — determines query language and validation path */
-export type ConnectorFamily = 'sql' | 'elasticsearch' | 'document';
+export type ConnectorFamily = 'sql' | 'elasticsearch' | 'document' | 'databricks';
 
 /** Map ConnectorType → ConnectorFamily */
 export function getConnectorFamily(type: ConnectorType): ConnectorFamily {
   switch (type) {
     case ConnectorType.MYSQL:
     case ConnectorType.POSTGRES:
+    case ConnectorType.SNOWFLAKE:
+    case ConnectorType.BIGQUERY:
+    case ConnectorType.MSSQL:
+    case ConnectorType.ORACLE:
+    case ConnectorType.REDSHIFT:
       return 'sql';
+    case ConnectorType.DATABRICKS:
+      return 'databricks';
     case ConnectorType.ELASTICSEARCH:
       return 'elasticsearch';
     case ConnectorType.MONGODB:

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { orgApi, authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/auth-store';
+import { Plus, ChevronRight, Building2, LogOut, Zap } from 'lucide-react';
 
 interface Org {
   id: string;
@@ -14,6 +15,13 @@ interface Org {
   member_role: string;
   created_at: string;
 }
+
+const ROLE_PILL: Record<string, string> = {
+  owner:  'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400',
+  admin:  'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  editor: 'bg-green-500/10 text-green-600 dark:text-green-400',
+  viewer: 'bg-muted text-muted-foreground',
+};
 
 export default function OrgsPage() {
   const router = useRouter();
@@ -25,19 +33,14 @@ export default function OrgsPage() {
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    loadOrgs();
-  }, []);
+  useEffect(() => { loadOrgs(); }, []);
 
   async function loadOrgs() {
     try {
       const { orgs } = await orgApi.list();
       setOrgs(orgs);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -62,77 +65,84 @@ export default function OrgsPage() {
     router.push('/login');
   }
 
-  const roleColors: Record<string, string> = {
-    owner: 'text-amber-400 bg-amber-400/10',
-    admin: 'text-blue-400 bg-blue-400/10',
-    editor: 'text-green-400 bg-green-400/10',
-    viewer: 'text-zinc-400 bg-zinc-400/10',
-  };
+  const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/40';
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
+    <div className="min-h-screen bg-background text-foreground">
+
       {/* Header */}
-      <header className="border-b border-white/10 px-6 py-4">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-              </svg>
+      <header className="border-b border-border bg-background/80 backdrop-blur-md sticky top-0 z-10">
+        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="w-8 h-8 rounded-xl flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+            >
+              <Zap className="w-4 h-4 text-white" />
             </div>
-            <span className="font-bold text-white">DataIntel</span>
+            <span className="font-bold text-foreground">DataIntel</span>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-sm text-zinc-400">{user?.displayName}</span>
-            <button onClick={handleLogout} className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors">
+            <span className="text-sm text-muted-foreground">{user?.displayName}</span>
+            <button onClick={handleLogout}
+              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
+              <LogOut className="w-3.5 h-3.5" />
               Sign out
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-10">
+      <main className="max-w-3xl mx-auto px-6 py-10">
         <div className="flex items-center justify-between mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-white">Organizations</h1>
-            <p className="text-zinc-400 text-sm mt-1">Manage your data intelligence workspaces</p>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Organizations</h1>
+            <p className="text-muted-foreground text-sm mt-1">Manage your data intelligence workspaces</p>
           </div>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium rounded-xl transition-colors shadow-lg shadow-violet-500/20"
+            className="flex items-center gap-2 px-4 py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <Plus className="w-4 h-4" />
             New Organization
           </button>
         </div>
 
         {/* Create modal */}
         {showCreate && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-[#111118] border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-              <h2 className="text-lg font-semibold text-white mb-4">Create Organization</h2>
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-md animate-fade-in"
+              style={{ boxShadow: '0 8px 40px rgba(0,0,0,.15)' }}>
+              <h2 className="text-lg font-bold text-foreground mb-4">Create Organization</h2>
               <form onSubmit={handleCreate} className="space-y-4">
                 <div>
-                  <label className="block text-sm text-zinc-400 mb-1.5">Organization Name</label>
-                  <input value={newOrg.name} onChange={e => setNewOrg({ ...newOrg, name: e.target.value, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '-') })}
-                    placeholder="Acme Corp" required className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50" />
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Organization Name</label>
+                  <input value={newOrg.name}
+                    onChange={e => setNewOrg({ ...newOrg, name: e.target.value, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '-') })}
+                    placeholder="Acme Corp" required className={inputCls} />
                 </div>
                 <div>
-                  <label className="block text-sm text-zinc-400 mb-1.5">Slug (URL identifier)</label>
-                  <input value={newOrg.slug} onChange={e => setNewOrg({ ...newOrg, slug: e.target.value })}
-                    placeholder="acme-corp" required className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50" />
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Slug (URL identifier)</label>
+                  <input value={newOrg.slug}
+                    onChange={e => setNewOrg({ ...newOrg, slug: e.target.value })}
+                    placeholder="acme-corp" required className={inputCls} />
                 </div>
                 <div>
-                  <label className="block text-sm text-zinc-400 mb-1.5">Description (optional)</label>
-                  <input value={newOrg.description} onChange={e => setNewOrg({ ...newOrg, description: e.target.value })}
-                    placeholder="What does this org do?" className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50" />
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Description <span className="text-muted-foreground/60 font-normal">(optional)</span></label>
+                  <input value={newOrg.description}
+                    onChange={e => setNewOrg({ ...newOrg, description: e.target.value })}
+                    placeholder="What does this org do?" className={inputCls} />
                 </div>
-                {error && <p className="text-red-400 text-sm">{error}</p>}
-                <div className="flex gap-3 pt-2">
+                {error && (
+                  <p className="text-destructive text-xs px-3 py-2 bg-destructive/10 border border-destructive/20 rounded-lg">{error}</p>
+                )}
+                <div className="flex gap-3 pt-1">
                   <button type="button" onClick={() => setShowCreate(false)}
-                    className="flex-1 py-2 rounded-xl border border-white/10 text-zinc-400 text-sm hover:bg-white/5 transition-colors">Cancel</button>
+                    className="flex-1 py-2.5 rounded-xl border border-border text-muted-foreground text-sm font-medium hover:bg-muted/50 transition-colors">
+                    Cancel
+                  </button>
                   <button type="submit" disabled={creating}
-                    className="flex-1 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-medium transition-colors disabled:opacity-50">
+                    className="flex-1 py-2.5 rounded-xl bg-primary text-white text-sm font-semibold hover:opacity-90 transition-opacity disabled:opacity-50">
                     {creating ? 'Creating…' : 'Create'}
                   </button>
                 </div>
@@ -141,37 +151,47 @@ export default function OrgsPage() {
           </div>
         )}
 
-        {/* Orgs list */}
+        {/* List */}
         {loading ? (
           <div className="flex items-center justify-center h-48">
-            <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
         ) : orgs.length === 0 ? (
-          <div className="text-center py-20 border border-dashed border-white/10 rounded-2xl">
-            <div className="w-12 h-12 rounded-2xl bg-violet-500/10 flex items-center justify-center mx-auto mb-4">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" strokeWidth="1.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-border rounded-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+              <Building2 className="w-7 h-7 text-primary" />
             </div>
-            <p className="text-zinc-400 text-sm">No organizations yet. Create your first one.</p>
+            <h3 className="text-sm font-semibold text-foreground mb-1">No organizations yet</h3>
+            <p className="text-xs text-muted-foreground mb-4">Create your first organization to get started</p>
+            <button onClick={() => setShowCreate(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 transition-opacity">
+              <Plus className="w-4 h-4" />
+              Create Organization
+            </button>
           </div>
         ) : (
-          <div className="grid gap-4">
+          <div className="space-y-3 animate-fade-in">
             {orgs.map((org) => (
               <Link key={org.id} href={`/orgs/${org.slug}`}
-                className="group flex items-center justify-between p-5 bg-white/5 border border-white/10 rounded-2xl hover:border-violet-500/30 hover:bg-white/[0.07] transition-all duration-200">
+                className="group flex items-center justify-between p-5 bg-card border border-border rounded-2xl hover:border-primary/30 hover:shadow-md transition-all"
+                style={{ boxShadow: '0 1px 4px rgba(0,0,0,.06)' }}>
                 <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-violet-500/20 flex items-center justify-center text-violet-400 font-bold text-sm">
+                  <div
+                    className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0"
+                    style={{ background: 'linear-gradient(135deg, rgba(217,122,30,.7), rgba(139,92,246,.7))' }}
+                  >
                     {org.name.charAt(0).toUpperCase()}
                   </div>
                   <div>
-                    <h3 className="font-medium text-white group-hover:text-violet-300 transition-colors">{org.name}</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">{org.description || `/${org.slug}`}</p>
+                    <h3 className="font-semibold text-foreground group-hover:text-primary transition-colors text-sm">{org.name}</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{org.description || `/${org.slug}`}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleColors[org.member_role] || roleColors.viewer}`}>
+                  <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${ROLE_PILL[org.member_role] ?? ROLE_PILL.viewer}`}>
                     {org.member_role}
                   </span>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-zinc-600 group-hover:text-zinc-400 transition-colors"><path d="m9 18 6-6-6-6"/></svg>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
                 </div>
               </Link>
             ))}

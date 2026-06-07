@@ -180,6 +180,44 @@ export class AuthService {
     };
   }
 
+  /** Rotate a session token (generate a new one, invalidate the old) */
+  async rotateSession(
+    oldToken: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<string> {
+    const oldTokenHash = crypto.createHash('sha256').update(oldToken).digest('hex');
+    
+    // Find valid session
+    const session = await this.db.queryOne<SessionRow>(
+      'SELECT id, account_id FROM sessions WHERE token_hash = $1 AND expires_at > NOW()',
+      [oldTokenHash],
+    );
+
+    if (!session) {
+      throw new UnauthorizedException('Invalid or expired session');
+    }
+
+    // Generate new token
+    const newToken = crypto.randomBytes(32).toString('hex');
+    const newTokenHash = crypto.createHash('sha256').update(newToken).digest('hex');
+    
+    // Calculate new expiration
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + this.sessionTtlHours);
+
+    // Update session with new token
+    await this.db.query(
+      `UPDATE sessions 
+       SET token_hash = $1, expires_at = $2, last_active_at = NOW(), 
+           ip_address = COALESCE($3, ip_address), user_agent = COALESCE($4, user_agent)
+       WHERE id = $5`,
+      [newTokenHash, expiresAt.toISOString(), ipAddress || null, userAgent || null, session.id]
+    );
+
+    return newToken;
+  }
+
   /** Validate a session token and return the account */
   async validateSession(sessionToken: string): Promise<SafeAccount | null> {
     const tokenHash = this.hashToken(sessionToken);

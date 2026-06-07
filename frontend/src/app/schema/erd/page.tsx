@@ -100,7 +100,7 @@ function TableNode({
     : 'bg-zinc-800 border-zinc-600';
 
   const borderColor = selected
-    ? 'border-indigo-400 shadow-[0_0_0_2px_rgba(99,102,241,0.5)]'
+    ? 'border-indigo-400 shadow-[0_0_0_2px_rgba(217,122,30,0.5)]'
     : isCentral
       ? 'border-indigo-600/60'
       : 'border-zinc-700/70';
@@ -213,19 +213,19 @@ function buildGraph(topology: SchemaTopology): { nodes: Node[]; edges: Edge[] } 
         label: `${fk.columnName} → ${fk.referencedColumn}`,
         type: 'smoothstep',
         animated: false,
-        style: { stroke: '#6366f1', strokeWidth: 1.5 },
+        style: { stroke: '#D97A1E', strokeWidth: 1.5 },
         labelStyle: { fill: '#a1a1aa', fontSize: 10, fontFamily: 'monospace' },
         labelBgStyle: { fill: '#18181b', fillOpacity: 0.9 },
         labelBgPadding: [4, 2] as [number, number],
         markerEnd: {
           type: MarkerType.ArrowClosed,
-          color: '#6366f1',
+          color: '#D97A1E',
           width: 16,
           height: 16,
         },
         markerStart: {
           type: MarkerType.Arrow,
-          color: '#6366f1',
+          color: '#D97A1E',
           width: 8,
           height: 8,
         },
@@ -274,7 +274,7 @@ function ERDInner({ topology }: { topology: SchemaTopology }) {
           ...e,
           style: {
             ...e.style,
-            stroke: connectedIds.has(e.id) ? '#f59e0b' : '#6366f1',
+            stroke: connectedIds.has(e.id) ? '#f59e0b' : '#D97A1E',
             strokeWidth: connectedIds.has(e.id) ? 2.5 : 1.5,
             opacity: connectedIds.size > 0 ? (connectedIds.has(e.id) ? 1 : 0.25) : 1,
           },
@@ -288,7 +288,7 @@ function ERDInner({ topology }: { topology: SchemaTopology }) {
     setEdges((eds) =>
       eds.map((e) => ({
         ...e,
-        style: { ...e.style, stroke: '#6366f1', strokeWidth: 1.5, opacity: 1 },
+        style: { ...e.style, stroke: '#D97A1E', strokeWidth: 1.5, opacity: 1 },
       })),
     );
   }, [setEdges]);

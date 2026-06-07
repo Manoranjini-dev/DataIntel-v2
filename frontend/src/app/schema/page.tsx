@@ -488,7 +488,7 @@ export default function SchemaPage() {
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={handleExplainDB}
-            className="inline-flex items-center gap-1.5 rounded-md border border-violet-600/40 bg-violet-600/10 hover:bg-violet-600/20 px-2.5 py-1.5 text-xs font-medium text-violet-300 transition-colors"
+            className="inline-flex items-center gap-1.5 rounded-md border border-violet-600/40 bg-violet-600/10 hover:bg-primary/20 px-2.5 py-1.5 text-xs font-medium text-primary transition-colors"
           >
             <Sparkles className="h-3.5 w-3.5" />
             {isES ? 'Explain Cluster' : 'Explain DB'}
@@ -595,8 +595,8 @@ export default function SchemaPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-4 flex items-center gap-2">
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-600/20">
-                <Sparkles className="h-3.5 w-3.5 text-violet-400" />
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary/20">
+                <Sparkles className="h-3.5 w-3.5 text-primary" />
               </div>
               <h2 className="font-semibold text-white">{isES ? 'AI Cluster Summary' : 'AI Database Summary'}</h2>
               <button
@@ -610,7 +610,7 @@ export default function SchemaPage() {
             </div>
             {explainLoading ? (
               <div className="flex items-center gap-3 py-8 justify-center">
-                <Loader2 className="h-5 w-5 animate-spin text-violet-400" />
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
                 <span className="text-sm text-zinc-400">Analysing schema with AI…</span>
               </div>
             ) : (

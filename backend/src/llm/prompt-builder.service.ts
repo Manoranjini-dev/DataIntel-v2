@@ -15,6 +15,8 @@ export class PromptBuilderService {
         return this.buildESSystemPrompt();
       case 'document':
         return this.buildDocumentSystemPrompt();
+      case 'databricks':
+        return this.buildDatabricksSystemPrompt();
       case 'sql':
       default:
         return this.buildSQLSystemPrompt();
@@ -50,6 +52,7 @@ ABSOLUTE RULES — VIOLATION MEANS REJECTION:
 7. All table/column names MUST exist in the provided schema
 8. All JOINs need explicit ON clauses aligned to schema foreign keys
 9. No Cartesian joins
+10. For MySQL, NEVER use LIMIT inside IN, ALL, ANY, or SOME subqueries. Use JOINs or derived tables instead.
 
 OUTPUT FORMAT — STRICT JSON ONLY (no markdown, no code fences):
 {
@@ -388,6 +391,20 @@ FALLBACK:
   "ui_hint": "data_table",
   "follow_up_questions": ["Show me all collections", "How many documents are in each collection?", "What data do we have?"]
 }`;
+  }
+
+  /** Databricks SQL dialect system prompt */
+  private buildDatabricksSystemPrompt(): string {
+    return this.buildSQLSystemPrompt().replace(
+      'expert SQL query generator',
+      'expert Databricks Spark SQL query generator'
+    ).replace(
+      'MySQL, PostgreSQL',
+      'Databricks, Delta Lake'
+    ).replace(
+      'DATE_SUB(NOW(), INTERVAL 2 MONTH)',
+      'add_months(current_date(), -2)'
+    );
   }
 
   /** Assemble full LLM context */

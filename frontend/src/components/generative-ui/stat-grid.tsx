@@ -40,11 +40,11 @@ export function StatGrid({ execution, title }: StatGridProps) {
 
   const COLORS = [
     'from-indigo-500/10 border-indigo-500/20 text-indigo-400',
-    'from-emerald-500/10 border-emerald-500/20 text-emerald-400',
+    'from-emerald-500/10 border-success/20 text-success',
     'from-amber-500/10 border-amber-500/20 text-amber-400',
     'from-rose-500/10 border-rose-500/20 text-rose-400',
     'from-cyan-500/10 border-cyan-500/20 text-cyan-400',
-    'from-violet-500/10 border-violet-500/20 text-violet-400',
+    'from-violet-500/10 border-primary/20 text-primary',
   ];
 
   return (

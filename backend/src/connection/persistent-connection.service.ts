@@ -232,13 +232,16 @@ export class PersistentConnectionService {
 
         for (let i = 0; i < (table.columns || []).length; i++) {
           const col = table.columns[i];
+          const fk = (table.foreignKeys || []).find(f => f.columnName === col.name);
           await query(
             `INSERT INTO connection_columns
                (table_id, connection_id, column_name, data_type, is_nullable,
-                is_primary_key, ordinal_position, description)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                is_primary_key, is_foreign_key, fk_ref_table, fk_ref_column,
+                ordinal_position, description)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
             [tableId, connId, col.name, col.type, col.nullable ?? true,
-             col.isPrimaryKey ?? false, i, col.comment || null],
+             col.isPrimaryKey ?? false, !!fk, fk ? fk.referencedTable : null, fk ? fk.referencedColumn : null,
+             i, col.comment || null],
           );
         }
       }
@@ -284,5 +287,73 @@ export class PersistentConnectionService {
     }
 
     return result;
+  }
+
+  /**
+   * Simple ping test for a connection — used by ConnectionHealthService.
+   * Does NOT update DB status; only throws if unhealthy.
+   */
+  async testPing(connId: string): Promise<void> {
+    const conn = await this.db.queryOne<{
+      encrypted_password: string;
+      host: string;
+      port: number;
+      username: string;
+      database_name: string;
+      connector_type: string;
+    }>(
+      'SELECT encrypted_password, host, port, username, database_name, connector_type FROM datasource_connections WHERE id = $1 AND deleted_at IS NULL',
+      [connId],
+    );
+    if (!conn) throw new Error('Connection not found');
+
+    const { decrypt } = await import('../common/utils/encryption');
+    const password = decrypt(conn.encrypted_password, this.encKey);
+
+    await this.mcpService.testConnection({
+      host: conn.host,
+      port: conn.port,
+      username: conn.username,
+      password,
+      database: conn.database_name,
+      connectorType: conn.connector_type as ConnectorType,
+    });
+  }
+
+  /** Rotate connection credentials */
+  async rotateCredentials(orgId: string, connId: string, user: SafeAccount, newPassword?: string): Promise<void> {
+    await this.orgService.requireRole(orgId, user.id, 'admin');
+
+    const conn = await this.get(orgId, connId, user.id);
+
+    // If newPassword is provided, encrypt and update it.
+    // If not, we might re-encrypt the existing password with a new encryption key,
+    // but in this implementation, we just update the password explicitly.
+    if (!newPassword) {
+      throw new Error('New password must be provided for credential rotation');
+    }
+
+    const encryptedPassword = encrypt(newPassword, this.encKey);
+
+    await this.db.transaction(async (query) => {
+      await query(
+        'UPDATE datasource_connections SET encrypted_password = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3',
+        [encryptedPassword, connId, orgId]
+      );
+
+      await query(
+        `INSERT INTO connection_rotation_logs (connection_id, rotated_by, status)
+         VALUES ($1, $2, 'success')`,
+        [connId, user.id]
+      );
+    });
+
+    await this.audit.log({
+      orgId, accountId: user.id,
+      eventType: 'connection_credentials_rotated',
+      resourceType: 'connection', resourceId: connId,
+    });
+
+    this.logger.log(`Credentials rotated for connection ${connId} by user ${user.id}`);
   }
 }

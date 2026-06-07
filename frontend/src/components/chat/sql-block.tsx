@@ -55,7 +55,7 @@ export function SQLBlock({ sql, label }: SQLBlockProps) {
           onClick={handleCopy}
         >
           {copied ? (
-            <Check className="h-3.5 w-3.5 text-emerald-500" />
+            <Check className="h-3.5 w-3.5 text-success" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
           )}
@@ -84,7 +84,7 @@ function highlightJSON(json: string): string {
   // Highlight string values (not keys)
   result = result.replace(
     /:\s*("(?:[^"\\]|\\.)*")/g,
-    (match, str) => match.replace(str, `<span class="text-emerald-400">${str}</span>`),
+    (match, str) => match.replace(str, `<span class="text-success">${str}</span>`),
   );
 
   // Highlight numbers
@@ -96,7 +96,7 @@ function highlightJSON(json: string): string {
   // Highlight booleans and null
   result = result.replace(
     /:\s*(true|false|null)\b/g,
-    (match, val) => match.replace(val, `<span class="text-purple-400">${val}</span>`),
+    (match, val) => match.replace(val, `<span class="text-accent">${val}</span>`),
   );
 
   return result;
@@ -119,7 +119,7 @@ function highlightSQL(sql: string): string {
   // Highlight strings
   result = result.replace(
     /'[^']*'/g,
-    (match) => `<span class="text-emerald-400">${match}</span>`,
+    (match) => `<span class="text-success">${match}</span>`,
   );
 
   // Highlight numbers

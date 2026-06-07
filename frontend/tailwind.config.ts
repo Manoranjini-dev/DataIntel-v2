@@ -50,11 +50,26 @@ const config: Config = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        success: {
+          DEFAULT: 'hsl(var(--success))',
+        },
+        warning: {
+          DEFAULT: 'hsl(var(--warning))',
+        },
+        sidebar: {
+          DEFAULT: 'hsl(var(--sidebar))',
+        },
+      },
+      fontFamily: {
+        sans: ['var(--font-sans)', 'Outfit', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
+        xl: 'calc(var(--radius) + 4px)',
+        '2xl': 'calc(var(--radius) + 10px)',
+        '3xl': 'calc(var(--radius) + 18px)',
       },
       keyframes: {
         'accordion-down': {

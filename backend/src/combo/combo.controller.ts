@@ -47,6 +47,30 @@ export class ComboController {
     return this.comboService.delete(orgId, comboId, user);
   }
 
+  @Post(':comboId/members')
+  async addMember(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('comboId') comboId: string,
+    @Body('connectionId') connectionId: string,
+    @Body('alias') alias?: string,
+  ) {
+    const member = await this.comboService.addMember(orgId, comboId, connectionId, user, alias);
+    return { member };
+  }
+
+  @Delete(':comboId/members/:connectionId')
+  @HttpCode(HttpStatus.OK)
+  async removeMember(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('comboId') comboId: string,
+    @Param('connectionId') connectionId: string,
+  ) {
+    await this.comboService.removeMember(orgId, comboId, connectionId, user);
+    return { success: true };
+  }
+
   @Get(':comboId/schema')
   async getMergedSchema(
     @CurrentUser() user: SafeAccount,

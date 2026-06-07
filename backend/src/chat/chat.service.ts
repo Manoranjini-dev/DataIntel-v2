@@ -22,15 +22,22 @@ export class ChatService {
   async list(
     orgId: string,
     accountId: string,
-    filter: { connectionId?: string; comboId?: string } = {},
+    filter: { connectionId?: string; comboId?: string; isArchived?: boolean } = {},
   ) {
     await this.orgService.requireMember(orgId, accountId);
 
     let sql = `SELECT c.*, COUNT(m.id) AS message_count
                FROM chats c
                LEFT JOIN chat_messages m ON m.chat_id = c.id
-               WHERE c.org_id = $1 AND c.created_by = $2 AND c.is_archived = false`;
+               WHERE c.org_id = $1 AND c.created_by = $2 AND c.deleted_at IS NULL`;
     const params: any[] = [orgId, accountId];
+
+    if (filter.isArchived !== undefined) {
+      params.push(filter.isArchived);
+      sql += ` AND c.is_archived = $${params.length}`;
+    } else {
+      sql += ` AND c.is_archived = false`;
+    }
 
     if (filter.connectionId) {
       params.push(filter.connectionId);
@@ -79,7 +86,7 @@ export class ChatService {
     await this.orgService.requireMember(orgId, accountId);
 
     const chat = await this.db.queryOne(
-      'SELECT * FROM chats WHERE id = $1 AND org_id = $2',
+      'SELECT * FROM chats WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL',
       [chatId, orgId],
     );
     if (!chat) throw new NotFoundException('Chat not found');
@@ -140,6 +147,44 @@ export class ChatService {
     await this.audit.log({
       orgId, accountId: user.id,
       eventType: 'chat_archived',
+      resourceType: 'chat', resourceId: chatId,
+    });
+  }
+
+  /** Unarchive a chat */
+  async unarchive(orgId: string, chatId: string, user: SafeAccount) {
+    const chat = await this.get(orgId, chatId, user.id);
+    if ((chat as any).created_by !== user.id) {
+      await this.orgService.requireRole(orgId, user.id, 'admin');
+    }
+
+    await this.db.query(
+      'UPDATE chats SET is_archived = false, updated_at = NOW() WHERE id = $1',
+      [chatId],
+    );
+
+    await this.audit.log({
+      orgId, accountId: user.id,
+      eventType: 'chat_unarchived',
+      resourceType: 'chat', resourceId: chatId,
+    });
+  }
+
+  /** Delete a chat (soft-delete) */
+  async delete(orgId: string, chatId: string, user: SafeAccount) {
+    const chat = await this.get(orgId, chatId, user.id);
+    if ((chat as any).created_by !== user.id) {
+      await this.orgService.requireRole(orgId, user.id, 'admin');
+    }
+
+    await this.db.query(
+      'UPDATE chats SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1',
+      [chatId],
+    );
+
+    await this.audit.log({
+      orgId, accountId: user.id,
+      eventType: 'chat_deleted',
       resourceType: 'chat', resourceId: chatId,
     });
   }

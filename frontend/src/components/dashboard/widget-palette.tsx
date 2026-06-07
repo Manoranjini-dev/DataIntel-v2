@@ -41,7 +41,7 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     description: 'Single KPI value',
     icon: Hash,
     defaultSize: 'sm',
-    color: 'text-emerald-400 bg-emerald-500/10',
+    color: 'text-success bg-success/10',
   },
   {
     type: 'bar_chart',
@@ -57,7 +57,7 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     description: 'Trends over time',
     icon: LineChart,
     defaultSize: 'md',
-    color: 'text-violet-400 bg-violet-500/10',
+    color: 'text-primary bg-primary/10',
   },
   {
     type: 'pie_chart',
@@ -137,7 +137,7 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     description: 'Multi-axis overview',
     icon: Radar,
     defaultSize: 'md',
-    color: 'text-purple-400 bg-purple-500/10',
+    color: 'text-accent bg-primary/10',
   },
   {
     type: 'gauge',
@@ -177,7 +177,7 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     description: 'Chronological events',
     icon: Clock,
     defaultSize: 'lg',
-    color: 'text-emerald-400 bg-emerald-500/10',
+    color: 'text-success bg-success/10',
   },
   {
     type: 'treemap',

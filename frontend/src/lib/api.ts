@@ -13,6 +13,10 @@ import type {
   DashboardWidget,
 } from './types';
 
+import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { useAuthStore } from './auth-store';
+import { useOrgStore } from '../store/org';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 class APIError extends Error {
@@ -25,19 +29,66 @@ class APIError extends Error {
   }
 }
 
-/** Base fetch with credentials included for cookie-based auth */
-async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${API_BASE}${path}`, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...init.headers,
-    },
-  });
+export const apiClient = axios.create({
+  baseURL: API_BASE,
+  withCredentials: true,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const currentOrgId = useOrgStore.getState().currentOrgId;
+  if (currentOrgId) {
+    config.headers['App-Current-Org'] = currentOrgId;
+  }
+
+  return config;
+});
+
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    if (error.response?.status === 401) {
+      useAuthStore.getState().clearUser();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+/** Compatibility wrapper to allow existing API methods to work with Axios */
+async function apiFetch(path: string, init: RequestInit = {}): Promise<any> {
+  try {
+    const response = await apiClient.request({
+      url: path,
+      method: init.method || 'GET',
+      data: init.body,
+      headers: init.headers as any,
+      responseType: path.includes('/stream') ? 'stream' : 'json',
+    });
+    // Return a mock fetch Response object for handleResponse compatibility
+    return {
+      ok: true,
+      json: async () => response.data,
+      body: response.data,
+    };
+  } catch (error: any) {
+    if (error.isAxiosError && error.response) {
+      return {
+        ok: false,
+        status: error.response.status,
+        statusText: error.response.statusText,
+        json: async () => error.response.data,
+      };
+    }
+    throw error;
+  }
 }
 
-async function handleResponse<T>(response: Response): Promise<T> {
+async function handleResponse<T>(response: any): Promise<T> {
   if (!response.ok) {
     let structured: StructuredError;
     try {
@@ -190,7 +241,7 @@ export const connectionApi = {
 // ── Chat API ──────────────────────────────
 
 export const chatApi = {
-  list: async (orgId: string, params: { connectionId?: string; comboId?: string }) => {
+  list: async (orgId: string, params: { connectionId?: string; comboId?: string; isArchived?: boolean }) => {
     const qs = new URLSearchParams(params as any).toString();
     const r = await apiFetch(`/orgs/${orgId}/chats?${qs}`);
     return handleResponse<{ chats: any[] }>(r);
@@ -209,10 +260,17 @@ export const chatApi = {
     return handleResponse<{ messages: any[] }>(r);
   },
 
-  ask: async (orgId: string, chatId: string, prompt: string) => {
+  ask: async (orgId: string, chatId: string, prompt: string, autoExecute: boolean = true) => {
     const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/ask`, {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, autoExecute }),
+    });
+    return handleResponse<any>(r);
+  },
+  executeDraft: async (orgId: string, chatId: string, executionId: string, sql: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/execute-draft`, {
+      method: 'POST',
+      body: JSON.stringify({ executionId, sql }),
     });
     return handleResponse<any>(r);
   },
@@ -221,6 +279,16 @@ export const chatApi = {
     const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/archive`, { method: 'POST' });
     return handleResponse<{ success: boolean }>(r);
   },
+
+  unarchive: async (orgId: string, chatId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/unarchive`, { method: 'POST' });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  delete: async (orgId: string, chatId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}`, { method: 'DELETE' });
+    return handleResponse<any>(r);
+  },
 };
 
 // ── Dashboard API ─────────────────────────
@@ -228,24 +296,46 @@ export const chatApi = {
 export const dashboardApi = {
   list: async (orgId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/dashboards`);
-    return handleResponse<{ dashboards: any[] }>(r);
+    const data = await handleResponse<{ dashboards: any[] }>(r);
+    data.dashboards.forEach(d => {
+      if (d.context_type === 'connection') d.connection_id = d.context_id;
+    });
+    return data;
   },
 
   create: async (orgId: string, data: any) => {
+    const payload = {
+      name: data.name,
+      description: data.description,
+      contextType: data.comboId ? 'combo' : 'connection',
+      contextId: data.comboId || data.connectionId
+    };
     const r = await apiFetch(`/orgs/${orgId}/dashboards`, {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
     return handleResponse<{ dashboard: any }>(r);
   },
 
   get: async (orgId: string, dashId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`);
-    return handleResponse<{ dashboard: any; pages: any[] }>(r);
+    const data = await handleResponse<{ dashboard: any; pages: any[] }>(r);
+    if (data.dashboard && data.dashboard.context_type === 'connection') {
+      data.dashboard.connection_id = data.dashboard.context_id;
+    }
+    return data;
   },
 
   save: async (orgId: string, dashId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/save`, { method: 'POST' });
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/publish`, { method: 'POST' });
+    return handleResponse<{ dashboard: any }>(r);
+  },
+
+  updateLayout: async (orgId: string, dashId: string, layout: any[]) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/layout`, {
+      method: 'POST',
+      body: JSON.stringify({ layout }),
+    });
     return handleResponse<{ success: boolean }>(r);
   },
 
@@ -258,11 +348,63 @@ export const dashboardApi = {
   },
 
   addWidget: async (orgId: string, dashId: string, pageId: string, data: any) => {
+    const payload = {
+      widgetType: data.widget_type || 'table',
+      title: data.title,
+      cardId: data.cardId,
+      gridX: data.gridX || 0,
+      gridY: data.gridY || 0,
+      gridW: data.gridW || 4,
+      gridH: data.gridH || 3,
+      datasourceContextType: data.datasourceScopeType,
+      queryDefinition: {
+        prompt: data.queryPrompt,
+        result_rows: data.resultRows,
+        result_columns: data.resultColumns,
+        ui_hint: data.uiHint
+      }
+    };
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<{ widget: any }>(r);
+  },
+
+  inspect: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/inspect`);
+    return handleResponse<{ execution: any }>(r);
+  },
+
+  listFilters: async (orgId: string, dashId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/filters`);
+    return handleResponse<{ filters: any[] }>(r);
+  },
+
+  addFilter: async (orgId: string, dashId: string, data: any) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/filters`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    return handleResponse<{ widget: any }>(r);
+    return handleResponse<{ filter: any }>(r);
+  },
+
+  removeFilter: async (orgId: string, dashId: string, filterId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/filters/${filterId}`, { method: 'DELETE' });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  listVersions: async (orgId: string, dashId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/versions`);
+    return handleResponse<{ versions: any[] }>(r);
+  },
+
+  saveVersion: async (orgId: string, dashId: string, message?: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ message }),
+    });
+    return handleResponse<{ version: any }>(r);
   },
 };
 
@@ -318,7 +460,21 @@ export async function connect(params: ConnectionParams): Promise<ConnectionRespo
     method: 'POST',
     body: JSON.stringify(params),
   });
-  return handleResponse(response);
+  const data = await handleResponse<any>(response);
+  return {
+    sessionId: data.session.sessionId,
+    connectorType: data.session.connectorType,
+    database: data.session.database,
+    host: data.session.host,
+    port: data.session.port,
+    capabilities: data.session.capabilities,
+    tables: data.schema.tables.map((t: any) => ({
+      name: t.name,
+      columnCount: t.columns?.length || 0,
+      primaryKeys: t.primaryKeys || [],
+      foreignKeyCount: t.foreignKeys?.length || 0,
+    })),
+  };
 }
 
 export async function getConnectionStatus(
@@ -418,5 +574,39 @@ export async function executeDashboardWidget(sessionId: string, prompt: string):
   });
   return handleResponse(response);
 }
+
+// ── Card API ─────────────────────────────────
+
+export const cardApi = {
+  list: async (orgId: string, params?: Record<string, any>) => {
+    const qs = params ? '?' + new URLSearchParams(params).toString() : '';
+    const r = await apiFetch(`/orgs/${orgId}/cards${qs}`);
+    return handleResponse<{ cards: any[], total: number }>(r);
+  },
+  create: async (orgId: string, data: any) => {
+    const r = await apiFetch(`/orgs/${orgId}/cards`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ card: any }>(r);
+  },
+  get: async (orgId: string, cardId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/cards/${cardId}`);
+    return handleResponse<{ card: any }>(r);
+  },
+  update: async (orgId: string, cardId: string, data: any) => {
+    const r = await apiFetch(`/orgs/${orgId}/cards/${cardId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ card: any }>(r);
+  },
+  publish: async (orgId: string, cardId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/cards/${cardId}/publish`, {
+      method: 'POST',
+    });
+    return handleResponse<{ card: any }>(r);
+  },
+};
 
 export { APIError };

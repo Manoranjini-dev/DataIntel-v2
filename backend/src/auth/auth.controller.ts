@@ -106,6 +106,30 @@ export class AuthController {
     return { success: true };
   }
 
+  @Post('refresh')
+  @HttpCode(HttpStatus.OK)
+  async refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const oldToken = req.cookies?.['session_token'];
+    if (!oldToken) {
+      return { success: false };
+    }
+
+    const ipAddress = req.ip || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'];
+
+    try {
+      const newToken = await this.authService.rotateSession(oldToken, ipAddress, userAgent);
+      this.setSessionCookie(res, newToken);
+      return { success: true };
+    } catch (e) {
+      res.clearCookie('session_token');
+      return { success: false };
+    }
+  }
+
   @Get('me')
   async me(@Req() req: Request) {
     return { success: true, account: req.user };

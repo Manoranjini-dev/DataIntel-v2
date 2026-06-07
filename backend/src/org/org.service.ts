@@ -60,8 +60,8 @@ export class OrgService {
     const org = await this.db.transaction(async (query) => {
       // Create org
       const orgResult = await query(
-        `INSERT INTO organizations (name, slug, description, owner_id)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
+        `INSERT INTO organizations (name, slug, description, owner_id, hierarchy_path)
+         VALUES ($1, $2, $3, $4, text2ltree(regexp_replace($2, '[^a-zA-Z0-9]', '_', 'g'))) RETURNING *`,
         [data.name, data.slug, data.description || null, user.id],
       );
       const org = orgResult.rows[0];

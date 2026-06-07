@@ -1,235 +1,449 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
-import Link from 'next/link';
+import { connectionApi, orgApi } from '@/lib/api';
+import {
+  Code2, Zap, BarChart3, Rows3, Keyboard, Trash2, Radio,
+  TestTube2, Database, ShieldAlert, CheckCircle2, RefreshCw,
+} from 'lucide-react';
 
-// ── Toggle Component ───────────────────────────────────────────
+// ── Design Components ──────────────────────────────────────────
+
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative w-10 h-6 rounded-full transition-colors flex-shrink-0 ${checked ? 'bg-violet-600' : 'bg-white/10 border border-white/20'}`}
+      className={`relative w-11 h-6 rounded-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-primary/50 shrink-0 ${
+        checked ? 'bg-primary' : 'bg-muted border border-border'
+      }`}
     >
-      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+        checked ? 'translate-x-5' : 'translate-x-0.5'
+      }`} />
     </button>
   );
 }
 
-// ── SettingRow Component ───────────────────────────────────────
-function SettingRow({ icon, title, desc, right }: { icon: string; title: string; desc: string; right: React.ReactNode }) {
+function SettingCard({
+  icon: Icon,
+  iconColor = 'text-primary',
+  iconBg = 'bg-primary/10',
+  title,
+  description,
+  right,
+  subtle,
+}: {
+  icon: React.ElementType;
+  iconColor?: string;
+  iconBg?: string;
+  title: string;
+  description: string;
+  right: React.ReactNode;
+  subtle?: boolean;
+}) {
   return (
-    <div className="flex items-center justify-between p-4 bg-[#14141e] rounded-xl border border-white/[0.06] hover:border-white/[0.10] transition-colors group">
-      <div className="flex items-center gap-3 flex-1 min-w-0">
-        <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm flex-shrink-0">{icon}</div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-white">{title}</p>
-          <p className="text-xs text-zinc-500 mt-0.5">{desc}</p>
-        </div>
+    <div className={`flex items-center gap-4 px-5 py-4 rounded-2xl border transition-colors ${
+      subtle
+        ? 'bg-transparent border-border/50 hover:bg-muted/30'
+        : 'bg-card border-border hover:border-primary/20'
+    }`}
+      style={{ boxShadow: subtle ? 'none' : '0 1px 4px rgba(0,0,0,.04)' }}
+    >
+      <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center shrink-0`}>
+        <Icon className={`w-5 h-5 ${iconColor}`} />
       </div>
-      <div className="flex-shrink-0 ml-4">{right}</div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{description}</p>
+      </div>
+      <div className="shrink-0 ml-2">{right}</div>
     </div>
   );
 }
 
-// ── Section ────────────────────────────────────────────────────
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
-    <div>
-      <p className="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest mb-3">{title}</p>
+    <div className="space-y-3">
+      <div>
+        <h2 className="text-[13px] font-semibold text-foreground uppercase tracking-widest">{title}</h2>
+        {subtitle && <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>}
+      </div>
       <div className="space-y-2">{children}</div>
     </div>
   );
 }
 
+// ── Page ───────────────────────────────────────────────────────
+
 export default function ConnectionSettingsPage() {
   const { slug, connId } = useParams<{ slug: string; connId: string }>();
 
-  // Settings state — stored locally (can be synced to backend later)
-  const [showGeneratedQuery, setShowGeneratedQuery] = useState(false);
-  const [autoApprove, setAutoApprove] = useState(false);
-  const [enableDashboard, setEnableDashboard] = useState(true);
-  const [rowLimit, setRowLimit] = useState<100 | 250 | 500>(500);
+  const [conn, setConn] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message?: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   const [sessionCleared, setSessionCleared] = useState(false);
+  const [org, setOrg] = useState<any>(null);
+
+  // Query / execution preferences
+  const [showGeneratedQuery, setShowGeneratedQuery] = useState(false);
+  const [autoExecute, setAutoExecute] = useState(true);
+  const [streamResults, setStreamResults] = useState(true);
+  const [rowLimit, setRowLimit] = useState<100 | 250 | 500>(500);
+
+  // Dashboard preferences
+  const [enableDashboard, setEnableDashboard] = useState(true);
+  const [autoSaveWidgets, setAutoSaveWidgets] = useState(true);
+
+  // AI preferences
+  const [includeSchemaHints, setIncludeSchemaHints] = useState(true);
+  const [showExplanations, setShowExplanations] = useState(true);
+
+  // Edit credentials
+  const [editMode, setEditMode] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+
+  useEffect(() => { loadData(); }, [connId]);
+
+  async function loadData() {
+    try {
+      const { org: orgData } = await orgApi.get(slug);
+      setOrg(orgData);
+      const { connection } = await connectionApi.get(orgData.id, connId);
+      setConn(connection);
+      setEditName(connection?.name ?? '');
+      setEditDescription(connection?.description ?? '');
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }
+
+  async function handleTest() {
+    if (!org) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await connectionApi.test(org.id, connId);
+      setTestResult({ success: result.success, message: result.success ? 'Connection successful' : 'Connection failed' });
+    } catch (e: any) {
+      setTestResult({ success: false, message: e?.message ?? 'Connection failed' });
+    } finally { setTesting(false); }
+  }
+
+  async function handleSaveCredentials(e: React.FormEvent) {
+    e.preventDefault();
+    if (!org) return;
+    setSaving(true);
+    try {
+      await connectionApi.update(org.id, connId, { name: editName, description: editDescription });
+      setSaveSuccess(true);
+      await loadData();
+      setTimeout(() => { setSaveSuccess(false); setEditMode(false); }, 2000);
+    } catch (e) { console.error(e); }
+    finally { setSaving(false); }
+  }
 
   function handleClearSession() {
-    // Clear any local storage or cookies specific to this connection
     if (typeof window !== 'undefined') {
-      const keysToRemove = Object.keys(localStorage).filter(k => k.includes(connId));
-      keysToRemove.forEach(k => localStorage.removeItem(k));
+      Object.keys(localStorage)
+        .filter(k => k.includes(connId))
+        .forEach(k => localStorage.removeItem(k));
     }
     setSessionCleared(true);
     setTimeout(() => setSessionCleared(false), 3000);
   }
 
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
-    <div className="h-screen bg-[#0a0a0f] text-white flex overflow-hidden">
-      {/* Left sidebar */}
-      <aside className="w-44 border-r border-white/[0.08] flex flex-col h-full bg-[#0c0c14] flex-shrink-0">
-        <div className="px-3 py-3 border-b border-white/[0.06] flex-shrink-0">
-          <Link href={`/orgs/${slug}/connections/${connId}`}
-            className="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
-            Back
-          </Link>
-        </div>
-        <nav className="py-2 flex-1">
-          {[
-            { href: `/orgs/${slug}/connections/${connId}/dashboard`, icon: '📊', label: 'Dashboard' },
-            { href: `/orgs/${slug}/connections/${connId}/chat`, icon: '💬', label: 'Chat' },
-            { href: `/orgs/${slug}/connections/${connId}/schema`, icon: '📋', label: 'Schema' },
-            { href: `/orgs/${slug}/connections/${connId}/settings`, icon: '⚙️', label: 'Settings', active: true },
-          ].map(item => (
-            <Link key={item.href} href={item.href}
-              className={`flex items-center gap-2.5 mx-2 px-2.5 py-2 rounded-lg text-xs mb-0.5 transition-all ${(item as any).active ? 'bg-violet-500/15 border border-violet-500/20 text-violet-300' : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'}`}>
-              <span>{item.icon}</span>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-      </aside>
+    <div className="flex-1 p-8 overflow-auto animate-fade-in">
+      <div className="max-w-2xl mx-auto space-y-10">
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
-        {/* Header */}
-        <div className="border-b border-white/[0.08] px-8 py-5 bg-[#0c0c14]">
-          <div className="flex items-center gap-3 mb-0.5">
-            <Link href={`/orgs/${slug}/connections/${connId}`} className="text-zinc-500 hover:text-zinc-300 text-sm transition-colors flex items-center gap-1">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
-              Back
-            </Link>
-            <span className="text-zinc-700">/</span>
-            <h1 className="text-base font-semibold text-white">Settings</h1>
-          </div>
-          <p className="text-sm text-zinc-500">Configure your connection preferences and display settings</p>
+        {/* Page header */}
+        <div>
+          <h1 className="text-2xl font-bold text-foreground tracking-tight">Connection Settings</h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Configure preferences for <span className="text-foreground font-medium">{conn?.name ?? 'this connection'}</span>
+          </p>
         </div>
 
-        <div className="px-8 py-6 max-w-2xl space-y-8">
-          {/* Query Display */}
-          <Section title="Query Display">
-            <SettingRow
-              icon="<>"
-              title="Show Generated Query"
-              desc="Display the generated SQL or FS DSL alongside results"
-              right={<Toggle checked={showGeneratedQuery} onChange={setShowGeneratedQuery} />}
-            />
-            <SettingRow
-              icon="🛡️"
-              title="Auto-Approve Query Execution"
-              desc="Automatically run validated queries without waiting for manual approval"
-              right={<Toggle checked={autoApprove} onChange={setAutoApprove} />}
-            />
-          </Section>
-
-          {/* Dashboard */}
-          <Section title="Dashboard">
-            <SettingRow
-              icon="📊"
-              title="Enable Dashboard"
-              desc="Show the dashboard page for drag-and-drop analytics widgets"
-              right={<Toggle checked={enableDashboard} onChange={setEnableDashboard} />}
-            />
-          </Section>
-
-          {/* Result Limit */}
-          <Section title="Result Limit">
-            <div className="flex items-center justify-between p-4 bg-[#14141e] rounded-xl border border-white/[0.06]">
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm flex-shrink-0">📏</div>
-                <div>
-                  <p className="text-sm font-medium text-white">Max rows per query</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">LIMIT injected into every generated query</p>
-                </div>
-              </div>
-              <div className="flex gap-1.5 flex-shrink-0 ml-4">
-                {([100, 250, 500] as const).map(n => (
-                  <button key={n} onClick={() => setRowLimit(n)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${rowLimit === n ? 'bg-violet-600/30 border-violet-500/50 text-violet-300' : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-200'}`}>
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </Section>
-
-          {/* Keyboard Shortcuts */}
-          <Section title="Keyboard Shortcuts">
-            <div className="p-4 bg-[#14141e] rounded-xl border border-white/[0.06] space-y-2.5">
-              {[
-                { action: 'Focus chat input', keys: ['Ctrl', 'K'] },
-                { action: 'Send query', keys: ['Enter'] },
-                { action: 'Show keyboard shortcuts', keys: ['?'] },
-                { action: 'Dismiss modal / clear input', keys: ['Esc'] },
-              ].map(({ action, keys }) => (
-                <div key={action} className="flex items-center justify-between">
-                  <span className="text-sm text-zinc-400">{action}</span>
-                  <div className="flex items-center gap-1">
-                    {keys.map((k, i) => (
-                      <span key={i} className="px-2 py-0.5 bg-white/10 border border-white/20 rounded text-xs font-mono text-zinc-300">{k}</span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Section>
-
-          {/* Session */}
-          <Section title="Session">
-            <div className="flex items-center justify-between p-4 bg-[#14141e] rounded-xl border border-white/[0.06]">
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm flex-shrink-0">🗑️</div>
-                <div>
-                  <p className="text-sm font-medium text-white">Clear Saved Session</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">Remove stored credentials and disconnect</p>
-                </div>
-              </div>
-              <button onClick={handleClearSession}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex-shrink-0 ml-4 ${sessionCleared ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-white/5 border-white/10 text-zinc-400 hover:bg-white/10 hover:text-zinc-200'}`}>
-                {sessionCleared ? (
-                  <><span>✓</span> Cleared</>
-                ) : (
-                  <><span>↺</span> Reset</>
-                )}
-              </button>
-            </div>
-
-            {/* Test connection */}
-            <div className="flex items-center justify-between p-4 bg-[#14141e] rounded-xl border border-white/[0.06]">
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                <div className="w-9 h-9 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-sm flex-shrink-0">⚡</div>
-                <div>
-                  <p className="text-sm font-medium text-white">Test Connection</p>
-                  <p className="text-xs text-zinc-500 mt-0.5">Verify that the database connection is still active</p>
-                </div>
-              </div>
-              <Link href={`/orgs/${slug}/connections/${connId}`}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-white/10 bg-white/5 text-zinc-400 hover:bg-white/10 hover:text-zinc-200 transition-all flex-shrink-0 ml-4">
-                Test Now
-              </Link>
-            </div>
-          </Section>
-
-          {/* Danger zone */}
-          <Section title="Danger Zone">
-            <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-xl space-y-3">
+        {/* Connection identity */}
+        <Section
+          title="Identity"
+          subtitle="Name and description shown across the workspace"
+        >
+          {!editMode ? (
+            <div className="px-5 py-4 rounded-2xl bg-card border border-border" style={{ boxShadow: '0 1px 4px rgba(0,0,0,.04)' }}>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-red-500/10 border border-red-500/20 flex items-center justify-center text-sm flex-shrink-0">🗑️</div>
+                <div className="flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                    <Database className="w-5 h-5 text-primary" />
+                  </div>
                   <div>
-                    <p className="text-sm font-medium text-white">Delete Connection</p>
-                    <p className="text-xs text-zinc-500 mt-0.5">Permanently remove this connection and all its chats</p>
+                    <p className="text-sm font-semibold text-foreground">{conn?.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {conn?.connector_type} · {conn?.host}:{conn?.port}
+                    </p>
+                    {conn?.description && (
+                      <p className="text-xs text-muted-foreground mt-1">{conn.description}</p>
+                    )}
                   </div>
                 </div>
-                <button className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 rounded-lg text-xs font-medium transition-colors flex-shrink-0 ml-4">
-                  Delete
+                <button
+                  onClick={() => setEditMode(true)}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-muted hover:bg-muted/80 text-foreground font-medium transition-colors border border-border"
+                >
+                  Edit
                 </button>
               </div>
             </div>
-          </Section>
-        </div>
-      </main>
+          ) : (
+            <form onSubmit={handleSaveCredentials} className="px-5 py-4 rounded-2xl bg-card border border-primary/30 space-y-3" style={{ boxShadow: '0 0 0 3px rgba(217,122,30,.08)' }}>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Name</label>
+                <input
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Description</label>
+                <input
+                  value={editDescription}
+                  onChange={e => setEditDescription(e.target.value)}
+                  placeholder="Optional description..."
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button type="submit" disabled={saving}
+                  className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity">
+                  {saving ? 'Saving…' : saveSuccess ? '✓ Saved' : 'Save'}
+                </button>
+                <button type="button" onClick={() => setEditMode(false)}
+                  className="px-4 py-2 bg-muted hover:bg-muted/80 text-muted-foreground rounded-xl text-xs font-medium transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </Section>
+
+        {/* Query Display */}
+        <Section
+          title="Query & Execution"
+          subtitle="Control how AI-generated queries are shown and executed"
+        >
+          <SettingCard
+            icon={Code2}
+            title="Show Generated SQL"
+            description="Display the generated SQL or query DSL alongside your results in the chat workspace"
+            right={<Toggle checked={showGeneratedQuery} onChange={setShowGeneratedQuery} />}
+          />
+          <SettingCard
+            icon={Zap}
+            title="Auto-Execute Queries"
+            description="Automatically run validated queries without waiting for manual approval — recommended for trusted connections"
+            right={<Toggle checked={autoExecute} onChange={setAutoExecute} />}
+          />
+          <SettingCard
+            icon={Radio}
+            title="Stream Results"
+            description="Stream large result sets progressively rather than waiting for the full response"
+            right={<Toggle checked={streamResults} onChange={setStreamResults} />}
+          />
+
+          {/* Row limit selector */}
+          <div className="flex items-center gap-4 px-5 py-4 rounded-2xl bg-card border border-border"
+            style={{ boxShadow: '0 1px 4px rgba(0,0,0,.04)' }}>
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+              <Rows3 className="w-5 h-5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-foreground">Max Rows Per Query</p>
+              <p className="text-xs text-muted-foreground mt-0.5">LIMIT injected into every generated query</p>
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              {([100, 250, 500] as const).map(n => (
+                <button key={n} onClick={() => setRowLimit(n)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    rowLimit === n
+                      ? 'bg-primary text-white shadow-sm'
+                      : 'bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border'
+                  }`}>
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
+        </Section>
+
+        {/* Dashboard */}
+        <Section
+          title="Dashboard"
+          subtitle="Widget and layout preferences for this connection's dashboard"
+        >
+          <SettingCard
+            icon={BarChart3}
+            title="Enable Dashboard"
+            description="Show the dashboard builder for creating drag-and-drop analytics widgets"
+            right={<Toggle checked={enableDashboard} onChange={setEnableDashboard} />}
+          />
+          <SettingCard
+            icon={RefreshCw}
+            title="Auto-Save Widget Layouts"
+            description="Automatically persist layout changes after every drag or resize"
+            right={<Toggle checked={autoSaveWidgets} onChange={setAutoSaveWidgets} />}
+          />
+        </Section>
+
+        {/* AI */}
+        <Section
+          title="AI Preferences"
+          subtitle="Control how the AI interprets and explains your data"
+        >
+          <SettingCard
+            icon={Database}
+            title="Include Schema Hints"
+            description="Send table names, column types, and relationships to the AI for more accurate queries"
+            right={<Toggle checked={includeSchemaHints} onChange={setIncludeSchemaHints} />}
+          />
+          <SettingCard
+            icon={Code2}
+            iconColor="text-secondary"
+            iconBg="bg-secondary/10"
+            title="Show Query Explanations"
+            description="Display a plain-English explanation of the generated query beneath the SQL"
+            right={<Toggle checked={showExplanations} onChange={setShowExplanations} />}
+          />
+        </Section>
+
+        {/* Keyboard shortcuts */}
+        <Section title="Keyboard Shortcuts">
+          <div className="px-5 py-4 rounded-2xl bg-card border border-border space-y-3"
+            style={{ boxShadow: '0 1px 4px rgba(0,0,0,.04)' }}>
+            <div className="flex items-center gap-3 mb-3 pb-3 border-b border-border">
+              <Keyboard className="w-4 h-4 text-muted-foreground" />
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Shortcuts</p>
+            </div>
+            {[
+              { action: 'Focus chat input',         keys: ['Ctrl', 'K'] },
+              { action: 'Send query',                keys: ['⏎ Enter'] },
+              { action: 'New line in input',         keys: ['Shift', '⏎'] },
+              { action: 'Dismiss / clear input',     keys: ['Esc'] },
+              { action: 'Copy last SQL',             keys: ['Ctrl', 'Shift', 'C'] },
+            ].map(({ action, keys }) => (
+              <div key={action} className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">{action}</span>
+                <div className="flex items-center gap-1">
+                  {keys.map((k, i) => (
+                    <span key={i}
+                      className="px-2 py-0.5 bg-muted border border-border rounded-md text-xs font-mono text-foreground">
+                      {k}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        {/* Connection health */}
+        <Section title="Connection Health">
+          <div className="px-5 py-4 rounded-2xl bg-card border border-border"
+            style={{ boxShadow: '0 1px 4px rgba(0,0,0,.04)' }}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <TestTube2 className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Test Connection</p>
+                  <p className="text-xs text-muted-foreground">Verify the database is reachable right now</p>
+                </div>
+              </div>
+              <button
+                onClick={handleTest}
+                disabled={testing}
+                className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {testing ? 'Testing…' : 'Test Now'}
+              </button>
+            </div>
+            {testResult && (
+              <div className={`mt-3 px-4 py-3 rounded-xl text-xs font-medium flex items-center gap-2 ${
+                testResult.success
+                  ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
+                  : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
+              }`}>
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {testResult.success ? 'Connection successful' : testResult.message ?? 'Connection failed'}
+              </div>
+            )}
+          </div>
+
+          <SettingCard
+            icon={Trash2}
+            iconColor="text-muted-foreground"
+            iconBg="bg-muted"
+            title="Clear Session Cache"
+            description="Remove cached credentials and connection state stored in this browser"
+            subtle
+            right={
+              <button
+                onClick={handleClearSession}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                  sessionCleared
+                    ? 'bg-green-500/10 border-green-500/20 text-green-600 dark:text-green-400'
+                    : 'bg-muted border-border text-muted-foreground hover:text-foreground hover:border-border/80'
+                }`}
+              >
+                {sessionCleared ? '✓ Cleared' : 'Clear'}
+              </button>
+            }
+          />
+        </Section>
+
+        {/* Danger zone */}
+        <Section title="Danger Zone">
+          <div className="px-5 py-4 rounded-2xl bg-destructive/5 border border-destructive/20 space-y-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
+                  <ShieldAlert className="w-5 h-5 text-destructive" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Delete Connection</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Permanently remove this connection and all its chats, schemas, and history
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => window.confirm('Delete this connection? This cannot be undone.')}
+                className="px-4 py-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-xl text-xs font-semibold hover:bg-destructive/20 transition-colors shrink-0 ml-4"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        {/* Bottom spacer */}
+        <div className="h-8" />
+      </div>
     </div>
   );
 }

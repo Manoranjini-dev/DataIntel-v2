@@ -19,6 +19,8 @@ class CreateChatDto {
 
 class AskDto {
   @IsString() @IsNotEmpty() prompt!: string;
+  @IsOptional() stream?: boolean;
+  @IsOptional() autoExecute?: boolean;
 }
 
 @Controller('orgs/:orgId/chats')
@@ -34,8 +36,10 @@ export class ChatController {
     @Param('orgId') orgId: string,
     @Query('connectionId') connectionId?: string,
     @Query('comboId') comboId?: string,
+    @Query('isArchived') isArchived?: string,
   ) {
-    const chats = await this.chatService.list(orgId, user.id, { connectionId, comboId });
+    const isArchivedBool = isArchived === 'true' ? true : isArchived === 'false' ? false : undefined;
+    const chats = await this.chatService.list(orgId, user.id, { connectionId, comboId, isArchived: isArchivedBool });
     return { chats };
   }
 
@@ -100,5 +104,26 @@ export class ChatController {
   ) {
     await this.chatService.archive(orgId, chatId, user);
     return { success: true };
+  }
+
+  @Post(':chatId/unarchive')
+  @HttpCode(HttpStatus.OK)
+  async unarchive(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('chatId') chatId: string,
+  ) {
+    await this.chatService.unarchive(orgId, chatId, user);
+    return { success: true };
+  }
+
+  @Delete(':chatId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async delete(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('chatId') chatId: string,
+  ) {
+    await this.chatService.delete(orgId, chatId, user);
   }
 }

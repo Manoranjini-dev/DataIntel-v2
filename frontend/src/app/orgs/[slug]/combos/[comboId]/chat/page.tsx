@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { comboApi, chatApi, orgApi } from '@/lib/api';
 import dynamic from 'next/dynamic';
 
@@ -10,23 +11,23 @@ const GenerativeUIRenderer = dynamic(
   () => import('@/components/generative-ui').then((m) => m.GenerativeUIRenderer),
   {
     ssr: false,
-    loading: () => <div className="h-40 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900/40" />,
+    loading: () => <div className="h-40 animate-pulse rounded-xl border border-border bg-card/40" />,
   },
 );
 
 function SubQueryPlan({ plan, stepResults }: { plan: any; stepResults: any[] }) {
   return (
     <div className="mt-3 space-y-2">
-      <p className="text-xs text-zinc-500 font-medium">Query Plan · {plan.merge?.strategy} merge</p>
+      <p className="text-xs text-muted-foreground font-medium">Query Plan · {plan.merge?.strategy} merge</p>
       {stepResults.map((sr: any, i: number) => (
         <div key={i} className={`flex items-start gap-2 px-3 py-2 rounded-xl border text-xs
-          ${sr.status === 'success' ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
-          <span className={sr.status === 'success' ? 'text-emerald-400' : 'text-red-400'}>●</span>
+          ${sr.status === 'success' ? 'bg-success/5 border-success/20' : 'bg-red-500/5 border-red-500/20'}`}>
+          <span className={sr.status === 'success' ? 'text-success' : 'text-red-400'}>●</span>
           <div className="flex-1 min-w-0">
-            <span className="font-medium text-zinc-300">{sr.alias}</span>
-            <pre className="text-zinc-500 truncate mt-0.5 font-mono">{sr.query?.substring(0, 80)}…</pre>
+            <span className="font-medium text-foreground">{sr.alias}</span>
+            <pre className="text-muted-foreground truncate mt-0.5 font-mono">{sr.query?.substring(0, 80)}…</pre>
           </div>
-          <div className="text-right text-zinc-600 whitespace-nowrap">
+          <div className="text-right text-muted-foreground/60 whitespace-nowrap">
             {sr.rowCount} rows · {sr.executionTimeMs}ms
           </div>
         </div>
@@ -36,18 +37,18 @@ function SubQueryPlan({ plan, stepResults }: { plan: any; stepResults: any[] }) 
 }
 
 function ResultTable({ rows, columns }: { rows: any[]; columns: string[] }) {
-  if (!rows.length) return <p className="text-zinc-500 text-sm mt-2">No results.</p>;
+  if (!rows.length) return <p className="text-muted-foreground text-sm mt-2">No results.</p>;
   return (
-    <div className="overflow-x-auto mt-2 rounded-xl border border-white/10">
+    <div className="overflow-x-auto mt-2 rounded-xl border border-border">
       <table className="text-xs text-left w-full">
-        <thead className="bg-white/5">
-          <tr>{columns.map(c => <th key={c} className="px-3 py-2 text-zinc-400 font-medium whitespace-nowrap">{c}</th>)}</tr>
+        <thead className="bg-muted/50">
+          <tr>{columns.map(c => <th key={c} className="px-3 py-2 text-muted-foreground font-medium whitespace-nowrap">{c}</th>)}</tr>
         </thead>
         <tbody>
           {rows.slice(0, 100).map((row, i) => (
-            <tr key={i} className="border-t border-white/5 hover:bg-white/[0.03]">
+            <tr key={i} className="border-t border-white/5 hover:bg-muted/20">
               {columns.map(c => (
-                <td key={c} className="px-3 py-2 text-zinc-300 whitespace-nowrap max-w-xs truncate">
+                <td key={c} className="px-3 py-2 text-foreground whitespace-nowrap max-w-xs truncate">
                   {String(row[c] ?? '')}
                 </td>
               ))}
@@ -82,6 +83,7 @@ export default function ComboChatPage() {
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, [slug, comboId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -138,21 +140,21 @@ export default function ComboChatPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white flex flex-col h-screen">
-      <header className="border-b border-white/10 px-4 py-3 flex items-center gap-3 flex-shrink-0">
-        <Link href={`/orgs/${slug}/combos`} className="text-zinc-500 hover:text-zinc-300">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      <header className="border-b border-border px-4 py-3 flex items-center gap-3 flex-shrink-0">
+        <Link href={`/orgs/${slug}/combos`} className="text-muted-foreground hover:text-foreground">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
         </Link>
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded bg-purple-500/20 flex items-center justify-center">🔗</div>
+          <div className="w-6 h-6 rounded bg-primary/20 flex items-center justify-center">🔗</div>
           <div>
             <span className="text-sm font-medium text-white">{combo?.name || 'Combo Chat'}</span>
-            <span className="text-xs text-zinc-500 ml-2">Multi-source</span>
+            <span className="text-xs text-muted-foreground ml-2">Multi-source</span>
           </div>
         </div>
         {sending && (
-          <div className="ml-auto flex items-center gap-2 text-xs text-violet-400">
-            <div className="w-3 h-3 border border-violet-400 border-t-transparent rounded-full animate-spin" />
+          <div className="ml-auto flex items-center gap-2 text-xs text-primary">
+            <div className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
             Planning queries…
           </div>
         )}
@@ -164,25 +166,25 @@ export default function ComboChatPage() {
             <div className="text-5xl">🔗</div>
             <div className="text-center">
               <h2 className="text-lg font-semibold mb-1">Combo Query</h2>
-              <p className="text-zinc-400 text-sm max-w-sm">Ask questions that span multiple data sources. The AI will query each source separately and merge the results.</p>
+              <p className="text-muted-foreground text-sm max-w-sm">Ask questions that span multiple data sources. The AI will query each source separately and merge the results.</p>
             </div>
           </div>
         ) : (
           messages.map(msg => (
             <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
               <div className={`w-7 h-7 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold
-                ${msg.role === 'user' ? 'bg-violet-500' : 'bg-purple-700'}`}>
+                ${msg.role === 'user' ? 'bg-primary' : 'bg-primary'}`}>
                 {msg.role === 'user' ? 'U' : 'AI'}
               </div>
               <div className={`max-w-[80%] flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                 <div className={`px-4 py-3 rounded-2xl text-sm leading-relaxed
-                  ${msg.role === 'user' ? 'bg-violet-600 text-white rounded-tr-sm' : 'bg-white/[0.07] text-zinc-200 rounded-tl-sm border border-white/10'}`}>
+                  ${msg.role === 'user' ? 'bg-primary text-white rounded-tr-sm' : 'bg-muted/20 text-foreground rounded-tl-sm border border-border'}`}>
                   {msg.content}
                 </div>
                 {msg.stepResults && <SubQueryPlan plan={msg.plan} stepResults={msg.stepResults} />}
                 {msg.rows?.length ? (
                   <div className="w-full max-w-[600px] mt-2">
-                    <div className="flex items-center gap-2 text-xs text-zinc-500 mb-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
                       <span>{msg.rows.length} merged rows</span>
                       <span>·</span>
                       <span>{msg.totalMs}ms total</span>
@@ -209,7 +211,7 @@ export default function ComboChatPage() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="border-t border-white/10 p-4 flex-shrink-0">
+      <div className="border-t border-border p-4 flex-shrink-0">
         <form onSubmit={handleSend} className="flex gap-3 items-end">
           <textarea
             value={input}
@@ -218,10 +220,10 @@ export default function ComboChatPage() {
             placeholder="Ask across all your data sources…"
             rows={1}
             disabled={sending}
-            className="flex-1 resize-none px-4 py-3 bg-white/5 border border-white/10 rounded-2xl text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 disabled:opacity-50"
+            className="flex-1 resize-none px-4 py-3 bg-muted/50 border border-border rounded-2xl text-sm text-white placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-50"
           />
           <button type="submit" disabled={!input.trim() || sending}
-            className="w-12 h-12 flex-shrink-0 rounded-2xl bg-violet-600 hover:bg-violet-500 flex items-center justify-center transition-colors disabled:opacity-30">
+            className="w-12 h-12 flex-shrink-0 rounded-2xl bg-primary hover:opacity-90 flex items-center justify-center transition-colors disabled:opacity-30">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
               <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
             </svg>

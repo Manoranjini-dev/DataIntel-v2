@@ -2,55 +2,101 @@
 @tailwind components;
 @tailwind utilities;
 
-/* System font stack — avoids build-time Google Fonts fetch in Docker */
-:root {
-  --font-inter: Inter, 'Helvetica Neue', Arial, sans-serif;
-}
-
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 224 71.4% 4.1%;
-    --card: 0 0% 100%;
-    --card-foreground: 224 71.4% 4.1%;
+    /* ── email-builder-ui palette — Light Mode ─────────────────── */
+    /* Background hierarchy (warm cream, not cold white) */
+    --background: 40 20% 97%;        /* oklch(98.5% .004 72) → #FAF8F5 */
+    --foreground: 30 6% 17%;         /* oklch(22% .008 70)   → #2C2A27 */
+
+    --card: 0 0% 100%;               /* oklch(100% 0 0) → pure white */
+    --card-foreground: 30 6% 17%;
+
     --popover: 0 0% 100%;
-    --popover-foreground: 224 71.4% 4.1%;
-    --primary: 220.9 39.3% 11%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 220 14.3% 95.9%;
-    --secondary-foreground: 220.9 39.3% 11%;
-    --muted: 220 14.3% 95.9%;
-    --muted-foreground: 220 8.9% 46.1%;
-    --accent: 220 14.3% 95.9%;
-    --accent-foreground: 220.9 39.3% 11%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 224 71.4% 4.1%;
-    --radius: 0.5rem;
+    --popover-foreground: 30 6% 17%;
+
+    /* Primary: warm orange-amber (oklch 66% .17 hue-45) */
+    --primary: 28 78% 52%;           /* ≈ #D97A1E — warm amber */
+    --primary-foreground: 0 0% 99%;
+
+    /* Secondary: light warm surface tone */
+    --secondary: 38 12% 96%;         /* oklch(97% .005 72) → #F5F3F0 */
+    --secondary-foreground: 30 6% 17%;
+
+    --muted: 38 12% 96%;
+    --muted-foreground: 30 5% 46%;   /* oklch(48% .008 70) → #786E67 */
+
+    /* Accent: cool teal-breeze (oklch 62% .12 hue-215) */
+    --accent: 200 40% 51%;           /* ≈ #4D97B5 — teal */
+    --accent-foreground: 0 0% 99%;
+
+    --destructive: 8 68% 55%;
+    --destructive-foreground: 0 0% 99%;
+
+    --border: 35 10% 90%;            /* subtle warm gray border */
+    --input: 35 10% 90%;
+    --ring: 28 78% 52%;
+
+    --radius: 0.625rem;              /* 10px — matches email-builder-ui */
+
+    --success: 152 55% 42%;
+    --warning: 38 92% 50%;
+
+    /* Sidebar */
+    --sidebar: 38 18% 97%;           /* oklch(97.5% .005 72) → very light warm */
+    --sidebar-width: 280px;
+
+    /* Surface hierarchy */
+    --surface: 0 0% 100%;
+    --surface-2: 38 12% 96%;
+    --surface-3: 35 10% 93%;
   }
 
   .dark {
-    --background: 224 71.4% 4.1%;
-    --foreground: 210 20% 98%;
-    --card: 224 71.4% 4.1%;
-    --card-foreground: 210 20% 98%;
-    --popover: 224 71.4% 4.1%;
-    --popover-foreground: 210 20% 98%;
-    --primary: 210 20% 98%;
-    --primary-foreground: 220.9 39.3% 11%;
-    --secondary: 215 27.9% 16.9%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 215 27.9% 16.9%;
-    --muted-foreground: 217.9 10.6% 64.9%;
-    --accent: 215 27.9% 16.9%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 215 27.9% 16.9%;
-    --input: 215 27.9% 16.9%;
-    --ring: 216 12.2% 83.9%;
+    /* ── email-builder-ui palette — Dark Mode ──────────────────── */
+    /* Warm dark grays, NOT cold navy */
+    --background: 30 5% 12%;         /* oklch(20.5% .006 70) → #1C1A18 */
+    --foreground: 38 8% 96%;         /* oklch(96% .004 70)   → #F4F3F1 */
+
+    --card: 30 5% 14%;               /* oklch(23.5% .007 70) → #221F1D */
+    --card-foreground: 38 8% 96%;
+
+    --popover: 30 5% 14%;
+    --popover-foreground: 38 8% 96%;
+
+    /* Primary: lighter orange in dark (oklch 78% .16 45) */
+    --primary: 30 88% 63%;           /* ≈ #F2954A — warm amber-orange */
+    --primary-foreground: 30 5% 12%;
+
+    /* Secondary: dark surface tone */
+    --secondary: 30 5% 16%;          /* oklch(26.5% .008 70) → #292623 */
+    --secondary-foreground: 38 8% 96%;
+
+    --muted: 30 5% 16%;
+    --muted-foreground: 35 4% 67%;   /* oklch(70% .005 70)   → #ACA8A3 */
+
+    /* Accent: lighter teal in dark (oklch 78% .1 215) */
+    --accent: 200 55% 67%;           /* ≈ #7DC2DC — light teal */
+    --accent-foreground: 30 5% 12%;
+
+    --destructive: 8 68% 55%;
+    --destructive-foreground: 0 0% 99%;
+
+    --border: 30 4% 22%;             /* white at ~8% on dark → #3A3734 */
+    --input: 30 4% 22%;
+    --ring: 30 85% 63%;
+
+    --radius: 0.625rem;
+
+    --success: 152 50% 52%;
+    --warning: 38 85% 55%;
+
+    /* Sidebar: slightly darker than background */
+    --sidebar: 30 5% 11%;            /* oklch(18.5% .006 70) → #1A1815 */
+
+    --surface: 30 5% 14%;
+    --surface-2: 30 5% 16%;
+    --surface-3: 30 5% 20%;
   }
 }
 
@@ -58,65 +104,134 @@
   * {
     @apply border-border;
   }
+  html {
+    font-family: "Geist", "Outfit", "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
-/* Code block styling */
-.sql-block {
-  @apply font-mono text-sm bg-muted rounded-lg p-4 overflow-x-auto;
+/* ── Typography Scale ─────────────────────────────────────────── */
+.text-page-title    { @apply text-3xl font-bold tracking-tight; }
+.text-section-title { @apply text-2xl font-semibold tracking-tight; }
+.text-card-title    { @apply text-[18px] font-semibold; }
+.text-body          { @apply text-sm; }
+.text-caption       { @apply text-xs text-muted-foreground; }
+
+/* ── Card Surfaces ────────────────────────────────────────────── */
+.card-glass {
+  @apply bg-card/90 backdrop-blur-xl border border-border rounded-xl;
+  box-shadow: var(--shadow-elevated);
+}
+.card-solid {
+  @apply bg-card border border-border rounded-xl;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 1px 1px rgba(0,0,0,.025);
+}
+.card-inset {
+  @apply bg-muted/50 border border-border/50 rounded-lg;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ── Interactive States ──────────────────────────────────────── */
+.interactive {
+  @apply transition-all duration-150 cursor-pointer;
+}
+.interactive:hover {
+  @apply border-primary/30 bg-primary/5;
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+/* ── Pill Navigation ──────────────────────────────────────────── */
+.pill-nav {
+  @apply flex items-center gap-1 p-1 bg-muted/60 rounded-full h-[42px];
+}
+.pill-nav-item {
+  @apply px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-150 cursor-pointer text-muted-foreground hover:text-foreground;
+}
+.pill-nav-item.active {
+  @apply bg-card text-foreground shadow-sm;
 }
 
-::-webkit-scrollbar-thumb {
-  @apply bg-border rounded-full;
-}
+/* ── Scrollbar ────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { @apply bg-border rounded-full; }
+::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/40; }
 
-::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/30;
-}
-
-/* Animation for streaming text */
+/* ── Streaming Cursor ─────────────────────────────────────────── */
 @keyframes typing-cursor {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
-
 .typing-cursor::after {
   content: '▊';
   animation: typing-cursor 1s step-end infinite;
   @apply text-primary ml-0.5;
 }
 
-/* Dashboard grid layout transitions */
+/* ── Dashboard Grid ───────────────────────────────────────────── */
 .react-grid-item {
-  transition: all 200ms ease;
+  transition: all 180ms ease;
+  will-change: transform;
 }
 .react-grid-item.cssTransforms {
-  transition: transform 200ms ease, width 200ms ease, height 200ms ease;
+  transition: transform 180ms ease;
 }
 .react-grid-item.react-draggable-dragging {
   transition: none;
   z-index: 100;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 20px 50px rgba(0,0,0,.3);
+  border-radius: 12px;
 }
-.react-grid-item.resizing {
-  transition: none;
-}
+.react-grid-item.resizing { transition: none; }
 .react-grid-placeholder {
-  background: rgba(16, 185, 129, 0.08) !important;
-  border: 2px dashed rgba(16, 185, 129, 0.3) !important;
-  border-radius: 1rem;
+  background: rgba(217, 122, 30, 0.08) !important;
+  border: 2px dashed rgba(217, 122, 30, 0.35) !important;
+  border-radius: 12px;
   opacity: 1 !important;
 }
+
+/* ── Shadow tokens (matching email-builder-ui) ───────────────── */
+:root {
+  --shadow-soft: 0 1px 2px rgba(0,0,0,.04), 0 1px 1px rgba(0,0,0,.025);
+  --shadow-elevated: 0 16px 40px -22px rgba(0,0,0,.18), 0 6px 16px -8px rgba(0,0,0,.09);
+  --shadow-glow: 0 0 0 1px rgba(217,122,30,.18), 0 12px 32px -12px rgba(217,122,30,.32);
+}
+.dark {
+  --shadow-soft: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-elevated: 0 22px 60px -28px rgba(0,0,0,.55), 0 10px 24px -10px rgba(0,0,0,.45);
+  --shadow-glow: 0 0 0 1px rgba(242,149,74,.3), 0 14px 36px -12px rgba(242,149,74,.4);
+}
+
+/* ── Glow Effects ─────────────────────────────────────────────── */
+.glow-primary {
+  box-shadow: var(--shadow-glow);
+}
+.glow-success {
+  box-shadow: 0 0 20px rgba(52, 199, 123, .25);
+}
+
+/* ── Code Blocks ──────────────────────────────────────────────── */
+.sql-block {
+  @apply font-mono text-sm bg-muted rounded-lg p-4 overflow-x-auto;
+  border: 1px solid hsl(var(--border));
+}
+
+/* ── Animations ───────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fade-in 0.2s ease forwards; }
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in { animation: slide-in-right 0.2s ease forwards; }
+
+@keyframes float-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-float-in { animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
