@@ -850,7 +850,7 @@ SELECT
     ELSE 'completed'
   END,
   o.total,
-  CONCAT('TXN-', UPPER(SUBSTR(MD5(RAND()), 1, 16))),
+  CONCAT('TXN-', UPPER(SUBSTR(UUID(), 1, 16))),
   CASE WHEN o.status NOT IN ('pending','cancelled') THEN o.ordered_at ELSE NULL END
 FROM orders o;
 
@@ -862,7 +862,7 @@ INSERT INTO shipments (order_id, carrier, tracking_number, status, estimated_del
 SELECT
   o.id,
   ELT(1+FLOOR(RAND()*4),'FedEx','UPS','USPS','DHL'),
-  CONCAT(ELT(1+FLOOR(RAND()*4),'FX','1Z','94','DHL'), UPPER(SUBSTR(MD5(RAND()), 1, 18))),
+  CONCAT(ELT(1+FLOOR(RAND()*4),'FX','1Z','94','DHL'), UPPER(SUBSTR(UUID(), 1, 18))),
   CASE
     WHEN o.status = 'delivered' THEN 'delivered'
     WHEN o.status = 'shipped' THEN ELT(1+FLOOR(RAND()*2),'in_transit','out_for_delivery')

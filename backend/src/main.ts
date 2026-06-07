@@ -5,6 +5,7 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
@@ -24,7 +25,10 @@ async function bootstrap() {
   // Security headers
   app.use(helmet());
 
-  // CORS — allow frontend origin
+  // Cookie parser for session management
+  app.use(cookieParser());
+
+  // CORS — allow frontend origin with credentials
   app.enableCors({
     origin: [
       'http://localhost:3000',
@@ -51,9 +55,10 @@ async function bootstrap() {
   await app.listen(port);
 
   logger.log(`══════════════════════════════════════════════`);
-  logger.log(`  SQL Intelligence Platform — Backend`);
+  logger.log(`  DataIntel v2 — Multi-Org Intelligence Platform`);
   logger.log(`  Running on: http://localhost:${port}`);
   logger.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.log(`  Database: Neon Postgres (connected)`);
   logger.log(`══════════════════════════════════════════════`);
 }
 

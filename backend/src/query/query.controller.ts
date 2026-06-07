@@ -17,7 +17,9 @@ import { Response } from 'express';
 import { QueryService } from './query.service';
 import { AskDto, ExecuteQueryDto, ExplainSchemaDto, GenerateQueryDto, DashboardQueryDto, DashboardWidgetDto } from './dto/query.dto';
 import { ConnectorFamily } from '../common/types';
+import { Public } from '../auth/auth.guard';
 
+@Public()
 @Controller('query')
 export class QueryController {
   constructor(private readonly queryService: QueryService) {}

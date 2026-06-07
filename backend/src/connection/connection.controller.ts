@@ -6,7 +6,9 @@ import { Body, Controller, Get, Param, Post, HttpCode, HttpStatus, NotFoundExcep
 import { ConnectionService } from './connection.service';
 import { ConnectDto, TestConnectionDto } from './dto/connection.dto';
 import { SchemaService } from '../schema/schema.service';
+import { Public } from '../auth/auth.guard';
 
+@Public()
 @Controller('connection')
 export class ConnectionController {
   constructor(

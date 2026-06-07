@@ -183,9 +183,10 @@ export class MCPService implements OnModuleDestroy {
       return { success: false, error: 'Connection params not found', executionTimeMs: 0 };
     }
 
-    this.logger.log(`Executing query via MCP [session=${sessionId}]: ${sql.substring(0, 100)}...`);
+    const sqlString = typeof sql === 'string' ? sql : JSON.stringify(sql);
+    this.logger.log(`Executing query via MCP [session=${sessionId}]: ${sqlString.substring(0, 100)}...`);
     const connector = this.getConnector(session.connectorType);
-    return connector.executeReadQuery(connectionParams, sql, this.executionTimeout);
+    return connector.executeReadQuery(connectionParams, sqlString, this.executionTimeout);
   }
 
   /** Get connector capabilities */
@@ -208,6 +209,20 @@ export class MCPService implements OnModuleDestroy {
   isSessionActive(sessionId: string): boolean {
     const session = this.sessions.get(sessionId);
     return !!session && session.isActive;
+  }
+
+  /**
+   * Get schema metadata directly from connection params (no persistent session needed).
+   * Used by PersistentConnectionService to sync schema for stored connections.
+   */
+  async getSchema(params: ConnectionParams): Promise<SchemaMetadata | null> {
+    const session = await this.createSession(params);
+    try {
+      const result = await this.describeSchema(session.sessionId);
+      return result.success ? (result.data as SchemaMetadata) : null;
+    } finally {
+      await this.destroySession(session.sessionId);
+    }
   }
 
   // ── Credential Encryption ────────────────────

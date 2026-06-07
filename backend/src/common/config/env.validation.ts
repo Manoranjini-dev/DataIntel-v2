@@ -15,45 +15,64 @@ export class EnvironmentVariables {
   @IsEnum(Environment)
   NODE_ENV: Environment = Environment.Development;
 
-  @IsNumber()
-  @Min(1)
+  @IsNumber() @Min(1)
   PORT: number = 3001;
 
-  @IsString()
-  @IsNotEmpty({ message: 'OPEN_ROUTER_KEY must not be empty' })
+  @IsString() @IsNotEmpty({ message: 'OPEN_ROUTER_KEY must not be empty' })
   OPEN_ROUTER_KEY!: string;
 
-  @IsString()
-  @IsOptional()
+  @IsString() @IsOptional()
   OPEN_ROUTER_API_URL: string = 'https://openrouter.ai/api/v1';
 
-  @IsString()
-  @IsOptional()
+  @IsString() @IsOptional()
   OPEN_ROUTER_MODEL: string = 'openai/gpt-oss-120b';
 
-  @IsNumber()
-  @IsOptional()
+  @IsNumber() @IsOptional()
   MCP_EXECUTION_TIMEOUT_MS: number = 30000;
 
-  @IsNumber()
-  @IsOptional()
+  @IsNumber() @IsOptional()
   MCP_MAX_RESULT_ROWS: number = 500;
 
-  @IsNumber()
-  @IsOptional()
+  @IsNumber() @IsOptional()
   MEMORY_SLIDING_WINDOW_SIZE: number = 20;
 
-  @IsNumber()
-  @IsOptional()
+  @IsNumber() @IsOptional()
   MEMORY_SUMMARY_TOKEN_THRESHOLD: number = 4000;
 
-  @IsNumber()
-  @IsOptional()
+  @IsNumber() @IsOptional()
   SCHEMA_CACHE_TTL_SECONDS: number = 300;
 
-  @IsString()
-  @IsOptional()
+  @IsString() @IsOptional()
   LOG_LEVEL: string = 'debug';
+
+  // ── Database (Neon Postgres) ──────────────────
+
+  @IsString() @IsNotEmpty({ message: 'DATABASE_URL must not be empty' })
+  DATABASE_URL!: string;
+
+  // ── Redis (optional) ──────────────────────────
+
+  @IsString() @IsOptional()
+  REDIS_URL?: string;
+
+  // ── Auth & Sessions ───────────────────────────
+
+  @IsString() @IsNotEmpty({ message: 'SESSION_SECRET must not be empty' })
+  SESSION_SECRET!: string;
+
+  @IsString() @IsOptional()
+  COOKIE_DOMAIN: string = 'localhost';
+
+  @IsString() @IsOptional()
+  COOKIE_SECURE: string = 'false';
+
+  @IsNumber() @IsOptional()
+  SESSION_TTL_HOURS: number = 168;
+
+  // ── Encryption ────────────────────────────────
+
+  @IsString() @IsNotEmpty({ message: 'CREDENTIAL_ENCRYPTION_KEY must not be empty' })
+  CREDENTIAL_ENCRYPTION_KEY!: string;
 }
 
 export function validateEnvironment(config: Record<string, unknown>): EnvironmentVariables {
