@@ -381,6 +381,29 @@ export const dashboardApi = {
     return handleResponse<{ widget: any }>(r);
   },
 
+  deleteWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, { method: 'DELETE' });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  updateWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string, data: any) => {
+    const payload = {
+      title: data.title,
+      widget_type: data.widget_type,
+      gridX: data.position_x, gridY: data.position_y, gridW: data.width, gridH: data.height,
+      queryDefinition: {
+        prompt: data.query_prompt,
+        result_rows: data.result_rows,
+        result_columns: data.result_columns,
+        ui_hint: data.ui_hint,
+      },
+    };
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, {
+      method: 'PATCH', body: JSON.stringify(payload),
+    });
+    return handleResponse<{ widget: any }>(r);
+  },
+
   inspect: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/inspect`);
     return handleResponse<{ execution: any }>(r);

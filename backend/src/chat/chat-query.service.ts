@@ -200,6 +200,56 @@ export class ChatQueryService {
     }
   }
 
+  /**
+   * Re-execute a (possibly user-edited) SQL query draft.
+   * Updates the existing query_execution record and returns results.
+   */
+  async executeDraft(
+    orgId: string,
+    chatId: string,
+    user: SafeAccount,
+    executionId: string,
+    sql: string,
+  ): Promise<{ rows: any[]; columns: string[]; row_count: number; execution_time_ms: number; status: string }> {
+    const chat = await this.chatService.get(orgId, chatId, user.id) as any;
+    if (!chat.connection_id) throw new BadRequestException('Chat has no connection.');
+
+    const conn = await this.db.queryOne<any>('SELECT * FROM datasource_connections WHERE id = $1', [chat.connection_id]);
+    if (!conn) throw new BadRequestException('Connection not found');
+
+    const password = decrypt(conn.encrypted_password, this.encKey);
+    const session = await this.mcpService.createSession({
+      host: conn.host, port: conn.port, username: conn.username, password,
+      database: conn.database_name, connectorType: conn.connector_type as ConnectorType,
+    });
+
+    const start = Date.now();
+    let rows: any[] = [], columns: string[] = [], rowCount = 0, status = 'success', error: string | null = null;
+    try {
+      const result = await this.mcpService.executeReadQuery(session.sessionId, sql);
+      if (!result.success) { status = 'failed'; error = result.error || 'Query failed'; }
+      else { rows = result.data?.rows || []; columns = result.data?.columns || []; rowCount = result.data?.rowCount || rows.length; }
+    } finally {
+      await this.mcpService.destroySession(session.sessionId).catch(() => {});
+    }
+
+    const execTimeMs = Date.now() - start;
+
+    // Update execution record if it exists
+    if (executionId) {
+      await this.db.query(
+        `UPDATE query_executions SET generated_query=$2, status=$3, execution_time_ms=$4,
+         row_count=$5, result_preview=$6, result_columns=$7, error_message=$8, completed_at=NOW()
+         WHERE id=$1`,
+        [executionId, sql, status, execTimeMs, rowCount,
+         JSON.stringify(rows.slice(0, 25)), columns, error],
+      ).catch(() => {});
+    }
+
+    if (status === 'failed') throw new Error(error || 'Query execution failed');
+    return { rows, columns, row_count: rowCount, execution_time_ms: execTimeMs, status };
+  }
+
   private async buildSchemaContext(connectionId: string): Promise<string> {
     const tables = await this.db.queryMany<any>(
       `SELECT ct.table_name, string_agg(

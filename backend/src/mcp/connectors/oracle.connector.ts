@@ -79,7 +79,7 @@ export class OracleConnector extends BaseMCPConnector {
         conn.callTimeout = timeoutMs;
         const result = await conn.execute(sql, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
         const rows = (result.rows || []) as Record<string, unknown>[];
-        const columns = result.metaData?.map((m) => m.name) || [];
+        const columns = result.metaData?.map((m: any) => m.name) || [];
         return {
           rows,
           columns,

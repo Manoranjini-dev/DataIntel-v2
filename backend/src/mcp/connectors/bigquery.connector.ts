@@ -78,11 +78,12 @@ export class BigQueryConnector extends BaseMCPConnector {
   ): Promise<MCPToolResult<MCPQueryResult>> {
     return this.executeWithResult(async () => {
       const client = this.createClient(params);
-      const [rows, , response] = await client.query({
+      const queryResponse = await client.query({
         query: sql,
-        timeoutMs,
+        jobTimeoutMs: timeoutMs,
         maxResults: 500,
       });
+      const rows = Array.isArray(queryResponse) ? queryResponse[0] : queryResponse;
       const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
       return {
         rows: rows as Record<string, unknown>[],

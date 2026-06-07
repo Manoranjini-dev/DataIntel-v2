@@ -77,7 +77,7 @@ export class MSSQLConnector extends BaseMCPConnector {
       const pool = await this.createPool(params);
       try {
         const request = pool.request();
-        request.timeout = timeoutMs;
+        (request as any).timeout = Math.floor(timeoutMs / 1000); // mssql expects seconds
         const result = await request.query(sqlQuery);
         const recordset = result.recordset || [];
         const columns = recordset.columns

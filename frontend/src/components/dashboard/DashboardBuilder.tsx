@@ -31,15 +31,19 @@ interface WidgetData {
 
 // ── Templates ──────────────────────────────────────────────────
 const WIDGET_TEMPLATES = [
-  { type: 'metric_card',    name: 'Metric Card',     icon: '#',  desc: 'Single key number' },
-  { type: 'bar_chart',      name: 'Bar Chart',        icon: '▦',  desc: 'Compare categories' },
-  { type: 'line_chart',     name: 'Line Chart',       icon: '↗',  desc: 'Trends over time' },
-  { type: 'pie_chart',      name: 'Pie Chart',        icon: '◑',  desc: 'Part-to-whole' },
-  { type: 'area_chart',     name: 'Area Chart',       icon: '◿',  desc: 'Volume over time' },
-  { type: 'donut_chart',    name: 'Donut Chart',      icon: '◎',  desc: 'Proportion rings' },
-  { type: 'table',          name: 'Data Table',       icon: '☰',  desc: 'Raw row data' },
-  { type: 'stat_grid',      name: 'Stat Grid',        icon: '⊞',  desc: 'Multiple metrics' },
-  { type: 'horizontal_bar', name: 'Horizontal Bar',   icon: '⬛', desc: 'Side-by-side bars' },
+  { type: 'metric_card',    name: 'KPI Card',         icon: '▣',  desc: 'Single key number'      },
+  { type: 'bar_chart',      name: 'Bar Chart',        icon: '▦',  desc: 'Compare categories'     },
+  { type: 'line_chart',     name: 'Line Chart',       icon: '↗',  desc: 'Trends over time'       },
+  { type: 'area_chart',     name: 'Area Chart',       icon: '◿',  desc: 'Volume over time'       },
+  { type: 'pie_chart',      name: 'Pie Chart',        icon: '◑',  desc: 'Part-to-whole'          },
+  { type: 'donut_chart',    name: 'Donut Chart',      icon: '◎',  desc: 'Proportion rings'       },
+  { type: 'horizontal_bar', name: 'Horizontal Bar',   icon: '▬',  desc: 'Ranked comparison'      },
+  { type: 'scatter_chart',  name: 'Scatter Plot',     icon: '⁝',  desc: 'Correlation / clusters' },
+  { type: 'funnel_chart',   name: 'Funnel',           icon: '▽',  desc: 'Conversion stages'      },
+  { type: 'gauge_chart',    name: 'Gauge',            icon: '◐',  desc: 'Single value vs target' },
+  { type: 'waterfall_chart',name: 'Waterfall',        icon: '⊟',  desc: 'Running totals'         },
+  { type: 'stat_grid',      name: 'Stat Grid',        icon: '⊞',  desc: 'Multiple metrics'       },
+  { type: 'table',          name: 'Data Table',       icon: '☰',  desc: 'Raw row data'           },
 ];
 
 const CHART_COLORS = ['#D97A1E', '#F5A623', '#50A0B4', '#6ECA97', '#E97B7B', '#9B8EF5'];
@@ -163,9 +167,109 @@ function TableWidget({ title, rows, columns }: { title: string; rows: Record<str
   );
 }
 
+function ScatterWidget({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns: string[] }) {
+  if (!rows.length || columns.length < 2) return <TableWidget title={title} rows={rows} columns={columns} />;
+  const xCol = columns[0], yCol = columns[1];
+  const xs = rows.map(r => Number(r[xCol]) || 0), ys = rows.map(r => Number(r[yCol]) || 0);
+  const minX = Math.min(...xs), maxX = Math.max(...xs) || 1, minY = Math.min(...ys), maxY = Math.max(...ys) || 1;
+  const W = 260, H = 80;
+  const px = (v: number) => ((v - minX) / (maxX - minX || 1)) * W;
+  const py = (v: number) => H - ((v - minY) / (maxY - minY || 1)) * H;
+  return (
+    <div className="h-full flex flex-col px-3 py-2.5">
+      <p className="text-xs font-semibold text-foreground mb-2 truncate">{title}</p>
+      <svg viewBox={`-4 -4 ${W + 8} ${H + 8}`} className="w-full flex-1 min-h-0">
+        {rows.slice(0, 80).map((r, i) => (
+          <circle key={i} cx={px(Number(r[xCol]) || 0)} cy={py(Number(r[yCol]) || 0)} r="3"
+            fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity="0.7" />
+        ))}
+      </svg>
+      <div className="flex justify-between text-[10px] text-muted-foreground/60 mt-1">
+        <span>{xCol}</span><span>{yCol}</span>
+      </div>
+    </div>
+  );
+}
+
+function FunnelWidget({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns: string[] }) {
+  if (!rows.length || columns.length < 2) return <TableWidget title={title} rows={rows} columns={columns} />;
+  const top = Math.max(...rows.map(r => Number(r[columns[1]]) || 0)) || 1;
+  return (
+    <div className="h-full flex flex-col px-3 py-2.5 gap-1.5">
+      <p className="text-xs font-semibold text-foreground mb-1 truncate">{title}</p>
+      {rows.slice(0, 6).map((row, i) => {
+        const val = Number(row[columns[1]]) || 0;
+        const pct = (val / top) * 100;
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground w-20 truncate shrink-0">{String(row[columns[0]] ?? '')}</span>
+            <div className="flex-1 flex justify-center">
+              <div className="h-5 rounded-sm" style={{ width: `${pct}%`, background: CHART_COLORS[i % CHART_COLORS.length] + 'CC', minWidth: 2 }} />
+            </div>
+            <span className="text-[10px] text-foreground w-10 text-right shrink-0">{val.toLocaleString()}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GaugeWidget({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns: string[] }) {
+  const raw = rows[0] ? Number(rows[0][columns[0]]) || 0 : 0;
+  const max = rows[0] && columns[1] ? Number(rows[0][columns[1]]) || 100 : 100;
+  const pct = Math.min(1, raw / max);
+  const angle = -135 + pct * 270;
+  const r = 38, cx = 50, cy = 55;
+  const arc = (start: number, end: number) => {
+    const s = (start - 90) * Math.PI / 180, e = (end - 90) * Math.PI / 180;
+    return `M${cx + r * Math.cos(s)},${cy + r * Math.sin(s)} A${r},${r} 0 ${end - start > 180 ? 1 : 0},1 ${cx + r * Math.cos(e)},${cy + r * Math.sin(e)}`;
+  };
+  return (
+    <div className="h-full flex flex-col items-center justify-center p-3">
+      <p className="text-xs font-semibold text-foreground mb-1 truncate">{title}</p>
+      <svg viewBox="0 0 100 80" className="w-28 h-20">
+        <path d={arc(-135, 135)} fill="none" stroke="hsl(var(--muted))" strokeWidth="8" strokeLinecap="round" />
+        <path d={arc(-135, -135 + pct * 270)} fill="none" stroke="#D97A1E" strokeWidth="8" strokeLinecap="round" />
+        <line x1={cx} y1={cy} x2={cx + 26 * Math.cos((angle - 90) * Math.PI / 180)} y2={cy + 26 * Math.sin((angle - 90) * Math.PI / 180)}
+          stroke="#2B2B2B" strokeWidth="2.5" strokeLinecap="round" />
+        <circle cx={cx} cy={cy} r="3" fill="#2B2B2B" />
+        <text x={cx} y={cy + 18} textAnchor="middle" fontSize="10" fill="hsl(var(--foreground))" fontWeight="700">{raw.toLocaleString()}</text>
+      </svg>
+    </div>
+  );
+}
+
+function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns: string[] }) {
+  if (!rows.length || columns.length < 2) return <TableWidget title={title} rows={rows} columns={columns} />;
+  let running = 0;
+  const bars = rows.slice(0, 8).map((row, i) => {
+    const val = Number(row[columns[1]]) || 0;
+    const base = running; running += val;
+    return { label: String(row[columns[0]] ?? ''), val, base, pos: val >= 0 };
+  });
+  const minV = Math.min(0, ...bars.map(b => b.base)), maxV = Math.max(...bars.map(b => b.base + b.val));
+  const H = 70, W = 260;
+  const barW = Math.max(8, (W / bars.length) - 4);
+  const py = (v: number) => H - ((v - minV) / (maxV - minV || 1)) * H;
+  return (
+    <div className="h-full flex flex-col px-3 py-2.5">
+      <p className="text-xs font-semibold text-foreground mb-2 truncate">{title}</p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full flex-1 min-h-0">
+        {bars.map((b, i) => {
+          const x = (i / bars.length) * W + 2;
+          const yTop = py(Math.max(b.base, b.base + b.val));
+          const h = Math.abs(py(b.base) - py(b.base + b.val));
+          return <rect key={i} x={x} y={yTop} width={barW} height={Math.max(2, h)} fill={b.pos ? '#6ECA97' : '#E97B7B'} rx="1" fillOpacity="0.85" />;
+        })}
+        <line x1="0" y1={py(0)} x2={W} y2={py(0)} stroke="hsl(var(--border))" strokeDasharray="3,3" strokeWidth="0.5" />
+      </svg>
+    </div>
+  );
+}
+
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
-  widget, isEditing, onRemove, onInspect, onRename, onSuggestTitle,
+  widget, isEditing, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage,
 }: {
   widget: WidgetData;
   isEditing: boolean;
@@ -173,6 +277,9 @@ function Widget({
   onInspect?: () => void;
   onRename?: (newTitle: string) => void;
   onSuggestTitle?: () => void;
+  onEditQuery?: () => void;
+  otherPages?: { id: string; name: string }[];
+  onMoveToPage?: (pageId: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -204,14 +311,19 @@ function Widget({
       </div>
     );
     if (!rows.length) return (
-      <div className="h-full flex flex-col items-center justify-center text-muted-foreground/50 text-xs gap-2">
-        <span className="text-2xl">📭</span><span>No data</span>
+      <div className="h-full flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <span>No data</span>
       </div>
     );
-    if (['metric_card', 'stat_grid', 'number_trend', 'gauge'].includes(hint)) return <MetricWidget title={widget.title} rows={rows} columns={columns} />;
+    if (['metric_card', 'stat_grid', 'number_trend'].includes(hint)) return <MetricWidget title={widget.title} rows={rows} columns={columns} />;
     if (['bar_chart', 'horizontal_bar', 'stacked_bar'].includes(hint)) return <BarWidget title={widget.title} rows={rows} columns={columns} />;
     if (['line_chart', 'area_chart', 'timeline'].includes(hint)) return <LineWidget title={widget.title} rows={rows} columns={columns} />;
     if (['pie_chart', 'donut_chart'].includes(hint)) return <PieWidget title={widget.title} rows={rows} columns={columns} />;
+    if (hint === 'scatter_chart') return <ScatterWidget title={widget.title} rows={rows} columns={columns} />;
+    if (hint === 'funnel_chart') return <FunnelWidget title={widget.title} rows={rows} columns={columns} />;
+    if (hint === 'gauge_chart') return <GaugeWidget title={widget.title} rows={rows} columns={columns} />;
+    if (hint === 'waterfall_chart') return <WaterfallWidget title={widget.title} rows={rows} columns={columns} />;
     return <TableWidget title={widget.title} rows={rows} columns={columns} />;
   };
 
@@ -258,7 +370,7 @@ function Widget({
           )}
 
           {menuOpen && !renaming && (
-            <div className="absolute top-8 right-0 w-44 bg-card border border-border rounded-xl shadow-xl z-40 py-1 overflow-hidden" onMouseDown={e => e.stopPropagation()}>
+            <div className="absolute top-8 right-0 w-48 bg-card border border-border rounded-xl shadow-xl z-40 py-1 overflow-hidden" onMouseDown={e => e.stopPropagation()}>
               <button onClick={() => { setMenuOpen(false); setRenaming(true); setDraftTitle(widget.title); }}
                 className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
                 <Type className="w-3.5 h-3.5 text-muted-foreground" /> Rename
@@ -267,6 +379,23 @@ function Widget({
                 className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
                 <Sparkles className="w-3.5 h-3.5 text-primary" /> AI suggest title
               </button>
+              <button onClick={() => { setMenuOpen(false); onEditQuery?.(); }}
+                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                <Play className="w-3.5 h-3.5 text-primary" /> Edit query
+              </button>
+              {otherPages && otherPages.length > 0 && (
+                <>
+                  <div className="mx-3 my-1 h-px bg-border" />
+                  <p className="px-3 py-1 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Move to page</p>
+                  {otherPages.map(p => (
+                    <button key={p.id} onClick={() => { setMenuOpen(false); onMoveToPage?.(p.id); }}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/></svg>
+                      {p.name}
+                    </button>
+                  ))}
+                </>
+              )}
               <div className="mx-3 my-1 h-px bg-border" />
               <button onClick={() => { setMenuOpen(false); onRemove?.(); }}
                 className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors">
@@ -348,7 +477,7 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
                 onClick={() => onCardClick?.(c)}
                 onDragStart={e => { const hint = JSON.stringify({ type: 'card', cardId: c.id, chartType: c.chart_type, title: c.name }); e.dataTransfer.setData('text/plain', hint); (window as any).__draggedWidgetHint = hint; }}
               >
-                <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center text-sm shrink-0">📊</div>
+                <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 text-[11px] font-bold text-accent/70">{(c.chart_type || 'C').slice(0,1).toUpperCase()}</div>
                 <p className="text-[11px] font-medium text-foreground truncate">{c.name}</p>
               </div>
             ))
@@ -514,6 +643,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
       activeChatId = chat.id;
       onChatCreated?.(chat.id);
     }
+    if (!activeChatId) return;
 
     for (let i = 0; i < prompts.length; i++) {
       const prompt = prompts[i];
@@ -683,6 +813,106 @@ function QueryInspectorModal({ widgetId, orgId, dashId, pageId, onClose }: {
   );
 }
 
+// ── Edit Query Dialog ──────────────────────────────────────────
+function EditQueryDialog({ widget, orgId, chatId, connectionId, onUpdate, onClose }: {
+  widget: WidgetData;
+  orgId: string;
+  chatId?: string;
+  connectionId?: string;
+  onUpdate: (patch: Partial<WidgetData>) => void;
+  onClose: () => void;
+}) {
+  const [prompt, setPrompt] = useState(widget.query_prompt);
+  const [running, setRunning] = useState(false);
+  const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; columns: string[]; ui_hint: string } | null>(null);
+  const [error, setError] = useState('');
+
+  async function handleRun() {
+    if (!prompt.trim() || (!chatId && !connectionId)) return;
+    setRunning(true); setError(''); setPreview(null);
+    try {
+      let activeChatId = chatId;
+      if (!activeChatId && connectionId) {
+        const { chat } = await chatApi.create(orgId, { connectionId });
+        activeChatId = chat.id;
+      }
+      const result = await chatApi.ask(orgId, activeChatId!, prompt, true);
+      const exec = (result as any).execution;
+      if (exec?.rows?.length) {
+        setPreview({ rows: exec.rows.slice(0, 5), columns: exec.columns || [], ui_hint: exec.ui_hint || widget.widget_type });
+      } else {
+        setError('Query returned no rows. Try a different prompt.');
+      }
+    } catch (e: any) { setError(e?.message || 'Query failed'); }
+    finally { setRunning(false); }
+  }
+
+  function handleApply() {
+    if (!preview) return;
+    onUpdate({ query_prompt: prompt, result_rows: preview.rows, result_columns: preview.columns, ui_hint: preview.ui_hint, widget_type: preview.ui_hint || widget.widget_type });
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-xl shadow-2xl" onClick={e => e.stopPropagation()} style={{ boxShadow: 'var(--shadow-elevated)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Edit Widget Query</h2>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xs">{widget.title}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data prompt</label>
+            <textarea
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              rows={3}
+              disabled={running}
+              className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
+          )}
+
+          {preview && (
+            <div className="bg-success/5 border border-success/20 rounded-xl p-3">
+              <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5 text-success" /> {preview.rows.length}+ rows · {preview.ui_hint}
+              </p>
+              <div className="overflow-x-auto">
+                <table className="text-xs w-full">
+                  <thead><tr>{preview.columns.map(c => <th key={c} className="px-2 py-1 text-left text-muted-foreground whitespace-nowrap">{c}</th>)}</tr></thead>
+                  <tbody>{preview.rows.slice(0, 3).map((row, i) => (
+                    <tr key={i} className="border-t border-border/40">{preview.columns.map(c => <td key={c} className="px-2 py-1 text-foreground truncate max-w-[100px]">{String(row[c] ?? '')}</td>)}</tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 px-5 pb-5">
+          <button onClick={onClose} className="px-4 py-2 border border-border text-muted-foreground rounded-xl text-sm hover:bg-muted transition-colors">Cancel</button>
+          <button onClick={handleRun} disabled={running || !prompt.trim() || (!chatId && !connectionId)}
+            className="flex-1 py-2 bg-muted hover:bg-muted/80 border border-border rounded-xl text-sm font-medium text-foreground disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
+            {running ? <><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Running…</> : <><Play className="w-3.5 h-3.5 text-primary" />Run Query</>}
+          </button>
+          <button onClick={handleApply} disabled={!preview}
+            className="px-5 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Dashboard Builder ─────────────────────────────────────
 export function DashboardBuilder({
   orgSlug, dashId, backUrl, backLabel, titleOverride, subtitleOverride,
@@ -700,7 +930,8 @@ export function DashboardBuilder({
   const [saving, setSaving] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | undefined>();
 
-  const [inspectWidgetId, setInspectWidgetId] = useState<string | null>(null);
+  const [inspectWidgetId,  setInspectWidgetId]  = useState<string | null>(null);
+  const [editQueryWidgetId, setEditQueryWidgetId] = useState<string | null>(null);
   const [filters, setFilters] = useState<any[]>([]);
   const [versions, setVersions] = useState<any[]>([]);
   const [showVersions, setShowVersions] = useState(false);
@@ -712,6 +943,7 @@ export function DashboardBuilder({
   // Page rename state
   const [renamingPage, setRenamingPage] = useState<string | null>(null);
   const [pageNameDraft, setPageNameDraft] = useState('');
+  const [confirmDeletePageId, setConfirmDeletePageId] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(1200);
@@ -781,7 +1013,7 @@ export function DashboardBuilder({
   async function deletePage(pageId: string, e: React.MouseEvent) {
     e.stopPropagation();
     if (pages.length <= 1) return;
-    if (!window.confirm('Delete this page and all its widgets?')) return;
+    if (confirmDeletePageId !== pageId) { setConfirmDeletePageId(pageId); return; }
     if (!org) return;
     try {
       await dashboardApi.deletePage?.(String(org.id), dashId, pageId);
@@ -789,6 +1021,7 @@ export function DashboardBuilder({
       setPages(next);
       if (activePage === pageId && next.length > 0) switchPage(String(next[0].id));
     } catch (e) { console.error(e); }
+    finally { setConfirmDeletePageId(null); }
   }
 
   async function handleSave() {
@@ -820,6 +1053,27 @@ export function DashboardBuilder({
   }
 
   function removeWidget(id: string) { setWidgets(ws => ws.filter(w => w.id !== id)); }
+
+  async function moveWidgetToPage(widgetId: string, targetPageId: string) {
+    if (!org || !activePage) return;
+    const widget = widgets.find(w => w.id === widgetId);
+    if (!widget) return;
+    try {
+      // Add to target page
+      await dashboardApi.addWidget(String(org.id), dashId, targetPageId, {
+        title: widget.title, widget_type: widget.widget_type,
+        queryPrompt: widget.query_prompt,
+        resultRows: widget.result_rows || [], resultColumns: widget.result_columns || [],
+        uiHint: widget.ui_hint || widget.widget_type,
+        gridX: 0, gridY: 0, gridW: widget.width || 4, gridH: widget.height || 3,
+        datasourceScopeType: 'connection',
+      });
+      // Remove from current page backend
+      await dashboardApi.deleteWidget?.(String(org.id), dashId, activePage, widgetId).catch(() => {});
+      // Remove from local state
+      removeWidget(widgetId);
+    } catch (e) { console.error(e); }
+  }
 
   function renameWidget(id: string, title: string) {
     setWidgets(ws => ws.map(w => w.id === id ? { ...w, title } : w));
@@ -972,13 +1226,33 @@ export function DashboardBuilder({
                 </button>
               )}
               {isEditing && pages.length > 1 && (
-                <button
-                  onClick={e => deletePage(id, e)}
-                  className="opacity-0 group-hover/tab:opacity-100 absolute -top-0.5 -right-1.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all text-[10px]"
-                  title="Delete page"
-                >
-                  <X className="w-2.5 h-2.5" />
-                </button>
+                confirmDeletePageId === id ? (
+                  <div className="flex items-center gap-1 px-1.5 py-1">
+                    <span className="text-[10px] text-destructive font-medium">Delete?</span>
+                    <button
+                      onClick={e => deletePage(id, e)}
+                      className="w-4 h-4 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity"
+                      title="Confirm delete"
+                    >
+                      <Check className="w-2.5 h-2.5" />
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); setConfirmDeletePageId(null); }}
+                      className="w-4 h-4 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors"
+                      title="Cancel"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={e => deletePage(id, e)}
+                    className="opacity-0 group-hover/tab:opacity-100 absolute -top-0.5 -right-1.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all text-[10px]"
+                    title="Delete page"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                )
               )}
             </div>
           );
@@ -1119,6 +1393,9 @@ export function DashboardBuilder({
                     onInspect={() => setInspectWidgetId(widget.id)}
                     onRename={title => renameWidget(widget.id, title)}
                     onSuggestTitle={() => suggestWidgetTitle(widget.id)}
+                    onEditQuery={() => setEditQueryWidgetId(widget.id)}
+                    otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
+                    onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
                   />
                 </div>
               ))}
@@ -1186,6 +1463,21 @@ export function DashboardBuilder({
           onClose={() => setInspectWidgetId(null)}
         />
       )}
+
+      {editQueryWidgetId && org && (() => {
+        const w = widgets.find(x => x.id === editQueryWidgetId);
+        if (!w) return null;
+        return (
+          <EditQueryDialog
+            widget={w}
+            orgId={String(org.id)}
+            chatId={activeChatId}
+            connectionId={dashboard?.connection_id as string | undefined}
+            onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
+            onClose={() => setEditQueryWidgetId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

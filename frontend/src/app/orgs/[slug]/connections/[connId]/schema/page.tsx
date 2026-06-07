@@ -1,9 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { connectionApi, orgApi } from '@/lib/api';
+import { connectionApi, orgApi, chatApi } from '@/lib/api';
+import { Database, Table2, Eye, GitFork, Sparkles, X, Key, Link2, Clipboard, MessageSquare, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const TYPE_COLORS: Record<string, string> = {
   'varchar': 'text-sky-400',
@@ -33,9 +36,7 @@ function typeColor(dataType: string) {
 
 export default function SchemaExplorerPage() {
   const { slug, connId } = useParams<{ slug: string; connId: string }>();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const router = useRouter();
-  
+
   const [org, setOrg] = useState<any>(null);
   const [conn, setConn] = useState<any>(null);
   const [tables, setTables] = useState<any[]>([]);
@@ -45,6 +46,13 @@ export default function SchemaExplorerPage() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [colLoading, setColLoading] = useState(false);
+  const [explainText, setExplainText] = useState('');
+  const [explainLoading, setExplainLoading] = useState(false);
+  const [previewRows, setPreviewRows] = useState<Record<string, unknown>[]>([]);
+  const [previewCols, setPreviewCols] = useState<string[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [showExplain, setShowExplain] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, [slug, connId]);
@@ -83,6 +91,37 @@ export default function SchemaExplorerPage() {
     } catch (e) { console.error(e); }
   }
 
+  async function handleExplainDB() {
+    if (!org || !tables.length) return;
+    setExplainLoading(true); setShowExplain(true); setExplainText('');
+    try {
+      const tableList = tables.slice(0, 20).map(t => `${t.table_name} (${t.column_count} cols, ${t.fk_count} FKs)`).join(', ');
+      const { chats } = await chatApi.list(org.id, { connectionId: connId });
+      let chatId: string;
+      if (chats.length > 0) { chatId = chats[0].id; }
+      else { const { chat } = await chatApi.create(org.id, { connectionId: connId }); chatId = chat.id; }
+      const result = await chatApi.ask(org.id, chatId,
+        `Explain this database schema in plain English. Tables: ${tableList}. Describe what this database is used for, its main entities, and key relationships. Be concise but informative.`, false);
+      setExplainText((result as any)?.assistantMessage?.content || 'No explanation available.');
+    } catch (e) { setExplainText('Failed to generate explanation.'); console.error(e); }
+    finally { setExplainLoading(false); }
+  }
+
+  async function handlePreviewData(tableName: string) {
+    if (!org) return;
+    setPreviewLoading(true); setShowPreview(true); setPreviewRows([]); setPreviewCols([]);
+    try {
+      const { chats } = await chatApi.list(org.id, { connectionId: connId });
+      let chatId: string;
+      if (chats.length > 0) { chatId = chats[0].id; }
+      else { const { chat } = await chatApi.create(org.id, { connectionId: connId }); chatId = chat.id; }
+      const result = await chatApi.ask(org.id, chatId, `SELECT * FROM ${tableName} LIMIT 10`, true);
+      const exec = (result as any)?.execution;
+      if (exec?.rows) { setPreviewRows(exec.rows); setPreviewCols(exec.columns || []); }
+    } catch (e) { console.error(e); }
+    finally { setPreviewLoading(false); }
+  }
+
   async function loadColumns(tableName: string) {
     if (!org) return;
     setColLoading(true);
@@ -119,40 +158,42 @@ export default function SchemaExplorerPage() {
   const colTerm = isES ? 'Field' : 'Column';
   const colTermPlural = isES ? 'Fields' : 'Columns';
 
+  async function handleCopyERD() {
+    const lines = tables.map(t => `${t.table_name} (${t.column_count} columns, ${t.fk_count} FKs)`);
+    await navigator.clipboard.writeText(lines.join('\n'));
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <header className="border-b border-border px-6 py-3 flex items-center justify-between flex-shrink-0 bg-card/60">
-        <div className="flex items-center gap-4">
-          <Link href={`/orgs/${slug}/connections`} className="text-muted-foreground hover:text-foreground flex items-center gap-2 text-sm transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
-            Schema Explorer
-          </Link>
-          <div className="h-4 w-px bg-border" />
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🗄️</span>
-            <span className="font-semibold">{conn?.database_name || conn?.name}</span>
-            <span className="text-xs text-muted-foreground/60 font-mono ml-2">ERD</span>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={() => alert('Explain DB is coming soon!')}
-            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/60 rounded-lg text-xs font-medium text-primary transition-colors flex items-center gap-2">
-            ✨ Explain {dbTerm}
-          </button>
-          <Link href={`/orgs/${slug}/connections/${connId}/erd`} className="px-3 py-1.5 bg-primary hover:opacity-90 rounded-lg text-xs font-medium text-white transition-colors flex items-center gap-2">
-            👁️ View ERD
-          </Link>
-          <button 
-            onClick={() => alert('Copy ERD is coming soon!')}
-            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/60 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2">
-            📋 Copy ERD
-          </button>
-          <span className="text-xs text-muted-foreground ml-4">{tables.length} {tableTermPlural.toLowerCase()}</span>
+        <div className="flex items-center gap-3">
+          <Database className="w-4 h-4 text-primary shrink-0" />
+          <span className="font-semibold text-foreground">{conn?.database_name || conn?.name}</span>
+          <div className="h-4 w-px bg-border mx-1" />
+          <span className="text-xs text-muted-foreground">{tables.length} {tableTermPlural.toLowerCase()}</span>
           <span className="text-xs text-muted-foreground">{tables.reduce((sum, t) => sum + Number(t.column_count || 0), 0)} {colTermPlural.toLowerCase()}</span>
           <span className="text-xs text-muted-foreground">{tables.reduce((sum, t) => sum + Number(t.fk_count || 0), 0)} relationships</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExplainDB}
+            disabled={explainLoading || !tables.length}
+            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/80 rounded-lg text-xs font-medium text-primary transition-colors flex items-center gap-1.5 disabled:opacity-50">
+            {explainLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            Explain {dbTerm}
+          </button>
+          <Link href={`/orgs/${slug}/connections/${connId}/erd`} className="px-3 py-1.5 bg-primary hover:opacity-90 rounded-lg text-xs font-medium text-white transition-colors flex items-center gap-1.5">
+            <GitFork className="w-3.5 h-3.5" />
+            View ERD
+          </Link>
+          <button
+            onClick={handleCopyERD}
+            className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/80 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-1.5">
+            <Clipboard className="w-3.5 h-3.5" />
+            Copy ERD
+          </button>
         </div>
       </header>
 
@@ -195,30 +236,38 @@ export default function SchemaExplorerPage() {
         <div className="flex-1 overflow-y-auto bg-background">
           {!selectedTable ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
-              <div className="text-4xl text-muted-foreground">🗄️</div>
+              <div className="w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center">
+                <Database className="w-8 h-8 text-muted-foreground/50" />
+              </div>
               <h2 className="text-lg font-medium text-muted-foreground">Select a {tableTerm.toLowerCase()} to view schema</h2>
+              <p className="text-sm text-muted-foreground/60">Click any {tableTerm.toLowerCase()} in the sidebar to explore its columns and relationships</p>
             </div>
           ) : (
             <div className="p-8 max-w-6xl mx-auto">
-              
+
               <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-3">
-                  <div className="text-2xl text-primary">🗂️</div>
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
+                    <Table2 className="w-[18px] h-[18px] text-primary" />
+                  </div>
                   <h2 className="text-2xl font-bold font-mono tracking-tight">{selectedTable}</h2>
                 </div>
-                
+
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2 bg-muted/50 border border-border rounded-lg px-3 py-1.5">
                     <span className="text-xs text-muted-foreground font-mono">{columns.length} {colTermPlural.toLowerCase()}</span>
                     {pkCount > 0 && <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded font-bold">1 PK</span>}
                     {fkCount > 0 && <span className="text-[10px] px-1.5 py-0.5 bg-sky-500/20 text-sky-400 rounded font-bold">{fkCount} FK</span>}
                   </div>
-                  <button 
-                    onClick={() => alert('Preview data is coming soon!')}
-                    className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/60 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-2">
+                  <button
+                    onClick={() => handlePreviewData(selectedTable)}
+                    disabled={previewLoading}
+                    className="px-3 py-1.5 bg-muted/50 border border-border hover:bg-muted/80 rounded-lg text-xs font-medium text-foreground transition-colors flex items-center gap-1.5 disabled:opacity-50">
+                    {previewLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
                     Preview data
                   </button>
-                  <Link href={`/orgs/${slug}/chats/new?connectionId=${connId}`} className="px-3 py-1.5 bg-primary hover:opacity-90 rounded-lg text-xs font-medium text-white transition-colors flex items-center gap-2">
+                  <Link href={`/orgs/${slug}/connections/${connId}/chat`} className="px-3 py-1.5 bg-primary hover:opacity-90 rounded-lg text-xs font-medium text-white transition-colors flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5" />
                     Ask in Chat
                   </Link>
                 </div>
@@ -231,7 +280,7 @@ export default function SchemaExplorerPage() {
               ) : (
                 <>
                   <div className="mb-4 text-xs font-bold text-muted-foreground tracking-widest uppercase">{colTermPlural}</div>
-                  <div className="border border-border rounded-xl bg-card/60 overflow-hidden mb-12 shadow-xl shadow-black/20">
+                  <div className="border border-border rounded-xl bg-card/60 overflow-hidden mb-12 shadow-sm">
                     <table className="w-full text-left border-collapse">
                       <thead>
                         <tr className="border-b border-border bg-muted/20">
@@ -241,7 +290,7 @@ export default function SchemaExplorerPage() {
                           <th className="px-6 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider w-1/4">Nullable</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-white/[0.04]">
+                      <tbody className="divide-y divide-border/50">
                         {columns.map((col: any) => (
                           <tr key={col.column_name} className="hover:bg-muted/20 transition-colors">
                             <td className="px-6 py-3.5 font-mono text-sm text-foreground">
@@ -253,14 +302,14 @@ export default function SchemaExplorerPage() {
                             <td className="px-6 py-3.5">
                               <div className="flex gap-2">
                                 {col.is_primary_key && (
-                                  <div className="flex items-center gap-1.5 px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded text-[10px] font-bold">
-                                    <span>🔑</span> PK
+                                  <div className="flex items-center gap-1 px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded text-[10px] font-bold">
+                                    <Key className="w-2.5 h-2.5" /> PK
                                   </div>
                                 )}
                                 {col.is_foreign_key && (
-                                  <div className="flex items-center gap-1.5 px-2 py-0.5 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded text-[10px] font-bold" 
+                                  <div className="flex items-center gap-1 px-2 py-0.5 bg-sky-500/10 border border-sky-500/20 text-sky-400 rounded text-[10px] font-bold"
                                        title={`→ ${col.fk_ref_table}.${col.fk_ref_column}`}>
-                                    <span>🔗</span> FK
+                                    <Link2 className="w-2.5 h-2.5" /> FK
                                   </div>
                                 )}
                               </div>
@@ -317,6 +366,91 @@ export default function SchemaExplorerPage() {
           )}
         </div>
       </div>
+
+      {/* Explain DB Modal */}
+      {showExplain && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-primary" />
+                <span className="font-semibold text-foreground">Database Explanation</span>
+              </div>
+              <button onClick={() => setShowExplain(false)} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {explainLoading ? (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                  <span className="text-sm text-muted-foreground">Analyzing schema…</span>
+                </div>
+              ) : (
+                <div className="prose prose-sm prose-invert max-w-none text-foreground">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{explainText}</ReactMarkdown>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Data Modal */}
+      {showPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-5xl flex flex-col max-h-[80vh]">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-2">
+                <Eye className="w-4 h-4 text-primary" />
+                <span className="font-semibold text-foreground">Preview — {selectedTable}</span>
+                {!previewLoading && previewRows.length > 0 && (
+                  <span className="text-xs text-muted-foreground ml-2">{previewRows.length} rows</span>
+                )}
+              </div>
+              <button onClick={() => setShowPreview(false)} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              {previewLoading ? (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 className="w-7 h-7 text-primary animate-spin" />
+                  <span className="text-sm text-muted-foreground">Fetching data…</span>
+                </div>
+              ) : previewRows.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+                  <Table2 className="w-8 h-8 opacity-40" />
+                  <span className="text-sm">No rows returned</span>
+                </div>
+              ) : (
+                <div className="overflow-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/30">
+                        {previewCols.map(col => (
+                          <th key={col} className="px-4 py-2.5 font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap font-mono">{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40">
+                      {previewRows.map((row, ri) => (
+                        <tr key={ri} className="hover:bg-muted/20 transition-colors">
+                          {previewCols.map(col => (
+                            <td key={col} className="px-4 py-2.5 font-mono text-foreground/80 whitespace-nowrap max-w-[200px] truncate">
+                              {row[col] === null ? <span className="text-muted-foreground/40 italic">null</span> : String(row[col])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

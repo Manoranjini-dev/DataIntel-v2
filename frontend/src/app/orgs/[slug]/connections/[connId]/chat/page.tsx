@@ -2,12 +2,15 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import { chatApi, orgApi, connectionApi } from '@/lib/api';
+import { chatApi, orgApi, connectionApi, dashboardApi, cardApi } from '@/lib/api';
 import { usePrefsStore } from '@/lib/prefs-store';
 import dynamic from 'next/dynamic';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
-  Plus, Send, MessageSquare,
+  Plus, Send, MessageSquare, Sparkles,
   CheckCircle2, XCircle, Code2, ChevronDown, Play,
+  LayoutDashboard, BookMarked, X, Save,
 } from 'lucide-react';
 
 const GenerativeUIRenderer = dynamic(
@@ -40,15 +43,24 @@ function EditableSQLBlock({
   executionId,
   messageId,
   onRun,
+  onSave,
   running,
 }: {
   initialSQL: string;
   executionId?: string;
   messageId: string;
   onRun: (messageId: string, executionId: string, sql: string) => void;
+  onSave?: (sql: string) => void;
   running: boolean;
 }) {
   const [sql, setSQL] = useState(initialSQL);
+  const [saved, setSaved] = useState(false);
+
+  function handleSave() {
+    onSave?.(sql);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
 
   return (
     <div className="mt-3 space-y-2">
@@ -65,31 +77,50 @@ function EditableSQLBlock({
       {/* Editable textarea */}
       <textarea
         value={sql}
-        onChange={e => setSQL(e.target.value)}
+        onChange={e => { setSQL(e.target.value); setSaved(false); }}
         disabled={running}
         rows={Math.min(12, Math.max(3, sql.split('\n').length + 1))}
         className="w-full text-xs font-mono bg-muted/70 border border-primary/20 rounded-xl px-3 py-2.5 text-foreground resize-y min-h-[72px] focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all disabled:opacity-50"
         spellCheck={false}
       />
 
-      {/* Execute button */}
-      <button
-        onClick={() => onRun(messageId, executionId || '', sql)}
-        disabled={running || !sql.trim()}
-        className="w-full py-2.5 bg-primary text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
-      >
-        {running ? (
-          <>
-            <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-            Running…
-          </>
-        ) : (
-          <>
-            <Play className="w-3.5 h-3.5" />
-            Execute Query
-          </>
+      {/* Action buttons */}
+      <div className="flex gap-2">
+        {/* Save to Card Library */}
+        {onSave && (
+          <button
+            onClick={handleSave}
+            disabled={running || !sql.trim()}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all disabled:opacity-40 border ${
+              saved
+                ? 'bg-success/10 border-success/30 text-success'
+                : 'bg-muted/70 border-border text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+          >
+            <Save className="w-3.5 h-3.5" />
+            {saved ? 'Saved!' : 'Save'}
+          </button>
         )}
-      </button>
+
+        {/* Execute */}
+        <button
+          onClick={() => onRun(messageId, executionId || '', sql)}
+          disabled={running || !sql.trim()}
+          className="flex-1 py-2.5 bg-primary text-white text-xs font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-40 flex items-center justify-center gap-2"
+        >
+          {running ? (
+            <>
+              <div className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+              Running…
+            </>
+          ) : (
+            <>
+              <Play className="w-3.5 h-3.5" />
+              Execute Query
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
@@ -100,14 +131,19 @@ function ChatBubble({
   autoExecute,
   showGeneratedSQL,
   onRunSQL,
+  onAddToDashboard,
+  onSaveCard,
 }: {
   message: Message;
   autoExecute: boolean;
   showGeneratedSQL: boolean;
   onRunSQL: (messageId: string, executionId: string, sql: string) => void;
+  onAddToDashboard?: (msg: Message) => void;
+  onSaveCard?: (msg: Message) => void;
 }) {
   const [showSQL, setShowSQL] = useState(false);
-  const hasChart = message.result_preview?.length && message.result_columns?.length;
+  // Fix: use explicit boolean to avoid React rendering "0"
+  const hasChart = (message.result_preview?.length ?? 0) > 0 && (message.result_columns?.length ?? 0) > 0;
 
   if (message.role === 'user') {
     return (
@@ -141,7 +177,9 @@ function ChatBubble({
           className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3"
           style={{ boxShadow: 'var(--shadow-soft)' }}
         >
-          <p className="text-sm text-foreground leading-relaxed">{message.content}</p>
+          <div className="text-sm text-foreground leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-strong:text-foreground prose-code:text-primary prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          </div>
 
           {/* Status bar — only after execution */}
           {message.exec_status && !isPendingSQL && (
@@ -179,6 +217,7 @@ function ChatBubble({
                 executionId={message.executionId}
                 messageId={message.id}
                 onRun={onRunSQL}
+                onSave={onSaveCard ? (sql) => onSaveCard({ ...message, generated_query: sql }) : undefined}
                 running={!!message.sql_running}
               />
             </div>
@@ -194,15 +233,32 @@ function ChatBubble({
 
         {/* Chart / data visualisation — shown only after execution */}
         {hasChart && !isPendingSQL && (
-          <GenerativeUIRenderer
-            execution={{
-              rows: message.result_preview || [],
-              columns: message.result_columns || [],
-              rowCount: message.row_count || 0,
-              executionTimeMs: message.execution_time_ms || 0,
-            } as any}
-            uiHint={message.ui_hint as any}
-          />
+          <>
+            <GenerativeUIRenderer
+              execution={{
+                rows: message.result_preview || [],
+                columns: message.result_columns || [],
+                rowCount: message.row_count || 0,
+                executionTimeMs: message.execution_time_ms || 0,
+              } as any}
+              uiHint={message.ui_hint as any}
+            />
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <button
+                onClick={() => onAddToDashboard?.(message)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" /> Add to Dashboard
+              </button>
+              <button
+                onClick={() => onSaveCard?.(message)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
+              >
+                <BookMarked className="w-3.5 h-3.5" /> Save to Card Library
+              </button>
+            </div>
+          </>
         )}
 
         <p className="text-[10px] text-muted-foreground/60 px-1">
@@ -232,6 +288,8 @@ export default function ConnectionChatPage() {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showChatList, setShowChatList] = useState(false);
+  const [addToDashMsg, setAddToDashMsg] = useState<Message | null>(null);
+  const [saveCardMsg, setSaveCardMsg] = useState<Message | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
@@ -430,13 +488,10 @@ export default function ConnectionChatPage() {
         className="h-12 border-b border-border bg-background/95 backdrop-blur-md px-5 flex items-center gap-3 shrink-0"
         style={{ boxShadow: 'var(--shadow-soft)' }}
       >
-        {/* Connection label */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="w-6 h-6 rounded-lg bg-primary/10 flex items-center justify-center text-[10px] font-bold text-primary">
-            {(conn?.connector_type?.[0] ?? 'DB').toUpperCase()}
-          </div>
-          <span className="text-xs font-medium text-muted-foreground hidden sm:block">{conn?.name}</span>
+        {/* Connection status dot */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <div className="w-1.5 h-1.5 rounded-full bg-success" title="Connected" />
+          <span className="text-xs text-muted-foreground hidden sm:block">{conn?.name}</span>
         </div>
 
         <div className="w-px h-4 bg-border shrink-0" />
@@ -524,7 +579,7 @@ export default function ConnectionChatPage() {
                 className="w-16 h-16 rounded-2xl flex items-center justify-center"
                 style={{ background: 'linear-gradient(135deg, rgba(217,122,30,.15), rgba(245,166,35,.15))', border: '1px solid rgba(217,122,30,.2)' }}
               >
-                <span className="text-3xl">🤖</span>
+                <Sparkles className="w-8 h-8 text-primary" />
               </div>
               <div>
                 <h2 className="text-xl font-bold text-foreground mb-2">Ask your database anything</h2>
@@ -554,6 +609,8 @@ export default function ConnectionChatPage() {
                 autoExecute={autoExecute}
                 showGeneratedSQL={showGeneratedSQL}
                 onRunSQL={handleRunSQL}
+                onAddToDashboard={setAddToDashMsg}
+                onSaveCard={setSaveCardMsg}
               />
             ))
           )}
@@ -588,6 +645,187 @@ export default function ConnectionChatPage() {
             {autoExecute ? 'Enter to send · Shift+Enter for new line' : 'Enter to generate SQL · review and run manually'}
           </p>
         </div>
+      </div>
+
+      {/* ── Add to Dashboard Modal ──────────────────────────── */}
+      {addToDashMsg && org && (
+        <AddToDashboardModal
+          orgId={org.id}
+          orgSlug={slug}
+          connId={connId}
+          message={addToDashMsg}
+          onClose={() => setAddToDashMsg(null)}
+        />
+      )}
+
+      {/* ── Save Card Modal ──────────────────────────────────── */}
+      {saveCardMsg && org && (
+        <SaveCardModal
+          orgId={org.id}
+          message={saveCardMsg}
+          onClose={() => setSaveCardMsg(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Add to Dashboard Modal ─────────────────────────────────────
+function AddToDashboardModal({ orgId, connId, message, onClose }: {
+  orgId: string; orgSlug?: string; connId: string; message: Message; onClose: () => void;
+}) {
+  const [dashboards, setDashboards] = useState<any[]>([]);
+  const [selectedDash, setSelectedDash] = useState<string>('');
+  const [pages, setPages] = useState<any[]>([]);
+  const [selectedPage, setSelectedPage] = useState<string>('');
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    dashboardApi.list(orgId).then(res => {
+      setDashboards(res.dashboards);
+      if (res.dashboards.length > 0) setSelectedDash(res.dashboards[0].id);
+    }).catch(console.error);
+  }, [orgId]);
+
+  useEffect(() => {
+    if (!selectedDash) return;
+    dashboardApi.get(orgId, selectedDash).then(res => {
+      setPages(res.pages || []);
+      if (res.pages?.length > 0) setSelectedPage(String(res.pages[0].id));
+    }).catch(console.error);
+  }, [selectedDash, orgId]);
+
+  async function handleAdd() {
+    if (!selectedDash || !selectedPage) return;
+    setSaving(true);
+    try {
+      await dashboardApi.addWidget(orgId, selectedDash, selectedPage, {
+        title: message.content.slice(0, 50),
+        widget_type: message.ui_hint || 'table',
+        queryPrompt: message.generated_query || message.content,
+        resultRows: message.result_preview || [],
+        resultColumns: message.result_columns || [],
+        uiHint: message.ui_hint || 'table',
+        gridX: 0, gridY: 999, gridW: 4, gridH: 3,
+        datasourceScopeType: 'connection',
+      });
+      setDone(true);
+    } catch (e) { console.error(e); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-2">
+            <LayoutDashboard className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Add to Dashboard</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          {done ? (
+            <div className="text-center py-4">
+              <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-3" />
+              <p className="text-sm font-semibold text-foreground">Widget added!</p>
+              <p className="text-xs text-muted-foreground mt-1">Find it on your dashboard</p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Dashboard</label>
+                <select value={selectedDash} onChange={e => setSelectedDash(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                  {dashboards.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  {dashboards.length === 0 && <option value="">No dashboards yet</option>}
+                </select>
+              </div>
+              {pages.length > 1 && (
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Page</label>
+                  <select value={selectedPage} onChange={e => setSelectedPage(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    {pages.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        {!done && (
+          <div className="flex gap-2 px-5 pb-5">
+            <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
+            <button onClick={handleAdd} disabled={saving || !selectedDash}
+              className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
+              {saving ? 'Adding…' : 'Add Widget'}
+            </button>
+          </div>
+        )}
+        {done && <div className="pb-5 px-5"><button onClick={onClose} className="w-full py-2 bg-muted border border-border rounded-xl text-sm text-foreground hover:bg-muted/80 transition-colors">Close</button></div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Save Card Modal ────────────────────────────────────────────
+function SaveCardModal({ orgId, message, onClose }: { orgId: string; message: Message; onClose: () => void }) {
+  const [name, setName] = useState(message.content.slice(0, 60));
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+
+  async function handleSave() {
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      await cardApi.create(orgId, {
+        name,
+        raw_query: message.generated_query || '',
+        chart_type: message.ui_hint || 'table',
+        description: message.content.slice(0, 200),
+      });
+      setDone(true);
+    } catch (e) { console.error(e); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-2">
+            <BookMarked className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Save to Card Library</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          {done ? (
+            <div className="text-center py-4">
+              <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-3" />
+              <p className="text-sm font-semibold text-foreground">Card saved!</p>
+              <p className="text-xs text-muted-foreground mt-1">Find it in Cards</p>
+            </div>
+          ) : (
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Card Name</label>
+              <input value={name} onChange={e => setName(e.target.value)}
+                className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              <p className="text-xs text-muted-foreground mt-2">Chart type: <span className="font-medium text-foreground">{message.ui_hint || 'table'}</span></p>
+            </div>
+          )}
+        </div>
+        {!done && (
+          <div className="flex gap-2 px-5 pb-5">
+            <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
+            <button onClick={handleSave} disabled={saving || !name.trim()}
+              className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
+              {saving ? 'Saving…' : 'Save Card'}
+            </button>
+          </div>
+        )}
+        {done && <div className="pb-5 px-5"><button onClick={onClose} className="w-full py-2 bg-muted border border-border rounded-xl text-sm text-foreground hover:bg-muted/80 transition-colors">Close</button></div>}
       </div>
     </div>
   );

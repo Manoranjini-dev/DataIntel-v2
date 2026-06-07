@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { orgApi } from '@/lib/api';
+import { Trash2, Check, X } from 'lucide-react';
 
 const ROLE_COLORS: Record<string, string> = {
   owner: 'bg-amber-500/10 border-amber-500/20 text-amber-400',
@@ -20,6 +21,7 @@ export default function MembersPage() {
   const [inviteRole, setInviteRole] = useState('member');
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState('');
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadData(); }, [slug]);
@@ -49,11 +51,13 @@ export default function MembersPage() {
   }
 
   async function removeMember(accountId: string) {
-    if (!org || !confirm('Remove this member?')) return;
+    if (!org) return;
+    if (confirmRemoveId !== accountId) { setConfirmRemoveId(accountId); return; }
     try {
       await orgApi.removeMember(org.id, accountId);
       setMembers(ms => ms.filter(m => m.account_id !== accountId));
     } catch (e) { console.error(e); }
+    finally { setConfirmRemoveId(null); }
   }
 
   if (loading) return (
@@ -120,12 +124,27 @@ export default function MembersPage() {
                 {member.role}
               </span>
               {isOwnerOrAdmin && member.role !== 'owner' && (
-                <button onClick={() => removeMember(member.account_id)}
-                  className="text-muted-foreground/60 hover:text-red-400 transition-colors text-sm">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6"/><path d="m19 6-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6m5 0V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2"/>
-                  </svg>
-                </button>
+                confirmRemoveId === member.account_id ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-destructive font-medium">Remove?</span>
+                    <button
+                      onClick={() => removeMember(member.account_id)}
+                      className="p-1 rounded-md bg-destructive text-white hover:opacity-90 transition-opacity"
+                      title="Confirm"
+                    ><Check className="w-3.5 h-3.5" /></button>
+                    <button
+                      onClick={() => setConfirmRemoveId(null)}
+                      className="p-1 rounded-md bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                      title="Cancel"
+                    ><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => removeMember(member.account_id)}
+                    className="p-1.5 rounded-md text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    title="Remove member"
+                  ><Trash2 className="w-3.5 h-3.5" /></button>
+                )
               )}
             </div>
           ))}

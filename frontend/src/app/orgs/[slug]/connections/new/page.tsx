@@ -6,16 +6,16 @@ import Link from 'next/link';
 import { connectionApi, orgApi } from '@/lib/api';
 
 const CONNECTORS = [
-  { type: 'postgres',      label: 'PostgreSQL',      icon: '🐘', defaultPort: 5432 },
-  { type: 'mysql',         label: 'MySQL',           icon: '🔵', defaultPort: 3306 },
-  { type: 'mssql',         label: 'SQL Server',      icon: '🟦', defaultPort: 1433 },
-  { type: 'snowflake',     label: 'Snowflake',       icon: '❄️', defaultPort: 443 },
-  { type: 'bigquery',      label: 'BigQuery',        icon: '🔷', defaultPort: 443 },
-  { type: 'redshift',      label: 'Redshift',        icon: '🔴', defaultPort: 5439 },
-  { type: 'mongodb',       label: 'MongoDB',         icon: '🍃', defaultPort: 27017 },
-  { type: 'elasticsearch', label: 'Elasticsearch',   icon: '🟡', defaultPort: 9200 },
-  { type: 'databricks',    label: 'Databricks',      icon: '⚡', defaultPort: 443 },
-  { type: 'oracle',        label: 'Oracle',          icon: '🔶', defaultPort: 1521 },
+  { type: 'postgres',      label: 'PostgreSQL',    abbr: 'PG', color: 'text-sky-400 bg-sky-500/10',         defaultPort: 5432  },
+  { type: 'mysql',         label: 'MySQL',         abbr: 'MY', color: 'text-blue-400 bg-blue-500/10',       defaultPort: 3306  },
+  { type: 'mssql',         label: 'SQL Server',    abbr: 'MS', color: 'text-blue-300 bg-blue-600/10',       defaultPort: 1433  },
+  { type: 'snowflake',     label: 'Snowflake',     abbr: 'SF', color: 'text-cyan-400 bg-cyan-500/10',       defaultPort: 443   },
+  { type: 'bigquery',      label: 'BigQuery',      abbr: 'BQ', color: 'text-amber-400 bg-amber-500/10',     defaultPort: 443   },
+  { type: 'redshift',      label: 'Redshift',      abbr: 'RS', color: 'text-red-400 bg-red-500/10',         defaultPort: 5439  },
+  { type: 'mongodb',       label: 'MongoDB',       abbr: 'MG', color: 'text-green-400 bg-green-500/10',     defaultPort: 27017 },
+  { type: 'elasticsearch', label: 'Elasticsearch', abbr: 'ES', color: 'text-yellow-400 bg-yellow-500/10',   defaultPort: 9200  },
+  { type: 'databricks',    label: 'Databricks',    abbr: 'DB', color: 'text-orange-400 bg-orange-500/10',   defaultPort: 443   },
+  { type: 'oracle',        label: 'Oracle',        abbr: 'OR', color: 'text-red-300 bg-red-400/10',         defaultPort: 1521  },
 ];
 
 const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40';
@@ -75,7 +75,7 @@ export default function NewConnectionPage() {
                     ? 'border-primary/50 bg-primary/10 text-primary shadow-sm'
                     : 'border-border bg-muted/30 text-muted-foreground hover:border-primary/20 hover:bg-primary/5'
                 }`}>
-                <span className="text-xl">{c.icon}</span>
+                <span className={`text-[11px] font-extrabold tracking-widest px-2 py-1 rounded-md ${c.color}`}>{c.abbr}</span>
                 <span className="text-[11px] font-medium">{c.label}</span>
               </button>
             ))}

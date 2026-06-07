@@ -23,6 +23,11 @@ class AskDto {
   @IsOptional() autoExecute?: boolean;
 }
 
+class ExecuteDraftDto {
+  @IsString() @IsOptional() executionId?: string;
+  @IsString() @IsNotEmpty() sql!: string;
+}
+
 @Controller('orgs/:orgId/chats')
 export class ChatController {
   constructor(
@@ -82,6 +87,18 @@ export class ChatController {
     @Body() dto: AskDto,
   ) {
     return this.chatQueryService.query(orgId, chatId, user, dto.prompt);
+  }
+
+  /** Re-execute a (possibly user-edited) SQL draft */
+  @Post(':chatId/execute-draft')
+  @HttpCode(HttpStatus.OK)
+  async executeDraft(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('chatId') chatId: string,
+    @Body() dto: ExecuteDraftDto,
+  ) {
+    return this.chatQueryService.executeDraft(orgId, chatId, user, dto.executionId || '', dto.sql);
   }
 
   @Patch(':chatId/title')

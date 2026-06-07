@@ -395,6 +395,7 @@ export default function DataSourcesPage() {
   const [syncing,     setSyncing]     = useState<string | null>(null);
   const [editConn,    setEditConn]    = useState<any | null>(null);
   const [showNew,     setShowNew]     = useState(false);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
   useEffect(() => { loadData(); }, [slug]);
 
@@ -419,12 +420,14 @@ export default function DataSourcesPage() {
     } finally { setSyncing(null); }
   }
 
-  async function handleDelete(connId: string, name: string) {
-    if (!org || !window.confirm(`Delete "${name}"?`)) return;
+  async function handleDelete(connId: string) {
+    if (!org) return;
+    if (confirmingDeleteId !== connId) { setConfirmingDeleteId(connId); return; }
     try {
       await connectionApi.delete(org.id, connId);
       setConnections(cs => cs.filter(c => c.id !== connId));
     } catch (e) { console.error(e); }
+    finally { setConfirmingDeleteId(null); }
   }
 
   return (
@@ -504,27 +507,45 @@ export default function DataSourcesPage() {
 
                   {/* Actions — visible on hover */}
                   <div className="flex items-center gap-1 pr-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <button
-                      onClick={() => handleSync(conn.id)}
-                      disabled={isSyncing}
-                      title="Sync schema"
-                      className="p-1.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 transition-colors"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(conn.id, conn.name)}
-                      title="Delete"
-                      className="p-1.5 rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setEditConn(conn)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 ml-0.5 bg-muted hover:bg-[#2B2B2B] hover:text-white rounded-md text-xs font-semibold text-muted-foreground transition-all"
-                    >
-                      <Pencil className="w-3 h-3" /> Edit
-                    </button>
+                    {confirmingDeleteId === conn.id ? (
+                      <>
+                        <span className="text-xs text-destructive font-medium mr-1">Delete?</span>
+                        <button
+                          onClick={() => handleDelete(conn.id)}
+                          className="p-1.5 rounded-md bg-destructive text-white hover:opacity-90 transition-opacity"
+                          title="Confirm delete"
+                        ><Check className="w-3.5 h-3.5" /></button>
+                        <button
+                          onClick={() => setConfirmingDeleteId(null)}
+                          className="p-1.5 rounded-md bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground transition-colors"
+                          title="Cancel"
+                        ><X className="w-3.5 h-3.5" /></button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => handleSync(conn.id)}
+                          disabled={isSyncing}
+                          title="Sync schema"
+                          className="p-1.5 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40 transition-colors"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(conn.id)}
+                          title="Delete"
+                          className="p-1.5 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setEditConn(conn)}
+                          className="flex items-center gap-1 px-2.5 py-1.5 ml-0.5 bg-muted hover:bg-[#2B2B2B] hover:text-white rounded-md text-xs font-semibold text-muted-foreground transition-all"
+                        >
+                          <Pencil className="w-3 h-3" /> Edit
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               );

@@ -4,12 +4,20 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { connectionApi, orgApi, chatApi } from '@/lib/api';
-import { MessageSquare, ArrowRight, Plus } from 'lucide-react';
+import { MessageSquare, ArrowRight, Plus, Database, RefreshCw, Zap, LayoutDashboard, Loader2, CheckCircle, XCircle } from 'lucide-react';
 
-const CONNECTOR_ICONS: Record<string, string> = {
-  mysql: '🔵', postgres: '🐘', postgresql: '🐘', elasticsearch: '🟡',
-  mongodb: '🍃', databricks: '⚡', mssql: '🟦', snowflake: '❄️',
-  bigquery: '🔶', redshift: '🔴',
+/** Short colored badge for each connector type */
+const CONNECTOR_COLOR: Record<string, { bg: string; text: string; label: string }> = {
+  mysql:         { bg: 'bg-blue-500/15',   text: 'text-blue-400',   label: 'MY'  },
+  postgres:      { bg: 'bg-sky-500/15',    text: 'text-sky-400',    label: 'PG'  },
+  postgresql:    { bg: 'bg-sky-500/15',    text: 'text-sky-400',    label: 'PG'  },
+  elasticsearch: { bg: 'bg-yellow-500/15', text: 'text-yellow-400', label: 'ES'  },
+  mongodb:       { bg: 'bg-green-500/15',  text: 'text-green-400',  label: 'MG'  },
+  databricks:    { bg: 'bg-orange-500/15', text: 'text-orange-400', label: 'DB'  },
+  mssql:         { bg: 'bg-blue-600/15',   text: 'text-blue-300',   label: 'MS'  },
+  snowflake:     { bg: 'bg-cyan-500/15',   text: 'text-cyan-400',   label: 'SF'  },
+  bigquery:      { bg: 'bg-amber-500/15',  text: 'text-amber-400',  label: 'BQ'  },
+  redshift:      { bg: 'bg-red-500/15',    text: 'text-red-400',    label: 'RS'  },
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -79,14 +87,21 @@ export default function ConnectionOverviewPage() {
 
         {/* Title row */}
         <div className="flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground tracking-tight flex items-center gap-3">
-              <span className="text-2xl">{CONNECTOR_ICONS[conn?.connector_type?.toLowerCase()] || '🔌'}</span>
-              {conn?.name}
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              {conn?.connector_type} · {conn?.host}:{conn?.port} · {conn?.database_name}
-            </p>
+          <div className="flex items-center gap-4">
+            {(() => {
+              const cc = CONNECTOR_COLOR[conn?.connector_type?.toLowerCase()] ?? { bg: 'bg-muted', text: 'text-muted-foreground', label: 'DB' };
+              return (
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 ${cc.bg}`}>
+                  <span className={`text-xs font-extrabold tracking-widest ${cc.text}`}>{cc.label}</span>
+                </div>
+              );
+            })()}
+            <div>
+              <h1 className="text-2xl font-bold text-foreground tracking-tight">{conn?.name}</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {conn?.connector_type} · {conn?.host}:{conn?.port} · {conn?.database_name}
+              </p>
+            </div>
           </div>
           <span className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${STATUS_COLORS[conn?.status] || STATUS_COLORS.inactive}`}>
             {conn?.status?.toUpperCase()}
@@ -117,11 +132,13 @@ export default function ConnectionOverviewPage() {
             <div className="space-y-2.5 flex-1 flex flex-col justify-center">
               <button onClick={handleTest} disabled={testing}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary hover:bg-secondary/80 border border-border rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
-                {testing ? '⏳ Testing…' : '🔍 Test Connection'}
+                {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {testing ? 'Testing…' : 'Test Connection'}
               </button>
               <button onClick={handleSync} disabled={syncing}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary/10 hover:bg-primary/20 border border-primary/20 text-primary rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
-                {syncing ? '⏳ Syncing…' : '🔄 Sync Schema'}
+                {syncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                {syncing ? 'Syncing…' : 'Sync Schema'}
               </button>
               <button onClick={startNewChat}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary hover:opacity-90 rounded-xl text-sm font-semibold text-white transition-opacity">
@@ -184,8 +201,8 @@ export default function ConnectionOverviewPage() {
                   href={`/orgs/${slug}/connections/${connId}/chat?chatId=${chat.id}`}
                   className="flex items-center gap-4 px-6 py-3.5 hover:bg-muted/40 transition-colors group"
                 >
-                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-sm shrink-0">
-                    💬
+                  <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <MessageSquare className="w-4 h-4 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors">
@@ -204,7 +221,9 @@ export default function ConnectionOverviewPage() {
 
         {/* Dashboard preview */}
         <div className="bg-card border border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center" style={{ boxShadow: 'var(--shadow-soft)' }}>
-          <div className="text-4xl mb-4">📊</div>
+          <div className="w-14 h-14 rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
+            <LayoutDashboard className="w-7 h-7 text-primary" />
+          </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">Connection Dashboard</h3>
           <p className="text-sm text-muted-foreground mb-6 max-w-md">
             View key metrics, query insights, and custom charts for this connection.

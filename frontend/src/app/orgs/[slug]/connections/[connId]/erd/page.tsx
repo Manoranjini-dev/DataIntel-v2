@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { orgApi } from '@/lib/api';
+import { AlertTriangle } from 'lucide-react';
 import dagre from 'dagre';
 import {
   ReactFlow,
@@ -200,15 +201,17 @@ export default function ERDPage() {
   }
 
   if (loading) return (
-    <div className="flex-1 flex items-center justify-center">
+    <div className="h-full flex items-center justify-center">
       <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
     </div>
   );
 
   if (error) return (
-    <div className="flex-1 flex items-center justify-center">
-      <div className="bg-muted/50 border border-border rounded-2xl p-8 max-w-md text-center shadow-2xl shadow-black/50">
-        <div className="text-4xl mb-4">⚠️</div>
+    <div className="h-full flex items-center justify-center">
+      <div className="bg-muted/50 border border-border rounded-2xl p-8 max-w-md text-center shadow-lg">
+        <div className="w-14 h-14 rounded-full bg-destructive/10 flex items-center justify-center mx-auto mb-4">
+          <AlertTriangle className="w-7 h-7 text-destructive" />
+        </div>
         <p className="text-foreground mb-6">{error}</p>
         <Link href={`/orgs/${slug}/connections/${connId}`} className="px-4 py-2 bg-primary hover:opacity-90 rounded-lg text-sm font-medium transition-colors">
           Go back to Connection
@@ -218,13 +221,13 @@ export default function ERDPage() {
   );
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden relative overflow-hidden">
+    <div className="h-full w-full flex flex-col overflow-hidden relative">
       <header className="absolute top-0 left-0 right-0 z-10 px-6 py-4 flex items-center justify-between pointer-events-none">
         <Link href={`/orgs/${slug}/connections/${connId}/schema`} className="pointer-events-auto flex items-center gap-2 px-4 py-2 bg-card/90 border border-border rounded-xl text-sm font-medium hover:bg-muted backdrop-blur-md transition-all text-foreground shadow-xl">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6"/></svg>
           Back to Schema
         </Link>
-        <div className="pointer-events-auto flex items-center gap-2 bg-black/60 border border-border rounded-xl px-4 py-2 backdrop-blur-md text-xs text-muted-foreground font-medium shadow-xl shadow-black/20">
+        <div className="pointer-events-auto flex items-center gap-2 bg-card/90 border border-border rounded-xl px-4 py-2 backdrop-blur-md text-xs text-muted-foreground font-medium shadow-lg">
           <span className="text-primary font-bold">Drag</span> to pan · <span className="text-primary font-bold">Scroll</span> to zoom · <span className="text-primary font-bold">Drag tables</span> to move
         </div>
       </header>

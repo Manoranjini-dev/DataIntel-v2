@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { connectionApi, orgApi } from '@/lib/api';
 import {
   Code2, Zap, BarChart3, Rows3, Keyboard, Trash2, Radio,
-  TestTube2, Database, ShieldAlert, CheckCircle2, RefreshCw,
+  TestTube2, Database, ShieldAlert, CheckCircle2, RefreshCw, Check, X,
 } from 'lucide-react';
 
 // ── Design Components ──────────────────────────────────────────
@@ -80,6 +80,7 @@ function Section({ title, subtitle, children }: { title: string; subtitle?: stri
 
 export default function ConnectionSettingsPage() {
   const { slug, connId } = useParams<{ slug: string; connId: string }>();
+  const router = useRouter();
 
   const [conn, setConn] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -89,6 +90,7 @@ export default function ConnectionSettingsPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [sessionCleared, setSessionCleared] = useState(false);
   const [org, setOrg] = useState<any>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   // Query / execution preferences
   const [showGeneratedQuery, setShowGeneratedQuery] = useState(false);
@@ -431,12 +433,36 @@ export default function ConnectionSettingsPage() {
                   </p>
                 </div>
               </div>
-              <button
-                onClick={() => window.confirm('Delete this connection? This cannot be undone.')}
-                className="px-4 py-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-xl text-xs font-semibold hover:bg-destructive/20 transition-colors shrink-0 ml-4"
-              >
-                Delete
-              </button>
+              {confirmDelete ? (
+                <div className="flex items-center gap-2 ml-4 shrink-0">
+                  <span className="text-xs text-destructive font-medium">Permanently delete?</span>
+                  <button
+                    onClick={async () => {
+                      if (!org) return;
+                      try {
+                        await connectionApi.delete(org.id, connId);
+                        router.push(`/orgs/${slug}/connections`);
+                      } catch (e) { console.error(e); setConfirmDelete(false); }
+                    }}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-destructive text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Yes, delete
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(false)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-muted border border-border text-muted-foreground rounded-lg text-xs font-semibold hover:text-foreground transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" /> Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="px-4 py-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-xl text-xs font-semibold hover:bg-destructive/20 transition-colors shrink-0 ml-4"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
         </Section>

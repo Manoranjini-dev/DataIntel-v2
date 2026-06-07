@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { chatApi, connectionApi, orgApi, comboApi } from '@/lib/api';
-import { MessageSquare, Plus, Archive, Trash2 } from 'lucide-react';
+import { MessageSquare, Plus, Archive, Trash2, Check, X, GitFork } from 'lucide-react';
 
 export default function ChatsPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -18,6 +18,7 @@ export default function ChatsPage() {
   const [connections, setConnections] = useState<any[]>([]);
   const [combos, setCombos] = useState<any[]>([]);
   const [isArchived, setIsArchived] = useState(false);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadData(); }, [slug, connectionId, comboId, isArchived]);
@@ -59,11 +60,13 @@ export default function ChatsPage() {
 
   async function handleDelete(chatId: string, e: React.MouseEvent) {
     e.preventDefault(); e.stopPropagation();
-    if (!org || !window.confirm('Delete this chat?')) return;
+    if (!org) return;
+    if (confirmingDeleteId !== chatId) { setConfirmingDeleteId(chatId); return; }
     try {
       await chatApi.delete(org.id, chatId);
       setChats(c => c.filter(ch => ch.id !== chatId));
     } catch (err) { console.error(err); }
+    finally { setConfirmingDeleteId(null); }
   }
 
   // Build "start new chat" href
@@ -263,8 +266,10 @@ export default function ChatsPage() {
                     href={chatHref}
                     className="flex items-center gap-4 px-5 py-3.5 hover:bg-muted/40 transition-colors group"
                   >
-                    <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center text-base shrink-0">
-                      {chat.combo_id ? '🔗' : '💬'}
+                    <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                      {chat.combo_id
+                        ? <GitFork className="w-4 h-4 text-primary" />
+                        : <MessageSquare className="w-4 h-4 text-primary" />}
                     </div>
 
                     <div className="flex-1 min-w-0">
@@ -277,36 +282,59 @@ export default function ChatsPage() {
                           <span className="ml-1.5 px-1.5 py-0.5 bg-muted rounded text-[10px]">{chat.connection_name}</span>
                         )}
                         {chat.combo_name && (
-                          <span className="ml-1.5 px-1.5 py-0.5 bg-muted rounded text-[10px]">🔗 {chat.combo_name}</span>
+                          <span className="ml-1.5 px-1.5 py-0.5 bg-muted rounded text-[10px]">{chat.combo_name}</span>
                         )}
                       </p>
                     </div>
 
                     <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                      {isArchived ? (
-                        <button
-                          onClick={e => handleUnarchive(chat.id, e)}
-                          className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                          title="Unarchive"
-                        >
-                          <Archive className="w-3.5 h-3.5" />
-                        </button>
+                      {confirmingDeleteId === chat.id ? (
+                        /* Inline confirm row */
+                        <>
+                          <span className="text-xs text-destructive font-medium pr-1">Delete?</span>
+                          <button
+                            onClick={e => handleDelete(chat.id, e)}
+                            className="p-1.5 rounded-lg bg-destructive text-white hover:opacity-90 transition-opacity"
+                            title="Confirm delete"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={e => { e.preventDefault(); e.stopPropagation(); setConfirmingDeleteId(null); }}
+                            className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                            title="Cancel"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </>
                       ) : (
-                        <button
-                          onClick={e => handleArchive(chat.id, e)}
-                          className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                          title="Archive"
-                        >
-                          <Archive className="w-3.5 h-3.5" />
-                        </button>
+                        <>
+                          {isArchived ? (
+                            <button
+                              onClick={e => handleUnarchive(chat.id, e)}
+                              className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                              title="Unarchive"
+                            >
+                              <Archive className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={e => handleArchive(chat.id, e)}
+                              className="p-1.5 rounded-lg bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                              title="Archive"
+                            >
+                              <Archive className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button
+                            onClick={e => handleDelete(chat.id, e)}
+                            className="p-1.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </>
                       )}
-                      <button
-                        onClick={e => handleDelete(chat.id, e)}
-                        className="p-1.5 rounded-lg bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
                     </div>
                   </Link>
                 );

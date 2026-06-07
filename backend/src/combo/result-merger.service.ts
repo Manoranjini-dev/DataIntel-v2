@@ -73,14 +73,25 @@ export class ResultMergerService {
       });
     }
 
-    // Filter to output columns if specified
-    let columns = merged.length > 0 ? Object.keys(merged[0]) : [];
+    // Build final column list — always include ALL merged columns so that
+    // right-side projected columns (order_count, total_order_value, etc.) are
+    // not dropped when the LLM plan's outputColumns only lists left-side columns.
+    const allMergedCols = merged.length > 0 ? Object.keys(merged[0]) : [];
+    let columns = allMergedCols;
+
     if (outputColumns?.length) {
       const outSet = new Set(outputColumns);
-      columns = columns.filter(c => outSet.has(c));
-      merged = merged.map(row =>
-        Object.fromEntries(columns.map(c => [c, row[c]])),
-      );
+      // Only apply the filter when outputColumns actually covers all merged cols
+      // (i.e. the plan is complete). If it's missing any merged col, fall back
+      // to returning everything so we never silently drop right-side data.
+      const planCoversAll = allMergedCols.every(c => outSet.has(c));
+      if (planCoversAll) {
+        columns = outputColumns.filter(c => allMergedCols.includes(c));
+        merged = merged.map(row =>
+          Object.fromEntries(columns.map(c => [c, row[c]])),
+        );
+      }
+      // else: outputColumns is incomplete → return all merged columns as-is
     }
 
     this.logger.log(`Hash join: ${merged.length} merged rows, ${columns.length} columns`);

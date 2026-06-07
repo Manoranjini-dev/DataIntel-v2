@@ -5,6 +5,9 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { chatApi, orgApi, dashboardApi, cardApi } from '@/lib/api';
 import dynamic from 'next/dynamic';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { Play, Save, Code2, LayoutDashboard, BookMarked, MessageSquare, Sparkles, Table2 } from 'lucide-react';
 
 const GenerativeUIRenderer = dynamic(
   () => import('@/components/generative-ui').then((m) => m.GenerativeUIRenderer),
@@ -61,12 +64,18 @@ interface MessageBubble {
   execution_id?: string;
 }
 
-function ChatBubble({ message, onExecuteDraft, onAddToDashboard, onSaveAsCard }: { message: MessageBubble, onExecuteDraft?: (executionId: string, sql: string) => void, onAddToDashboard?: (message: MessageBubble) => void, onSaveAsCard?: (message: MessageBubble) => void }) {
+function ChatBubble({ message, onExecuteDraft, onAddToDashboard, onSaveAsCard }: {
+  message: MessageBubble;
+  onExecuteDraft?: (executionId: string, sql: string) => void;
+  onAddToDashboard?: (message: MessageBubble) => void;
+  onSaveAsCard?: (message: MessageBubble) => void;
+}) {
   const [showSQL, setShowSQL] = useState(false);
   const [draftSQL, setDraftSQL] = useState(message.generated_query || '');
   const [executingDraft, setExecutingDraft] = useState(false);
+  const [sqlSaved, setSqlSaved] = useState(false);
 
-  const hasResults = message.result_preview?.length && message.result_columns?.length;
+  const hasResults = (message.result_preview?.length ?? 0) > 0 && (message.result_columns?.length ?? 0) > 0;
   const rows = message.result_preview || [];
   const columns = message.result_columns || [];
 
@@ -82,58 +91,79 @@ function ChatBubble({ message, onExecuteDraft, onAddToDashboard, onSaveAsCard }:
 
   return (
     <div className="flex gap-3 mb-4">
-      <div className="w-8 h-8 rounded-xl bg-primary/20 border border-primary/20 flex items-center justify-center text-sm flex-shrink-0">
-        🤖
+      <div
+        className="w-8 h-8 rounded-xl flex items-center justify-center text-xs shrink-0 mt-0.5"
+        style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+      >
+        <span className="text-white font-bold text-[11px]">AI</span>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="bg-muted/20 border border-border rounded-2xl rounded-tl-sm px-4 py-3">
-          <p className="text-sm text-foreground leading-relaxed">{message.content}</p>
+        <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-4 py-3" style={{ boxShadow: 'var(--shadow-soft)' }}>
+          <div className="text-sm text-foreground leading-relaxed prose prose-sm max-w-none prose-p:my-1 prose-strong:text-foreground prose-code:text-primary prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-xs">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+          </div>
 
           {message.exec_status && message.exec_status !== 'draft' && (
-            <div className="flex items-center gap-3 mt-2 pt-2 border-t border-border">
-              <span className={`text-xs font-medium ${message.exec_status === 'success' ? 'text-success' : 'text-red-400'}`}>
+            <div className="flex items-center gap-3 mt-2.5 pt-2.5 border-t border-border">
+              <span className={`text-xs font-medium ${message.exec_status === 'success' ? 'text-success' : 'text-destructive'}`}>
                 ● {message.exec_status}
               </span>
               {message.row_count !== undefined && <span className="text-xs text-muted-foreground">{message.row_count} rows</span>}
               {message.execution_time_ms !== undefined && <span className="text-xs text-muted-foreground">{message.execution_time_ms}ms</span>}
               {message.generated_query && (
-                <button onClick={() => setShowSQL(v => !v)} className="ml-auto text-xs text-primary hover:opacity-80 transition-colors">
-                  {showSQL ? 'Hide SQL' : 'View SQL'}
+                <button onClick={() => setShowSQL(v => !v)} className="ml-auto text-xs text-primary hover:opacity-80 flex items-center gap-1 transition-opacity">
+                  <Code2 className="w-3 h-3" />{showSQL ? 'Hide SQL' : 'View SQL'}
                 </button>
               )}
             </div>
           )}
 
           {showSQL && message.generated_query && message.exec_status !== 'draft' && (
-            <pre className="mt-2 text-xs bg-black/40 border border-border rounded-xl px-3 py-2 overflow-x-auto text-foreground">
+            <pre className="mt-2 text-xs bg-muted border border-border rounded-xl px-3 py-2.5 overflow-x-auto text-foreground font-mono">
               {message.generated_query}
             </pre>
           )}
 
+          {/* Draft SQL — editable with Save + Execute */}
           {message.exec_status === 'draft' && (
-            <div className="mt-3 bg-amber-500/5 border border-amber-500/20 rounded-xl overflow-hidden">
-              <div className="bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-500 flex justify-between items-center">
-                <span>Draft Query (Pending Execution)</span>
+            <div className="mt-3 border border-primary/20 rounded-xl overflow-hidden">
+              <div className="bg-primary/5 px-3 py-2 text-xs font-semibold text-primary flex items-center gap-1.5 border-b border-primary/20">
+                <Code2 className="w-3.5 h-3.5" />
+                Generated SQL
+                <span className="ml-auto text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-primary/10 border border-primary/20">Editable</span>
               </div>
-              <div className="p-3">
-                <textarea 
-                  className="w-full min-h-[120px] bg-black/40 text-foreground font-mono text-xs p-3 rounded-lg border border-border outline-none focus:border-amber-500/50 resize-y"
+              <div className="p-3 space-y-2">
+                <textarea
+                  className="w-full bg-muted/70 text-foreground font-mono text-xs p-3 rounded-lg border border-border outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent resize-y min-h-[100px]"
                   value={draftSQL}
-                  onChange={(e) => setDraftSQL(e.target.value)}
+                  onChange={e => { setDraftSQL(e.target.value); setSqlSaved(false); }}
                   disabled={executingDraft}
+                  rows={Math.min(12, Math.max(4, draftSQL.split('\n').length + 1))}
                 />
-                <div className="mt-3 flex justify-end">
-                  <button 
+                <div className="flex gap-2">
+                  {onSaveAsCard && (
+                    <button
+                      onClick={() => { onSaveAsCard({ ...message, generated_query: draftSQL }); setSqlSaved(true); setTimeout(() => setSqlSaved(false), 2000); }}
+                      disabled={executingDraft || !draftSQL.trim()}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all disabled:opacity-40 border ${sqlSaved ? 'bg-success/10 border-success/30 text-success' : 'bg-muted/70 border-border text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      {sqlSaved ? 'Saved!' : 'Save'}
+                    </button>
+                  )}
+                  <button
                     onClick={async () => {
                       if (!onExecuteDraft || !message.execution_id) return;
                       setExecutingDraft(true);
                       await onExecuteDraft(message.execution_id, draftSQL);
                       setExecutingDraft(false);
                     }}
-                    disabled={executingDraft}
-                    className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                    disabled={executingDraft || !draftSQL.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-primary hover:opacity-90 text-white rounded-lg text-xs font-semibold transition-opacity disabled:opacity-50"
                   >
-                    {executingDraft ? 'Executing...' : 'Execute Query'}
+                    {executingDraft
+                      ? <><div className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Executing…</>
+                      : <><Play className="w-3.5 h-3.5" />Execute Query</>}
                   </button>
                 </div>
               </div>
@@ -142,26 +172,26 @@ function ChatBubble({ message, onExecuteDraft, onAddToDashboard, onSaveAsCard }:
         </div>
 
         {hasResults && (
-          <div className="mt-2 max-w-[600px]">
+          <div className="mt-2">
             <GenerativeUIRenderer
               execution={{ rows, columns, rowCount: rows.length, executionTimeMs: message.execution_time_ms || 0 } as any}
               uiHint={message.ui_hint as any}
             />
-            <div className="flex gap-2">
+            <div className="flex gap-2 mt-1 flex-wrap">
               {onAddToDashboard && (
-                <button 
+                <button
                   onClick={() => onAddToDashboard(message)}
-                  className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs font-medium text-foreground transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
                 >
-                  📊 Add to Dashboard
+                  <LayoutDashboard className="w-3.5 h-3.5" /> Add to Dashboard
                 </button>
               )}
               {onSaveAsCard && (
-                <button 
+                <button
                   onClick={() => onSaveAsCard(message)}
-                  className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-muted/50 border border-border hover:bg-white/10 rounded-lg text-xs font-medium text-foreground transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-lg text-xs font-medium text-muted-foreground hover:text-foreground transition-all"
                 >
-                  💾 Save As Card
+                  <BookMarked className="w-3.5 h-3.5" /> Save as Card
                 </button>
               )}
             </div>
@@ -169,7 +199,7 @@ function ChatBubble({ message, onExecuteDraft, onAddToDashboard, onSaveAsCard }:
         )}
 
         {message.created_at && (
-          <p className="text-xs text-muted-foreground/60 mt-1 px-1">
+          <p className="text-[10px] text-muted-foreground/60 mt-1 px-1">
             {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </p>
         )}
@@ -473,10 +503,10 @@ export default function ChatPage() {
           {connectionId && (
             <div className="flex flex-col gap-1.5 pt-2 border-t border-white/5">
               <Link href={`/orgs/${slug}/dashboards?connectionId=${connectionId}`} className="flex items-center gap-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2 rounded-lg hover:bg-muted/50">
-                <span className="text-amber-500 text-sm">📊</span> Dashboards
+                <LayoutDashboard className="w-4 h-4 text-amber-500 shrink-0" /> Dashboards
               </Link>
               <Link href={`/orgs/${slug}/connections/${connectionId}/schema`} className="flex items-center gap-2.5 text-xs text-muted-foreground hover:text-foreground transition-colors py-1.5 px-2 rounded-lg hover:bg-muted/50">
-                <span className="text-sky-500 text-sm">📋</span> Schema Explorer
+                <Table2 className="w-4 h-4 text-sky-500 shrink-0" /> Schema Explorer
               </Link>
             </div>
           )}
@@ -512,7 +542,7 @@ export default function ChatPage() {
                       : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
                   }`}
                 >
-                  <span className="mt-0.5 text-base flex-shrink-0">💬</span>
+                  <MessageSquare className="w-4 h-4 mt-0.5 shrink-0 text-primary/70" />
                   <div className="flex-1 min-w-0">
                     <p className="truncate font-medium">{c.title || 'Untitled Chat'}</p>
                     <p className="text-muted-foreground/60 text-[10px] mt-0.5">
@@ -531,8 +561,10 @@ export default function ChatPage() {
         {/* Chat header */}
         <header className="border-b border-border px-5 py-3 flex items-center gap-3 flex-shrink-0">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center text-sm">💬</div>
-            <span className="text-sm font-medium text-white truncate">{chat?.title || 'Chat'}</span>
+            <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center">
+              <MessageSquare className="w-4 h-4 text-primary" />
+            </div>
+            <span className="text-sm font-medium text-foreground truncate">{chat?.title || 'Chat'}</span>
           </div>
           
           <div className="flex items-center gap-3">
@@ -557,11 +589,12 @@ export default function ChatPage() {
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-6">
-              <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-3xl">
-                🤖
+              <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center"
+                style={{ background: 'linear-gradient(135deg, rgba(217,122,30,0.15), rgba(245,166,35,0.15))' }}>
+                <Sparkles className="w-8 h-8 text-primary" />
               </div>
               <div className="text-center">
-                <h2 className="text-lg font-semibold text-white mb-1">Ask about your data</h2>
+                <h2 className="text-lg font-semibold text-foreground mb-1">Ask about your data</h2>
                 <p className="text-muted-foreground text-sm">Natural language queries, instant answers</p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 max-w-md">
