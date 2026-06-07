@@ -1,28 +1,31 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { chatApi, connectionApi, orgApi } from '@/lib/api';
 
 export default function ChatsPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const connectionId = searchParams.get('connectionId');
+
   const [org, setOrg] = useState<any>(null);
   const [chats, setChats] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
-  const [selectedConn, setSelectedConn] = useState<string>('');
+  const [selectedConn, setSelectedConn] = useState<string>(connectionId || '');
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => { loadData(); }, [slug]);
+  useEffect(() => { loadData(); }, [slug, connectionId]);
 
   async function loadData() {
     try {
       const { org: o } = await orgApi.get(slug);
       setOrg(o);
       const [{ chats: c }, { connections: conns }] = await Promise.all([
-        chatApi.list(o.id, {}),
+        chatApi.list(o.id, connectionId ? { connectionId } : {}),
         connectionApi.list(o.id),
       ]);
       setChats(c);
@@ -36,7 +39,7 @@ export default function ChatsPage() {
     setCreating(true);
     try {
       const { chat } = await chatApi.create(org.id, { connectionId: connId, title: 'New Chat' });
-      router.push(`/orgs/${slug}/chats/${chat.id}`);
+      router.push(`/orgs/${slug}/chats/${chat.id}?connectionId=${connId}`);
     } catch (e) { console.error(e); }
     finally { setCreating(false); }
   }
@@ -62,6 +65,29 @@ export default function ChatsPage() {
             <p className="text-zinc-400 text-sm">{org?.name}</p>
           </div>
         </div>
+
+        {/* Connection filter chips */}
+        {connections.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-6">
+            <button
+              onClick={() => router.push(`/orgs/${slug}/chats`)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                !connectionId ? 'bg-violet-500/20 border-violet-500/30 text-violet-300' : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-200'
+              }`}>
+              All
+            </button>
+            {connections.map((c: any) => (
+              <button key={c.id}
+                onClick={() => router.push(`/orgs/${slug}/chats?connectionId=${c.id}`)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                  connectionId === c.id ? 'bg-violet-500/20 border-violet-500/30 text-violet-300' : 'bg-white/5 border-white/10 text-zinc-400 hover:text-zinc-200'
+                }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${c.status === 'active' ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+                {c.name}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* New Chat */}
         <div className="bg-white/[0.04] border border-white/10 rounded-2xl p-5 mb-6">
@@ -91,14 +117,16 @@ export default function ChatsPage() {
 
         {/* Existing Chats */}
         <div className="space-y-2">
-          <h2 className="text-sm font-medium text-zinc-400 mb-3">Recent Chats</h2>
+          <h2 className="text-sm font-medium text-zinc-400 mb-3">
+            {connectionId ? `Chats in ${connections.find(c => c.id === connectionId)?.name || 'connection'}` : 'Recent Chats'}
+          </h2>
           {chats.length === 0 ? (
             <div className="text-center py-12 text-zinc-600">
-              No chats yet. Start one above!
+              {connectionId ? 'No chats for this connection yet.' : 'No chats yet. Start one above!'}
             </div>
           ) : (
             chats.map((chat: any) => (
-              <Link key={chat.id} href={`/orgs/${slug}/chats/${chat.id}`}
+              <Link key={chat.id} href={`/orgs/${slug}/chats/${chat.id}${connectionId ? `?connectionId=${connectionId}` : ''}`}
                 className="flex items-center gap-4 px-4 py-3 bg-white/[0.03] border border-white/[0.06] hover:border-white/20 hover:bg-white/[0.06] rounded-xl transition-all group">
                 <div className="w-8 h-8 rounded-lg bg-violet-500/10 flex items-center justify-center text-base">💬</div>
                 <div className="flex-1 min-w-0">

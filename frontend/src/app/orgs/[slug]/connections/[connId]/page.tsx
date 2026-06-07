@@ -72,10 +72,7 @@ export default function ConnectionDetailPage() {
 
   async function startNewChat() {
     if (!org) return;
-    try {
-      const { chat } = await chatApi.create(org.id, { connectionId: connId, title: 'New Chat' });
-      window.location.href = `/orgs/${slug}/chats/${chat.id}`;
-    } catch (e) { console.error(e); }
+    window.location.href = `/orgs/${slug}/connections/${connId}/chat`;
   }
 
   if (loading) return (
@@ -152,8 +149,8 @@ export default function ConnectionDetailPage() {
               <svg width="16" height="16" className="text-zinc-600 group-hover:text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg>
             </Link>
 
-            {/* Chats */}
-            <Link href={`/orgs/${slug}/chats?connectionId=${connId}`}
+            {/* AI Chat — go to connection-level chat page */}
+            <Link href={`/orgs/${slug}/connections/${connId}/chat`}
               className="group flex items-center gap-4 p-5 bg-white/[0.03] border border-white/[0.06] hover:border-violet-500/30 hover:bg-white/[0.06] rounded-2xl transition-all">
               <div className="w-12 h-12 rounded-xl bg-violet-500/10 flex items-center justify-center text-2xl flex-shrink-0">💬</div>
               <div className="flex-1">
@@ -163,13 +160,35 @@ export default function ConnectionDetailPage() {
               <svg width="16" height="16" className="text-zinc-600 group-hover:text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg>
             </Link>
 
-            {/* Dashboard */}
-            <Link href={`/orgs/${slug}/dashboards?connectionId=${connId}`}
+            {/* Dashboard — go to connection-level dashboard */}
+            <Link href={`/orgs/${slug}/connections/${connId}/dashboard`}
               className="group flex items-center gap-4 p-5 bg-white/[0.03] border border-white/[0.06] hover:border-violet-500/30 hover:bg-white/[0.06] rounded-2xl transition-all">
               <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center text-2xl flex-shrink-0">📊</div>
               <div className="flex-1">
-                <p className="font-semibold text-white group-hover:text-violet-300 transition-colors">Dashboards</p>
+                <p className="font-semibold text-white group-hover:text-violet-300 transition-colors">Dashboard</p>
                 <p className="text-sm text-zinc-400 mt-0.5">Build analytics and visualizations</p>
+              </div>
+              <svg width="16" height="16" className="text-zinc-600 group-hover:text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg>
+            </Link>
+
+            {/* ERD */}
+            <Link href={`/orgs/${slug}/connections/${connId}/erd`}
+              className="group flex items-center gap-4 p-5 bg-white/[0.03] border border-white/[0.06] hover:border-violet-500/30 hover:bg-white/[0.06] rounded-2xl transition-all">
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-2xl flex-shrink-0">🕸️</div>
+              <div className="flex-1">
+                <p className="font-semibold text-white group-hover:text-violet-300 transition-colors">Entity Relationship Diagram</p>
+                <p className="text-sm text-zinc-400 mt-0.5">Visualize table relationships</p>
+              </div>
+              <svg width="16" height="16" className="text-zinc-600 group-hover:text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg>
+            </Link>
+
+            {/* Settings */}
+            <Link href={`/orgs/${slug}/connections/${connId}/settings`}
+              className="group flex items-center gap-4 p-5 bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.10] hover:bg-white/[0.06] rounded-2xl transition-all">
+              <div className="w-12 h-12 rounded-xl bg-zinc-500/10 flex items-center justify-center text-2xl flex-shrink-0">⚙️</div>
+              <div className="flex-1">
+                <p className="font-semibold text-white group-hover:text-zinc-300 transition-colors">Settings</p>
+                <p className="text-sm text-zinc-400 mt-0.5">Query display, result limits, session</p>
               </div>
               <svg width="16" height="16" className="text-zinc-600 group-hover:text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 18 6-6-6-6"/></svg>
             </Link>

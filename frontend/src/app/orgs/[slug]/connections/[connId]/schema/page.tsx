@@ -110,8 +110,11 @@ export default function SchemaExplorerPage() {
           <h1 className="text-base font-semibold">Schema Explorer</h1>
           <p className="text-xs text-zinc-500">{conn?.name} · {conn?.database_name}</p>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-4">
           <span className="text-xs text-zinc-500">{tables.length} tables</span>
+          <Link href={`/orgs/${slug}/connections/${connId}/erd`} className="px-3 py-1.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20 rounded-xl text-xs font-medium transition-colors">
+            View ERD
+          </Link>
         </div>
       </header>
 

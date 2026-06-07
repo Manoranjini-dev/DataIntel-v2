@@ -53,6 +53,7 @@ export default function OrgOverviewPage() {
     { label: 'Dashboards', href: `/orgs/${slug}/dashboards`, icon: '📊' },
     { label: 'Members', href: `/orgs/${slug}/members`, icon: '👥' },
     { label: 'Audit Log', href: `/orgs/${slug}/audit`, icon: '📋' },
+    { label: 'Settings', href: `/orgs/${slug}/settings`, icon: '⚙️' },
   ];
 
   return (
