@@ -5,14 +5,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { BullModule } from '@nestjs/bullmq';
+
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { validateEnvironment } from './common/config/env.validation';
 
 // ── Infrastructure ─────────────────────────────
 import { DatabaseModule } from './database/database.module';
-import { RedisModule } from './redis/redis.module';
+import { CacheModule } from './cache/cache.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { AccountModule } from './account/account.module';
@@ -58,25 +58,7 @@ import { DashboardGenerationModule } from './dashboard-generation/dashboard-gene
       maxListeners: 50,
     }),
 
-    // ── BullMQ (Redis-backed queues) ───────────
-    BullModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const redisUrl = config.get<string>('REDIS_URL') || 'redis://localhost:6379';
-        const url = new URL(redisUrl);
-        return {
-          connection: {
-            host: url.hostname,
-            port: parseInt(url.port) || 6379,
-            password: url.password || undefined,
-          },
-          defaultJobOptions: {
-            removeOnComplete: { count: 100 },
-            removeOnFail: { count: 50 },
-          },
-        };
-      },
-    }),
+
 
     // ── Rate Limiting ─────────────────────────
     ThrottlerModule.forRoot([
@@ -94,7 +76,7 @@ import { DashboardGenerationModule } from './dashboard-generation/dashboard-gene
 
     // ── Infrastructure (Global — available everywhere) ──
     DatabaseModule,
-    RedisModule,
+    CacheModule,
     AuditModule,
     AuthModule,
     AccountModule,

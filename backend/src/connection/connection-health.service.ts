@@ -5,7 +5,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { RedisService, RedisKeys, RedisTTL } from '../redis/redis.service';
+import { CacheService, CacheKeys, CacheTTL } from '../cache/cache.service';
 import { PersistentConnectionService } from './persistent-connection.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
@@ -25,7 +25,7 @@ export class ConnectionHealthService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly redis: RedisService,
+    private readonly cache: CacheService,
     private readonly persistentConn: PersistentConnectionService,
     private readonly events: EventEmitter2,
   ) {}
@@ -52,8 +52,8 @@ export class ConnectionHealthService {
 
     if (!conn) throw new NotFoundException('Connection not found');
 
-    const previousHealth = await this.redis.getJson<{ isHealthy: boolean }>(
-      RedisKeys.connHealth(connectionId),
+    const previousHealth = await this.cache.getJson<{ isHealthy: boolean }>(
+      CacheKeys.connHealth(connectionId),
     );
 
     const start = Date.now();
@@ -108,7 +108,7 @@ export class ConnectionHealthService {
       errorMessage,
       consecutiveFailures,
     };
-    await this.redis.setJson(RedisKeys.connHealth(connectionId), health, RedisTTL.CONN_HEALTH);
+    await this.cache.setJson(CacheKeys.connHealth(connectionId), health, CacheTTL.CONN_HEALTH);
 
     // Emit event if health status changed
     if (previousHealth && previousHealth.isHealthy !== isHealthy) {
@@ -126,7 +126,7 @@ export class ConnectionHealthService {
 
   /** Get cached health status (or null if not yet checked) */
   async getCachedHealth(connectionId: string): Promise<HealthStatus | null> {
-    return this.redis.getJson<HealthStatus>(RedisKeys.connHealth(connectionId));
+    return this.cache.getJson<HealthStatus>(CacheKeys.connHealth(connectionId));
   }
 
   /** Get health history from DB (paginated) */

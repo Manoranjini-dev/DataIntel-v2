@@ -8,11 +8,11 @@ import { CardFolderController } from './card-folder.controller';
 import { CardService } from './card.service';
 import { DatabaseModule } from '../database/database.module';
 import { AuditModule } from '../audit/audit.module';
-import { RedisModule } from '../redis/redis.module';
+import { CacheModule } from '../cache/cache.module';
 import { OrgModule } from '../org/org.module';
 
 @Module({
-  imports: [DatabaseModule, AuditModule, RedisModule, OrgModule],
+  imports: [DatabaseModule, AuditModule, CacheModule, OrgModule],
   controllers: [CardController, CardFolderController],
   providers: [CardService],
   exports: [CardService],

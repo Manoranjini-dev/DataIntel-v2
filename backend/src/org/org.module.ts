@@ -14,11 +14,11 @@ import { OrgInvitationService } from './org-invitation.service';
 import { OrgSettingsService } from './org-settings.service';
 import { AiProviderConfigService } from './ai-provider-config.service';
 import { DatabaseModule } from '../database/database.module';
-import { RedisModule } from '../redis/redis.module';
+import { CacheModule } from '../cache/cache.module';
 import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [DatabaseModule, RedisModule, AuditModule],
+  imports: [DatabaseModule, CacheModule, AuditModule],
   controllers: [
     OrgController,
     OrgOverviewController,

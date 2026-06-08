@@ -15,10 +15,10 @@ import { ConnectionHealthController } from './connection-health.controller';
 import { SchemaModule } from '../schema/schema.module';
 import { OrgModule } from '../org/org.module';
 import { AuditModule } from '../audit/audit.module';
-import { RedisModule } from '../redis/redis.module';
+import { CacheModule } from '../cache/cache.module';
 
 @Module({
-  imports: [SchemaModule, OrgModule, AuditModule, RedisModule],
+  imports: [SchemaModule, OrgModule, AuditModule, CacheModule],
   controllers: [
     ConnectionController,
     PersistentConnectionController,

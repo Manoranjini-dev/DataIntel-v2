@@ -12,7 +12,7 @@ import {
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { OrgPermissionsService } from '../org/org-permissions.service';
-import { RedisService, RedisKeys, RedisTTL } from '../redis/redis.service';
+import { CacheService, CacheKeys, CacheTTL } from '../cache/cache.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SafeAccount } from '../auth/auth.service';
 
@@ -63,7 +63,7 @@ export class DashboardBuilderService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly orgPermissions: OrgPermissionsService,
-    private readonly redis: RedisService,
+    private readonly cache: CacheService,
     private readonly events: EventEmitter2,
   ) {}
 
@@ -438,7 +438,7 @@ export class DashboardBuilderService {
     );
 
     // Invalidate widget cache
-    await this.redis.del(RedisKeys.widgetResult(widgetId));
+    await this.cache.del(CacheKeys.widgetResult(widgetId));
     
     const page = await this.db.queryOne<{ dashboard_id: string }>(
       `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
@@ -458,7 +458,7 @@ export class DashboardBuilderService {
        WHERE id = $1 AND page_id = $2 AND deleted_at IS NULL`,
       [widgetId, pageId, remover.id],
     );
-    await this.redis.del(RedisKeys.widgetResult(widgetId));
+    await this.cache.del(CacheKeys.widgetResult(widgetId));
     await this.audit.log({
       orgId, accountId: remover.id,
       eventType: 'widget_removed', resourceType: 'widget', resourceId: widgetId,
@@ -506,10 +506,10 @@ export class DashboardBuilderService {
     });
 
     // Cache draft layout in Redis for fast retrieval
-    await this.redis.setJson(
-      RedisKeys.dashDraft(dashId, updater.id),
+    await this.cache.setJson(
+      CacheKeys.dashDraft(dashId, updater.id),
       layout,
-      RedisTTL.DASH_DRAFT,
+      CacheTTL.DASH_DRAFT,
     );
   }
 
@@ -592,7 +592,7 @@ export class DashboardBuilderService {
       const widgets = await query(`
         SELECT w.* FROM dashboard_widgets_v2 w 
         JOIN dashboard_pages p ON w.page_id = p.id 
-        WHERE p.dashboard_id = $1
+        WHERE p.dashboard_id = $1 AND w.deleted_at IS NULL
       `, [dashId]);
       const filters = await query(`SELECT * FROM dashboard_filters WHERE dashboard_id = $1`, [dashId]);
 
@@ -658,10 +658,10 @@ export class DashboardBuilderService {
       // Recreate pages in order
       for (const p of pages) {
         await query(
-          `INSERT INTO dashboard_pages (id, dashboard_id, name, order_index, config)
+          `INSERT INTO dashboard_pages (id, dashboard_id, name, order_index, settings)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, order_index = EXCLUDED.order_index`,
-          [p.id, dashId, p.name, p.order_index, JSON.stringify(p.config || {})]
+          [p.id, dashId, p.name, p.order_index, JSON.stringify(p.settings || {})]
         );
       }
 
@@ -669,16 +669,30 @@ export class DashboardBuilderService {
       for (const w of widgets) {
         await query(
           `INSERT INTO dashboard_widgets_v2
-             (id, page_id, org_id, title, widget_type, grid_x, grid_y, grid_w, grid_h, query_definition, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'active')
+             (id, page_id, card_id, title, widget_type, grid_x, grid_y, grid_w, grid_h, 
+              datasource_context_type, datasource_context_id, query_definition,
+              layout_desktop, layout_tablet, layout_mobile,
+              created_by, updated_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
            ON CONFLICT (id) DO UPDATE SET
              title = EXCLUDED.title, widget_type = EXCLUDED.widget_type,
              grid_x = EXCLUDED.grid_x, grid_y = EXCLUDED.grid_y,
              grid_w = EXCLUDED.grid_w, grid_h = EXCLUDED.grid_h,
-             query_definition = EXCLUDED.query_definition`,
-          [w.id, w.page_id, orgId, w.title, w.widget_type,
-           w.grid_x, w.grid_y, w.grid_w, w.grid_h,
-           JSON.stringify(w.query_definition || {})]
+             card_id = EXCLUDED.card_id,
+             datasource_context_type = EXCLUDED.datasource_context_type,
+             datasource_context_id = EXCLUDED.datasource_context_id,
+             query_definition = EXCLUDED.query_definition,
+             deleted_at = NULL`,
+          [
+            w.id, w.page_id, w.card_id || null, w.title, w.widget_type,
+            w.grid_x, w.grid_y, w.grid_w, w.grid_h,
+            w.datasource_context_type || null, w.datasource_context_id || null,
+            JSON.stringify(w.query_definition || {}),
+            JSON.stringify(w.layout_desktop || {}),
+            JSON.stringify(w.layout_tablet || {}),
+            JSON.stringify(w.layout_mobile || {}),
+            requester.id
+          ]
         );
       }
     });
@@ -690,9 +704,13 @@ export class DashboardBuilderService {
   // ── Cache Helpers ──────────────────────────────────────
 
   async invalidateDashboardCache(dashId: string) {
-    await this.redis.delPattern(`di:dashboard:layout:${dashId}:*`);
-    await this.redis.delPattern(`di:dashboard:draft:${dashId}:*`);
-    await this.redis.del(RedisKeys.dashLayout(dashId, '*'));
+    try {
+      await this.cache.delPattern(`di:dashboard:layout:${dashId}:*`);
+      await this.cache.delPattern(`di:dashboard:draft:${dashId}:*`);
+      await this.cache.del(CacheKeys.dashLayout(dashId, '*'));
+    } catch (e: any) {
+      this.logger.warn(`Failed to invalidate cache for dashboard ${dashId}: ${e.message}`);
+    }
   }
 
   // ── Private Helpers ────────────────────────────────────

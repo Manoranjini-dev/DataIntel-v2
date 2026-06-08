@@ -208,7 +208,11 @@ export function GenerativeUIRenderer({
   return (
     <div className={`flex flex-col w-full ${compact ? 'h-full' : 'space-y-2'}`}>
       {/* Toggle tabs */}
-      <div className={`flex gap-1 rounded-lg bg-white border border-zinc-200 p-1 w-fit shadow-sm ${compact ? 'mb-2 shrink-0' : ''}`}>
+      <div 
+        className={`relative z-30 flex gap-1 rounded-lg bg-white border border-zinc-200 p-1 w-fit shadow-sm pointer-events-auto ${compact ? 'mb-2 shrink-0' : ''}`}
+        onMouseDown={e => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
+      >
         <button
           onClick={() => setView('chart')}
           title="Chart view"

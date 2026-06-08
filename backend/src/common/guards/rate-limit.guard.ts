@@ -9,9 +9,7 @@ import {
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Inject } from '@nestjs/common';
-import Redis from 'ioredis';
-import { REDIS_CLIENT } from '../../redis/redis.constants';
+import { CacheService } from '../../cache/cache.service';
 
 export const RATE_LIMIT_META = 'rateLimit';
 export const RateLimit = (windowSec: number, maxRequests: number) =>
@@ -21,7 +19,7 @@ export const RateLimit = (windowSec: number, maxRequests: number) =>
 export class RateLimitGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+    private readonly cache: CacheService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -39,9 +37,9 @@ export class RateLimitGuard implements CanActivate {
     const handlerName = context.getHandler().name;
     const key = `ratelimit:${accountId}:${handlerName}`;
 
-    const current = await this.redis.incr(key);
+    const current = await this.cache.incr(key);
     if (current === 1) {
-      await this.redis.expire(key, meta.windowSec);
+      await this.cache.expire(key, meta.windowSec);
     }
 
     if (current > meta.maxRequests) {

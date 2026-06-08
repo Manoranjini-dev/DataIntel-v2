@@ -6,8 +6,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { SafeAccount } from '../auth/auth.service';
-import { Queue } from 'bullmq';
-import { InjectQueue } from '@nestjs/bullmq';
+
 import { DashboardBuilderService, CreateWidgetDto } from '../dashboard/dashboard-builder.service';
 import { LayoutEngineService } from './layout-engine.service';
 import { WidgetRecommendationService, WidgetRecommendation } from './widget-recommendation.service';
@@ -22,7 +21,7 @@ export class DashboardGenerationService {
     private readonly builder: DashboardBuilderService,
     private readonly layoutEngine: LayoutEngineService,
     private readonly recommender: WidgetRecommendationService,
-    @InjectQueue('dashboard-generation') private readonly genQueue: Queue,
+
   ) {}
 
   /** Enqueue a dashboard generation job */
@@ -38,14 +37,11 @@ export class DashboardGenerationService {
       [orgId, user.id, JSON.stringify({ intent: data.intent, contextType: data.contextType, contextId: data.contextId }), data.templateId || null]
     );
 
-    await this.genQueue.add('generate-dashboard', {
-      jobId: jobRecord!.id,
-      orgId,
-      userId: user.id,
-      intent: data.intent,
-      contextType: data.contextType,
-      contextId: data.contextId,
-    });
+    // Execute asynchronously instead of using BullMQ
+    setTimeout(() => {
+      this.processGenerationJob(jobRecord!.id, orgId, user.id, data.intent, data.contextType, data.contextId)
+        .catch(err => this.logger.error(`Dashboard generation failed for job ${jobRecord!.id}`, err));
+    }, 100);
 
     return jobRecord;
   }

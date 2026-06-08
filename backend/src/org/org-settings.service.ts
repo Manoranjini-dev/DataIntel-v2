@@ -7,7 +7,7 @@ import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { OrgPermissionsService } from './org-permissions.service';
 import { SafeAccount } from '../auth/auth.service';
-import { RedisService } from '../redis/redis.service';
+import { CacheService } from '../cache/cache.service';
 
 export interface OrgSettingsData {
   default_query_mode?: 'auto' | 'manual';
@@ -34,7 +34,7 @@ export class OrgSettingsService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly orgPermissions: OrgPermissionsService,
-    private readonly redis: RedisService,
+    private readonly cache: CacheService,
   ) {}
 
   async get(orgId: string, requesterId: string) {
@@ -90,7 +90,7 @@ export class OrgSettingsService {
     );
 
     // Bust the org settings cache if we stored one
-    await this.redis.del(`di:org:settings:${orgId}`);
+    await this.cache.del(`di:org:settings:${orgId}`);
 
     await this.audit.log({
       orgId,
@@ -110,14 +110,14 @@ export class OrgSettingsService {
    */
   async getFeatureFlag(orgId: string, flag: string): Promise<boolean> {
     const cacheKey = `di:org:settings:${orgId}`;
-    let settings = await this.redis.getJson<{ feature_flags?: Record<string, boolean> }>(cacheKey);
+    let settings = await this.cache.getJson<{ feature_flags?: Record<string, boolean> }>(cacheKey);
 
     if (!settings) {
       settings = await this.db.queryOne<{ feature_flags: Record<string, boolean> }>(
         `SELECT feature_flags FROM org_settings WHERE org_id = $1`,
         [orgId],
       );
-      if (settings) await this.redis.setJson(cacheKey, settings, 300);
+      if (settings) await this.cache.setJson(cacheKey, settings, 300);
     }
 
     return settings?.feature_flags?.[flag] ?? false;

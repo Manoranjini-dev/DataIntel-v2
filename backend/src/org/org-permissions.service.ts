@@ -6,7 +6,7 @@
 
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { RedisService, RedisKeys, RedisTTL } from '../redis/redis.service';
+import { CacheService, CacheKeys, CacheTTL } from '../cache/cache.service';
 
 export type OrgRole = 'owner' | 'admin' | 'editor' | 'viewer';
 
@@ -25,7 +25,7 @@ export class OrgPermissionsService {
 
   constructor(
     private readonly db: DatabaseService,
-    private readonly redis: RedisService,
+    private readonly cache: CacheService,
   ) {}
 
   /**
@@ -37,8 +37,8 @@ export class OrgPermissionsService {
    */
   async getEffectiveRole(orgId: string, accountId: string): Promise<OrgRole | null> {
     // 1. Check Redis cache first
-    const cacheKey = RedisKeys.orgPerm(orgId, accountId);
-    const cached = await this.redis.get(cacheKey);
+    const cacheKey = CacheKeys.orgPerm(orgId, accountId);
+    const cached = await this.cache.get(cacheKey);
     if (cached) {
       return (cached === 'none' ? null : cached) as OrgRole | null;
     }
@@ -78,7 +78,7 @@ export class OrgPermissionsService {
     const role = row?.max_role || null;
 
     // 3. Cache result (cache 'none' sentinel if no grant)
-    await this.redis.set(cacheKey, role || 'none', RedisTTL.ORG_PERM);
+    await this.cache.set(cacheKey, role || 'none', CacheTTL.ORG_PERM);
 
     return role;
   }
@@ -103,8 +103,8 @@ export class OrgPermissionsService {
    * should have implicit access to child orgs).
    */
   async getDescendantOrgIds(orgId: string): Promise<string[]> {
-    const cacheKey = RedisKeys.orgHierarchy(orgId);
-    const cached = await this.redis.getJson<string[]>(cacheKey);
+    const cacheKey = CacheKeys.orgHierarchy(orgId);
+    const cached = await this.cache.getJson<string[]>(cacheKey);
     if (cached) return cached;
 
     const rows = await this.db.queryMany<{ id: string }>(
@@ -118,7 +118,7 @@ export class OrgPermissionsService {
     );
 
     const ids = rows.map((r) => r.id);
-    await this.redis.setJson(cacheKey, ids, RedisTTL.ORG_HIERARCHY);
+    await this.cache.setJson(cacheKey, ids, CacheTTL.ORG_HIERARCHY);
     return ids;
   }
 
@@ -146,15 +146,15 @@ export class OrgPermissionsService {
    * Invalidate cached role for a user+org (call after role change).
    */
   async invalidateCache(orgId: string, accountId: string): Promise<void> {
-    await this.redis.del(RedisKeys.orgPerm(orgId, accountId));
+    await this.cache.del(CacheKeys.orgPerm(orgId, accountId));
   }
 
   /**
    * Invalidate all cached roles for an org (call after membership change).
    */
   async invalidateOrgCache(orgId: string): Promise<void> {
-    await this.redis.delPattern(`di:org-perm:${orgId}:*`);
-    await this.redis.del(RedisKeys.orgHierarchy(orgId));
+    await this.cache.delPattern(`di:org-perm:${orgId}:*`);
+    await this.cache.del(CacheKeys.orgHierarchy(orgId));
   }
 
   /**

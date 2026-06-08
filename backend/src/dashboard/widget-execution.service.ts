@@ -6,8 +6,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { Queue } from 'bullmq';
-import { InjectQueue } from '@nestjs/bullmq';
+
 import { SafeAccount } from '../auth/auth.service';
 import { DashboardCacheService } from './dashboard-cache.service';
 import { MCPService } from '../mcp/mcp.service';
@@ -30,7 +29,7 @@ export class WidgetExecutionService {
     private readonly llm: LLMService,
     private readonly promptBuilder: PromptBuilderService,
     private readonly config: ConfigService,
-    @InjectQueue('widget-refresh') private readonly refreshQueue: Queue,
+
   ) {
     this.encKey = this.config.getOrThrow('CREDENTIAL_ENCRYPTION_KEY');
   }
@@ -64,7 +63,7 @@ export class WidgetExecutionService {
     if (!lockAcquired) {
       // If someone else is refreshing, we can either wait or just queue this request
       // Let's queue it so we don't block the UI indefinitely
-      await this.dispatchToQueue(widgetId, orgId, user.id);
+      await this.dispatchToQueue(widgetId, orgId, user);
       return { status: 'queued', message: 'Widget is currently refreshing, queued for update' };
     }
 
@@ -150,13 +149,12 @@ export class WidgetExecutionService {
   /**
    * Dispatch widget execution to background queue
    */
-  async dispatchToQueue(widgetId: string, orgId: string, accountId?: string) {
-    await this.refreshQueue.add('refresh-widget', {
-      widgetId,
-      orgId,
-      accountId,
-      triggeredBy: accountId ? 'manual' : 'scheduler',
-    });
+  async dispatchToQueue(widgetId: string, orgId: string, user?: SafeAccount) {
+    // Execute asynchronously instead of BullMQ
+    setTimeout(() => {
+      this.executeSync(widgetId, orgId, user || { id: 'system' } as SafeAccount, true)
+        .catch(err => this.logger.error(`Widget refresh failed for ${widgetId}`, err));
+    }, 100);
     return { status: 'queued' };
   }
 

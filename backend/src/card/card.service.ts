@@ -11,7 +11,7 @@ import {
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { OrgPermissionsService } from '../org/org-permissions.service';
-import { RedisService } from '../redis/redis.service';
+import { CacheService } from '../cache/cache.service';
 import { SafeAccount } from '../auth/auth.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
@@ -66,7 +66,7 @@ export class CardService {
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly orgPermissions: OrgPermissionsService,
-    private readonly redis: RedisService,
+    private readonly cache: CacheService,
     private readonly events: EventEmitter2,
   ) {}
 
