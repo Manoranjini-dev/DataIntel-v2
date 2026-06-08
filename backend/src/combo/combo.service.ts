@@ -200,6 +200,20 @@ export class ComboService {
     await this.orgService.requireMember(orgId, user.id);
     const start = Date.now();
 
+    // Persist user message immediately so history is ordered correctly.
+    // We inline the two-query logic from ChatService.addMessage to avoid a
+    // circular module dependency (ChatModule → QueryModule → ComboModule).
+    let userMsg: any = null;
+    if (chatId) {
+      userMsg = await this.db.queryOne(
+        `INSERT INTO chat_messages (chat_id, role, content) VALUES ($1, $2, $3) RETURNING *`,
+        [chatId, 'user', prompt],
+      ).catch(() => null);
+      if (userMsg) {
+        await this.db.query('UPDATE chats SET updated_at = NOW() WHERE id = $1', [chatId]).catch(() => {});
+      }
+    }
+
     // Step 1: Build merged schema context
     const { sources, mergedContext } = await this.schemaMerger.buildMergedSchema(comboId);
     if (sources.length === 0) {
@@ -228,6 +242,8 @@ export class ComboService {
       error: sr.error,
     }));
 
+    const execStatus = stepResults.every(r => r.status === 'success') ? 'success' : 'failed';
+
     const execRecord = await this.db.queryOne(
       `INSERT INTO query_executions
          (org_id, chat_id, message_id, combo_id, executed_by, prompt,
@@ -236,16 +252,29 @@ export class ComboService {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
        RETURNING id`,
       [
-        orgId, chatId || null, messageId || null, comboId, user.id, prompt,
+        orgId, chatId || null, userMsg?.id || messageId || null, comboId, user.id, prompt,
         JSON.stringify(plan),
-        stepResults.every(r => r.status === 'success') ? 'success' : 'failed',
+        execStatus,
         totalMs,
         rows.length,
-        JSON.stringify(rows.slice(0, 25)), // first 25 for preview
+        JSON.stringify(rows.slice(0, 25)),
         columns,
         JSON.stringify(subQueriesAudit),
       ],
     );
+
+    // Persist assistant response as a chat message with insight + ui_hint
+    if (chatId) {
+      const insight = execStatus === 'success'
+        ? `Executed across ${stepResults.length} source${stepResults.length !== 1 ? 's' : ''} using **${plan.merge?.strategy ?? 'join'}** merge. Found **${rows.length}** merged rows.`
+        : `Query failed across ${stepResults.filter(r => r.status !== 'success').length} source(s).`;
+      await this.db.queryOne(
+        `INSERT INTO chat_messages (chat_id, role, content, execution_id, ui_hint)
+         VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+        [chatId, 'assistant', insight, execRecord?.id || null, plan.ui_hint || null],
+      ).catch(() => null);
+      await this.db.query('UPDATE chats SET updated_at = NOW() WHERE id = $1', [chatId]).catch(() => {});
+    }
 
     await this.audit.log({
       orgId, accountId: user.id,

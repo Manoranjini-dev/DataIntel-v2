@@ -366,12 +366,14 @@ export const dashboardApi = {
       gridY: data.gridY || 0,
       gridW: data.gridW || 4,
       gridH: data.gridH || 3,
-      datasourceContextType: data.datasourceScopeType,
+      datasourceContextType: data.datasourceScopeType || data.datasourceContextType,
+      datasourceContextId: data.datasourceContextId,
       queryDefinition: {
         prompt: data.queryPrompt,
+        sql: data.sql || '',
         result_rows: data.resultRows,
         result_columns: data.resultColumns,
-        ui_hint: data.uiHint
+        ui_hint: data.uiHint,
       }
     };
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets`, {
@@ -393,13 +395,14 @@ export const dashboardApi = {
       gridX: data.position_x, gridY: data.position_y, gridW: data.width, gridH: data.height,
       queryDefinition: {
         prompt: data.query_prompt,
+        sql: data.sql || '',
         result_rows: data.result_rows,
         result_columns: data.result_columns,
         ui_hint: data.ui_hint,
       },
     };
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, {
-      method: 'PATCH', body: JSON.stringify(payload),
+      method: 'PUT', body: JSON.stringify(payload),
     });
     return handleResponse<{ widget: any }>(r);
   },

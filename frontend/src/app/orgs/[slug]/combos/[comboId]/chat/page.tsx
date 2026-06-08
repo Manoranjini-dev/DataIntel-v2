@@ -357,7 +357,9 @@ export default function ComboChatPage() {
 
   const [org, setOrg] = useState<any>(null);
   const [combo, setCombo] = useState<any>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ComboMessage[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [addToDashMsg, setAddToDashMsg] = useState<ComboMessage | null>(null);
@@ -371,18 +373,56 @@ export default function ComboChatPage() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   async function loadData() {
+    setHistoryLoading(true);
     try {
       const { org: o } = await orgApi.get(slug);
       setOrg(o);
+
+      // Load combo details
       const c = await comboApi.list(o.id);
       const found = (c as any).combos?.find((x: any) => x.id === comboId);
       setCombo(found);
+
+      // Find or create a chat session for this combo
+      const { chats } = await chatApi.list(o.id, { comboId });
+      let cid: string;
+      if (chats.length > 0) {
+        cid = chats[0].id;
+      } else {
+        const { chat } = await chatApi.create(o.id, { comboId, title: found?.name || 'Combo Chat' });
+        cid = chat.id;
+      }
+      setChatId(cid);
+
+      // Load existing message history
+      const { messages: hist } = await chatApi.getMessages(o.id, cid);
+      // Map chat_messages rows (joined with query_executions) → ComboMessage
+      const mapped: ComboMessage[] = hist.map((m: any) => {
+        // result_preview is JSON-encoded first-25 rows stored by combo.service
+        let rows: any[] | undefined;
+        let columns: string[] | undefined;
+        if (m.result_preview) {
+          try { rows = JSON.parse(m.result_preview); } catch { rows = undefined; }
+        }
+        if (m.result_columns?.length) columns = m.result_columns;
+        return {
+          id: m.id,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          created_at: m.created_at,
+          ui_hint: m.ui_hint,
+          rows,
+          columns,
+        };
+      });
+      setMessages(mapped);
     } catch (e) { console.error(e); }
+    finally { setHistoryLoading(false); }
   }
 
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!input.trim() || sending || !org) return;
+    if (!input.trim() || sending || !org || !chatId) return;
     const prompt = input.trim();
     setInput('');
     setSending(true);
@@ -392,8 +432,9 @@ export default function ComboChatPage() {
     setMessages(ms => [...ms, { id: tempId, role: 'user', content: prompt, created_at: new Date().toISOString() }]);
 
     try {
-      const result = await comboApi.query(org.id, comboId, prompt);
-      // Replace temp with final user msg + AI response
+      // Pass chatId so the backend persists user + assistant messages
+      const result = await comboApi.query(org.id, comboId, prompt, chatId);
+      // Replace temp with final user msg + rich AI response (including rows/columns)
       setMessages(ms => {
         const without = ms.filter(m => m.id !== tempId);
         return [
@@ -458,7 +499,14 @@ export default function ComboChatPage() {
       {/* ── Messages ─────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-6 py-6">
-          {messages.length === 0 ? (
+          {historyLoading ? (
+            <div className="flex items-center justify-center min-h-[40vh]">
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <div className="w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
+                Loading chat history…
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 text-center">
               <div
                 className="w-16 h-16 rounded-2xl flex items-center justify-center"
@@ -516,7 +564,7 @@ export default function ComboChatPage() {
             />
             <button
               type="submit"
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || !chatId}
               className="w-9 h-9 flex-shrink-0 rounded-xl bg-primary hover:opacity-90 flex items-center justify-center transition-opacity disabled:opacity-30"
             >
               <Send className="w-4 h-4 text-white" />

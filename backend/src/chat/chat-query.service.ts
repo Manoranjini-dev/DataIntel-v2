@@ -85,6 +85,14 @@ export class ChatQueryService {
 
       const llmResponse = await this.llmService.generateSQL(llmContext);
 
+      // Guard: empty SQL means the LLM couldn't find schema info (not synced, etc.)
+      if (!llmResponse.sql?.trim()) {
+        throw new Error(
+          'Could not generate a SQL query — the schema for this connection may not be synced yet. ' +
+          'Please navigate to Connection Settings → Schema Sync and run a sync, then retry your question.',
+        );
+      }
+
       // 5. Execute via MCP (create temporary session)
       const password = decrypt(conn.encrypted_password, this.encKey);
       const session = await this.mcpService.createSession({

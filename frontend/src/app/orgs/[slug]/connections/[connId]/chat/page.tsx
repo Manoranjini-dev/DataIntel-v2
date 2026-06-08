@@ -369,7 +369,8 @@ export default function ConnectionChatPage() {
         execution_time_ms: exec?.execution_time_ms,
         result_preview: exec?.rows?.slice(0, 50) ?? [],
         result_columns: exec?.columns ?? [],
-        ui_hint: exec?.ui_hint,
+        // executeDraft returns no ui_hint — keep the existing value from when the
+        // LLM originally created this message (stored in chat_messages.ui_hint)
         // Clear pending state — execution complete
         pending_execution: false,
         sql_running: false,
@@ -434,7 +435,11 @@ export default function ConnectionChatPage() {
             generated_query: exec?.generated_query,
             result_preview: autoExecute ? (exec?.rows?.slice(0, 50) ?? []) : [],
             result_columns: autoExecute ? (exec?.columns ?? []) : [],
-            ui_hint: autoExecute ? exec?.ui_hint : undefined,
+            // ui_hint comes from assistantMessage (stored in chat_messages.ui_hint by the LLM).
+            // query_executions has no ui_hint column, so do NOT read exec?.ui_hint — it is
+            // always undefined and would overwrite the correct value from the spread above.
+            // When autoExecute=OFF there is no data yet, so clear the hint to hide the chart.
+            ...(autoExecute ? {} : { ui_hint: undefined }),
             // Execution identity for the draft endpoint
             executionId: exec?.id ?? result.executionId,
             // When autoExecute=OFF, mark as pending so UI shows editable SQL
@@ -662,12 +667,39 @@ export default function ConnectionChatPage() {
       {saveCardMsg && org && (
         <SaveCardModal
           orgId={org.id}
+          connId={connId}
           message={saveCardMsg}
           onClose={() => setSaveCardMsg(null)}
         />
       )}
     </div>
   );
+}
+
+// ── Normalize LLM ui_hint → valid widget_type / chart_type enum ─
+function normalizeWidgetType(hint?: string): string {
+  // Map extended LLM hints to the actual PostgreSQL enum values
+  const MAP: Record<string, string> = {
+    data_table:      'table',
+    stat_grid:       'metric_card',
+    stacked_bar:     'bar_chart',
+    horizontal_bar:  'bar_chart',
+    scatter_plot:    'scatter',
+    gauge_chart:     'gauge',
+    funnel_chart:    'funnel',
+    timeline:        'line_chart',
+    radar_chart:     'bar_chart',
+    comparison_card: 'metric_card',
+    number_trend:    'metric_card',
+    list:            'table',
+  };
+  const VALID = new Set([
+    'metric_card', 'line_chart', 'area_chart', 'bar_chart', 'pie_chart',
+    'donut_chart', 'table', 'heatmap', 'funnel', 'scatter', 'pivot',
+    'gauge', 'treemap', 'sankey', 'text', 'image', 'divider', 'filter_control',
+  ]);
+  const normalized = MAP[hint || ''] || hint || 'table';
+  return VALID.has(normalized) ? normalized : 'table';
 }
 
 // ── Add to Dashboard Modal ─────────────────────────────────────
@@ -680,6 +712,7 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
   const [selectedPage, setSelectedPage] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     dashboardApi.list(orgId).then(res => {
@@ -698,21 +731,25 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
 
   async function handleAdd() {
     if (!selectedDash || !selectedPage) return;
-    setSaving(true);
+    setSaving(true); setError('');
     try {
+      // Normalize ui_hint to a valid widget_type enum value before sending to backend
+      const widgetType = normalizeWidgetType(message.ui_hint);
       await dashboardApi.addWidget(orgId, selectedDash, selectedPage, {
-        title: message.content.slice(0, 50),
-        widget_type: message.ui_hint || 'table',
-        queryPrompt: message.generated_query || message.content,
+        title: message.content.slice(0, 60),
+        widget_type: widgetType,
+        queryPrompt: message.content,               // natural language prompt
         resultRows: message.result_preview || [],
         resultColumns: message.result_columns || [],
-        uiHint: message.ui_hint || 'table',
+        uiHint: widgetType,
         gridX: 0, gridY: 999, gridW: 4, gridH: 3,
         datasourceScopeType: 'connection',
+        datasourceContextId: connId,
       });
       setDone(true);
-    } catch (e) { console.error(e); }
-    finally { setSaving(false); }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to add widget. Please try again.');
+    } finally { setSaving(false); }
   }
 
   return (
@@ -751,6 +788,9 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
                   </select>
                 </div>
               )}
+              {error && (
+                <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
+              )}
             </>
           )}
         </div>
@@ -770,24 +810,39 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
 }
 
 // ── Save Card Modal ────────────────────────────────────────────
-function SaveCardModal({ orgId, message, onClose }: { orgId: string; message: Message; onClose: () => void }) {
+function SaveCardModal({ orgId, connId, message, onClose }: {
+  orgId: string; connId: string; message: Message; onClose: () => void;
+}) {
   const [name, setName] = useState(message.content.slice(0, 60));
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleSave() {
     if (!name.trim()) return;
-    setSaving(true);
+    setSaving(true); setError('');
     try {
+      // Normalize ui_hint to a valid chart_type enum value (same enum as widget_type)
+      const chartType = normalizeWidgetType(message.ui_hint);
       await cardApi.create(orgId, {
         name,
-        raw_query: message.generated_query || '',
-        chart_type: message.ui_hint || 'table',
-        description: message.content.slice(0, 200),
+        description:            message.content.slice(0, 500),
+        rawQuery:               message.generated_query || '',
+        chartType,
+        // Required NOT NULL fields
+        datasourceContextType:  'connection',
+        datasourceContextId:    connId,
+        // Store prompt + SQL in queryDefinition JSONB
+        queryDefinition: {
+          prompt:    message.content,
+          sql:       message.generated_query || '',
+          ui_hint:   chartType,
+        },
       });
       setDone(true);
-    } catch (e) { console.error(e); }
-    finally { setSaving(false); }
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save card. Please try again.');
+    } finally { setSaving(false); }
   }
 
   return (
@@ -808,11 +863,18 @@ function SaveCardModal({ orgId, message, onClose }: { orgId: string; message: Me
               <p className="text-xs text-muted-foreground mt-1">Find it in Cards</p>
             </div>
           ) : (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Card Name</label>
-              <input value={name} onChange={e => setName(e.target.value)}
-                className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
-              <p className="text-xs text-muted-foreground mt-2">Chart type: <span className="font-medium text-foreground">{message.ui_hint || 'table'}</span></p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Card Name</label>
+                <input value={name} onChange={e => setName(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Chart type: <span className="font-medium text-foreground">{normalizeWidgetType(message.ui_hint)}</span>
+              </p>
+              {error && (
+                <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
+              )}
             </div>
           )}
         </div>

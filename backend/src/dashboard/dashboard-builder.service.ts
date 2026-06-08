@@ -333,9 +333,17 @@ export class DashboardBuilderService {
   async listWidgets(pageId: string, orgId: string, requesterId: string) {
     await this.orgPermissions.requireMember(orgId, requesterId);
     return this.db.queryMany(
-      `SELECT w.*, c.name AS card_name, c.status AS card_status
+      `SELECT w.*,
+              c.name AS card_name, c.status AS card_status,
+              c.raw_query AS card_raw_query,
+              c.chart_type AS card_chart_type,
+              c.datasource_context_id AS card_context_id,
+              c.datasource_context_type AS card_context_type,
+              qe.result_preview AS card_result_preview,
+              qe.result_columns AS card_result_columns
        FROM dashboard_widgets_v2 w
        LEFT JOIN analytics_cards c ON c.id = w.card_id
+       LEFT JOIN query_executions qe ON qe.id = c.last_execution_id
        WHERE w.page_id = $1 AND w.deleted_at IS NULL
        ORDER BY w.grid_y ASC, w.grid_x ASC`,
       [pageId],
@@ -485,7 +493,8 @@ export class DashboardBuilderService {
 
   async inspectWidget(widgetId: string, orgId: string, requester: SafeAccount) {
     await this.orgPermissions.requireMember(orgId, requester.id);
-    
+
+    // Try the most-recent widget_execution → query_execution for the generated SQL
     const execution = await this.db.queryOne(
       `SELECT w.id, w.status, w.error, w.duration_ms, w.started_at, w.cached,
               q.generated_query, q.row_count AS rows_returned
@@ -493,8 +502,28 @@ export class DashboardBuilderService {
        LEFT JOIN query_executions q ON w.execution_id = q.id
        WHERE w.widget_id = $1 AND w.org_id = $2
        ORDER BY w.started_at DESC LIMIT 1`,
-      [widgetId, orgId]
+      [widgetId, orgId],
     );
+
+    // Fallback: read generated_query from the widget's own query_definition JSONB
+    // (stored there by addWidget / updateWidget when the user adds or edits the widget)
+    if (!execution?.generated_query) {
+      const widget = await this.db.queryOne<{ query_definition: any }>(
+        `SELECT query_definition FROM dashboard_widgets_v2 WHERE id = $1`,
+        [widgetId],
+      );
+      const qd = typeof widget?.query_definition === 'string'
+        ? JSON.parse(widget.query_definition)
+        : (widget?.query_definition || {});
+      const fallbackSql = (qd.sql as string | undefined) || null;
+      if (fallbackSql) {
+        return {
+          execution: execution
+            ? { ...execution, generated_query: fallbackSql }
+            : { generated_query: fallbackSql },
+        };
+      }
+    }
 
     return { execution: execution || null };
   }

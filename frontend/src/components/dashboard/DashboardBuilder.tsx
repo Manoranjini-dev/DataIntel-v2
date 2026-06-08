@@ -15,6 +15,7 @@ import {
 // ── Types ──────────────────────────────────────────────────────
 interface WidgetData {
   id: string;
+  sql?: string;
   title: string;
   widget_type: string;
   query_prompt: string;
@@ -27,6 +28,33 @@ interface WidgetData {
   ui_hint?: string;
   isLoading?: boolean;
   isRenaming?: boolean;
+}
+
+// ── Map LLM ui_hint → valid widget_type / chart_type enum ──────
+// The PostgreSQL enum has a fixed set of values. LLM can return extended
+// hints like 'data_table', 'stat_grid', 'stacked_bar' which aren't valid.
+function normalizeWidgetType(hint?: string | null): string {
+  const MAP: Record<string, string> = {
+    data_table:      'table',
+    stat_grid:       'metric_card',
+    stacked_bar:     'bar_chart',
+    horizontal_bar:  'bar_chart',
+    scatter_plot:    'scatter',
+    gauge_chart:     'gauge',
+    funnel_chart:    'funnel',
+    timeline:        'line_chart',
+    radar_chart:     'bar_chart',
+    comparison_card: 'metric_card',
+    number_trend:    'metric_card',
+    list:            'table',
+  };
+  const VALID = new Set([
+    'metric_card', 'line_chart', 'area_chart', 'bar_chart', 'pie_chart',
+    'donut_chart', 'table', 'heatmap', 'funnel', 'scatter', 'pivot',
+    'gauge', 'treemap', 'sankey', 'text', 'image', 'divider', 'filter_control',
+  ]);
+  const normalized = MAP[hint || ''] || hint || 'table';
+  return VALID.has(normalized) ? normalized : 'table';
 }
 
 // ── Templates ──────────────────────────────────────────────────
@@ -370,7 +398,7 @@ function Widget({
           )}
 
           {menuOpen && !renaming && (
-            <div className="absolute top-8 right-0 w-48 bg-card border border-border rounded-xl shadow-xl z-40 py-1 overflow-hidden" onMouseDown={e => e.stopPropagation()}>
+            <div className="absolute top-8 right-0 w-52 bg-card border border-border rounded-xl shadow-xl z-40 py-1 max-h-72 overflow-y-auto" onMouseDown={e => e.stopPropagation()}>
               <button onClick={() => { setMenuOpen(false); setRenaming(true); setDraftTitle(widget.title); }}
                 className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
                 <Type className="w-3.5 h-3.5 text-muted-foreground" /> Rename
@@ -475,7 +503,19 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
                 draggable
                 unselectable="on"
                 onClick={() => onCardClick?.(c)}
-                onDragStart={e => { const hint = JSON.stringify({ type: 'card', cardId: c.id, chartType: c.chart_type, title: c.name }); e.dataTransfer.setData('text/plain', hint); (window as any).__draggedWidgetHint = hint; }}
+                onDragStart={e => {
+                  const hint = JSON.stringify({
+                    type: 'card',
+                    cardId: c.id,
+                    chartType: c.chart_type,
+                    title: c.name,
+                    rawQuery: c.raw_query || (c.query_definition as any)?.sql || '',
+                    contextType: c.datasource_context_type || 'connection',
+                    contextId: c.datasource_context_id || '',
+                  });
+                  e.dataTransfer.setData('text/plain', hint);
+                  (window as any).__draggedWidgetHint = hint;
+                }}
               >
                 <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 text-[11px] font-bold text-accent/70">{(c.chart_type || 'C').slice(0,1).toUpperCase()}</div>
                 <p className="text-[11px] font-medium text-foreground truncate">{c.name}</p>
@@ -522,14 +562,18 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
     setLoading(true);
     try {
       const exec = (preview as any).execution as Record<string, unknown>;
+      // ui_hint is on the assistantMessage, NOT on execution (query_executions has no ui_hint column)
+      const rawHint = (preview as any).assistantMessage?.ui_hint || exec?.ui_hint || defaultHint;
+      const widgetType = normalizeWidgetType(rawHint as string);
       const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
         title: title || prompt,
-        widget_type: String(exec?.ui_hint || defaultHint || 'table').replace('data_table', 'table'),
+        widget_type: widgetType,
         queryPrompt: prompt,
+        sql: String(exec?.generated_query || ''),
         datasourceScopeType: 'connection',
-        resultRows: (exec?.rows as Record<string, unknown>[])?.slice(0, 100),
-        resultColumns: exec?.columns as string[],
-        uiHint: String(exec?.ui_hint || defaultHint || 'table').replace('data_table', 'table'),
+        resultRows: (exec?.rows as Record<string, unknown>[])?.slice(0, 100) || [],
+        resultColumns: (exec?.columns as string[]) || [],
+        uiHint: widgetType,
         gridX: defaultPosition?.x, gridY: defaultPosition?.y,
         gridW: defaultPosition?.w, gridH: defaultPosition?.h,
       });
@@ -541,7 +585,7 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
         height: defaultPosition?.h || widget.widget.height || 3,
         result_rows: (exec?.rows as Record<string, unknown>[])?.slice(0, 100) || [],
         result_columns: exec?.columns as string[] || [],
-        ui_hint: String(exec?.ui_hint || defaultHint || 'table').replace('data_table', 'table'),
+        ui_hint: normalizeWidgetType((preview as any)?.assistantMessage?.ui_hint || defaultHint),
         is_dropped: !!defaultPosition,
       });
       onClose();
@@ -550,6 +594,8 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
   }
 
   const exec = preview ? (preview as any).execution as Record<string, unknown> : null;
+  // ui_hint lives on assistantMessage (not on query_executions which has no such column)
+  const previewHint = preview ? ((preview as any).assistantMessage?.ui_hint as string | undefined) : undefined;
   const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all';
 
   return (
@@ -587,20 +633,32 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
           </button>
 
           {exec && (
-            <div className="bg-success/5 border border-success/20 rounded-xl p-3 space-y-2">
-              <p className="text-xs text-muted-foreground flex items-center gap-2">
-                <span className="text-success">✓</span>
-                {String(exec.row_count)} rows · <span className="text-primary font-medium">{String(exec.ui_hint)}</span>
-              </p>
-              <div className="overflow-x-auto">
-                <table className="text-xs w-full">
-                  <thead><tr>{(exec.columns as string[] || []).map((c: string) => <th key={c} className="px-2 py-1 text-left text-muted-foreground">{c}</th>)}</tr></thead>
-                  <tbody>{((exec.rows as any[] || []).slice(0, 5)).map((row, i) => (
-                    <tr key={i}>{(exec.columns as string[]).map(c => <td key={c} className="px-2 py-1 text-foreground truncate max-w-[80px]">{String(row[c] ?? '')}</td>)}</tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            </div>
+            exec.status === 'failed'
+              ? (
+                <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3">
+                  <p className="text-xs flex items-start gap-2">
+                    <span className="text-destructive shrink-0 mt-0.5">✗</span>
+                    <span className="text-destructive/90">{String(exec.error_message || 'Query failed — schema may not be synced yet')}</span>
+                  </p>
+                </div>
+              )
+              : (
+                <div className="bg-success/5 border border-success/20 rounded-xl p-3 space-y-2">
+                  <p className="text-xs text-muted-foreground flex items-center gap-2">
+                    <span className="text-success">✓</span>
+                    {String(exec.row_count ?? 0)} rows
+                    {previewHint && <> · <span className="text-primary font-medium">{previewHint.replace(/_/g, ' ')}</span></>}
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs w-full">
+                      <thead><tr>{(exec.columns as string[] || []).map((c: string) => <th key={c} className="px-2 py-1 text-left text-muted-foreground">{c}</th>)}</tr></thead>
+                      <tbody>{((exec.rows as any[] || []).slice(0, 5)).map((row: any, i: number) => (
+                        <tr key={i}>{(exec.columns as string[]).map((c: string) => <td key={c} className="px-2 py-1 text-foreground truncate max-w-[80px]">{String(row[c] ?? '')}</td>)}</tr>
+                      ))}</tbody>
+                    </table>
+                  </div>
+                </div>
+              )
           )}
         </div>
 
@@ -635,49 +693,72 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
 
     // Split by comma or newline into individual widget prompts
     const prompts = description.split(/[,\n]/).map(p => p.trim()).filter(Boolean);
-    const chartHints = ['bar_chart', 'line_chart', 'metric_card', 'pie_chart', 'table'];
+    // Fallback hints — used only if the LLM doesn't return a ui_hint
+    const fallbackHints = ['bar_chart', 'line_chart', 'metric_card', 'pie_chart', 'bar_chart', 'line_chart'];
 
     let activeChatId = chatId;
     if (!activeChatId && connectionId) {
-      const { chat } = await chatApi.create(orgId, { connectionId });
-      activeChatId = chat.id;
-      onChatCreated?.(chat.id);
+      try {
+        const { chat } = await chatApi.create(orgId, { connectionId });
+        activeChatId = chat.id;
+        onChatCreated?.(chat.id);
+      } catch (e) { console.error(e); setGenerating(false); return; }
     }
-    if (!activeChatId) return;
+    if (!activeChatId) { setGenerating(false); return; }
 
     for (let i = 0; i < prompts.length; i++) {
       const prompt = prompts[i];
-      const hint = chartHints[i % chartHints.length];
-      setProgress(p => [...p, prompt]);
+      const fallbackHint = fallbackHints[i % fallbackHints.length];
+      setProgress(p => [...p, `⏳ ${prompt}`]);
+
+      let rows: Record<string, unknown>[] = [];
+      let columns: string[] = [];
+      let resolvedHint = fallbackHint;
+
       try {
-        const result = await chatApi.ask(orgId, activeChatId, `${prompt} (format the result for a ${hint.replace(/_/g, ' ')})`, true);
+        const result = await chatApi.ask(orgId, activeChatId, prompt, true);
         const exec = (result as any).execution;
-        if (exec?.rows?.length) {
-          const maxY = i * 4;
-          const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
-            title: prompt.slice(0, 50),
-            widget_type: String(exec.ui_hint || hint).replace('data_table', 'table'),
-            queryPrompt: prompt,
-            datasourceScopeType: 'connection',
-            resultRows: exec.rows.slice(0, 100),
-            resultColumns: exec.columns,
-            uiHint: String(exec.ui_hint || hint).replace('data_table', 'table'),
-            gridX: (i % 3) * 4,
-            gridY: Math.floor(i / 3) * 4,
-            gridW: 4, gridH: 4,
-          });
-          onWidgetAdded({
-            id: widget.widget.id, title: widget.widget.title,
-            widget_type: widget.widget.widget_type,
-            query_prompt: prompt,
-            position_x: (i % 3) * 4, position_y: Math.floor(i / 3) * 4,
-            width: 4, height: 4,
-            result_rows: exec.rows.slice(0, 100),
-            result_columns: exec.columns,
-            ui_hint: String(exec.ui_hint || hint).replace('data_table', 'table'),
-          });
-        }
-      } catch (e) { console.error(e); }
+        // ui_hint lives on assistantMessage, NOT on execution record
+        const llmHint = (result as any).assistantMessage?.ui_hint || exec?.ui_hint;
+        resolvedHint = normalizeWidgetType(llmHint || fallbackHint);
+        rows = (exec?.rows || []).slice(0, 100);
+        columns = exec?.columns || [];
+        // Mark as done in progress
+        setProgress(p => p.map((line, idx) => idx === i ? `✓ ${prompt}` : line));
+      } catch (e) {
+        console.error(`Widget "${prompt}" failed:`, e);
+        setProgress(p => p.map((line, idx) => idx === i ? `✗ ${prompt} (query failed — widget added, click Execute to retry)` : line));
+      }
+
+      // Always add the widget — even if the query failed, the user can re-execute it
+      // from the dashboard. Empty result_rows will show "No data" with an Execute button.
+      try {
+        const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
+          title: prompt.slice(0, 60),
+          widget_type: resolvedHint,
+          queryPrompt: prompt,
+          datasourceScopeType: 'connection',
+          resultRows: rows,
+          resultColumns: columns,
+          uiHint: resolvedHint,
+          gridX: (i % 3) * 4,
+          gridY: Math.floor(i / 3) * 4,
+          gridW: 4, gridH: 4,
+        });
+        onWidgetAdded({
+          id: widget.widget.id, title: widget.widget.title,
+          widget_type: resolvedHint,
+          query_prompt: prompt,
+          position_x: (i % 3) * 4, position_y: Math.floor(i / 3) * 4,
+          width: 4, height: 4,
+          result_rows: rows,
+          result_columns: columns,
+          ui_hint: resolvedHint,
+        });
+      } catch (e) {
+        console.error(`Failed to add widget "${prompt}" to dashboard:`, e);
+        setProgress(p => p.map((line, idx) => idx === i ? `✗ ${prompt} (could not save widget)` : line));
+      }
     }
     setGenerating(false);
     setDone(true);
@@ -725,14 +806,22 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
                 </div>
               )}
 
-              {generating && (
-                <div className="space-y-2">
-                  {progress.map((p, i) => (
-                    <div key={i} className="flex items-center gap-2.5 text-xs text-foreground">
-                      <div className="w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin shrink-0" />
-                      <span className="truncate text-muted-foreground">{p}</span>
-                    </div>
-                  ))}
+              {(generating || done) && progress.length > 0 && (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {progress.map((p, i) => {
+                    const isDone = p.startsWith('✓');
+                    const isFail = p.startsWith('✗');
+                    const isPending = p.startsWith('⏳');
+                    const label = p.replace(/^[✓✗⏳]\s*/, '');
+                    return (
+                      <div key={i} className="flex items-start gap-2 text-xs">
+                        {isPending && <span className="w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin shrink-0 mt-0.5" />}
+                        {isDone && <span className="text-success shrink-0">✓</span>}
+                        {isFail && <span className="text-destructive shrink-0">✗</span>}
+                        <span className={`${isDone ? 'text-foreground' : isFail ? 'text-destructive/80' : 'text-muted-foreground'} leading-tight`}>{label}</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -814,6 +903,8 @@ function QueryInspectorModal({ widgetId, orgId, dashId, pageId, onClose }: {
 }
 
 // ── Edit Query Dialog ──────────────────────────────────────────
+// Shows BOTH the natural-language prompt and the generated SQL so
+// the user can edit either and re-run. Apply persists to the DB.
 function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, onUpdate, onClose }: {
   widget: WidgetData;
   orgId: string;
@@ -824,158 +915,267 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
   onUpdate: (patch: Partial<WidgetData>) => void;
   onClose: () => void;
 }) {
-  const [mode, setMode] = useState<'prompt' | 'sql'>('prompt');
   const [prompt, setPrompt] = useState(widget.query_prompt || '');
-  const [sql, setSql] = useState('');
+  // Seed from widget.sql immediately (set during addWidget / previous handleApply)
+  const [sql, setSql]       = useState(widget.sql || '');
   const [sqlLoading, setSqlLoading] = useState(false);
+  // 'prompt' = last ran via prompt, 'sql' = last ran via sql
+  const [lastRanVia, setLastRanVia] = useState<'prompt' | 'sql' | null>(null);
   const [running, setRunning] = useState(false);
+  const [saving,  setSaving]  = useState(false);
   const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; columns: string[]; ui_hint: string } | null>(null);
-  const [error, setError] = useState('');
+  const [error,   setError]   = useState('');
 
-  // Load current SQL when switching to SQL mode
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Load the current SQL from the widget's last execution on mount.
+  // widget.sql is the immediate fallback (seeded from query_definition.sql above).
+  // The inspect call may find a more-recent SQL from a widget_execution record.
   useEffect(() => {
-    if (mode !== 'sql' || sql) return;
     setSqlLoading(true);
     dashboardApi.inspect(orgId, dashId, pageId, widget.id)
-      .then(res => { if (res.execution?.generated_query) setSql(res.execution.generated_query); })
-      .catch(() => {/* no prior execution - ok */})
+      .then(res => {
+        // Prefer the execution's generated_query (most recent run) over the stored prompt-sql
+        const execSql = res.execution?.generated_query;
+        if (execSql) setSql(execSql);
+        // else: keep widget.sql that was seeded into state above
+      })
+      .catch(() => {/* no execution record — widget.sql from query_definition is used */})
       .finally(() => setSqlLoading(false));
-  }, [mode]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  async function handleRun() {
+  // Get or create the chat needed for execution
+  async function getChat(): Promise<string | null> {
+    if (chatId) return chatId;
+    if (connectionId) {
+      try {
+        const { chat } = await chatApi.create(orgId, { connectionId });
+        return chat.id;
+      } catch { return null; }
+    }
+    return null;
+  }
+
+  async function handleRunPrompt() {
+    if (!prompt.trim()) return;
     setRunning(true); setError(''); setPreview(null);
     try {
-      let activeChatId = chatId;
-      if (!activeChatId && connectionId) {
-        const { chat } = await chatApi.create(orgId, { connectionId });
-        activeChatId = chat.id;
-      }
-      if (!activeChatId) { setError('No chat or connection available'); return; }
-
-      if (mode === 'prompt') {
-        if (!prompt.trim()) return;
-        const result = await chatApi.ask(orgId, activeChatId, prompt, true);
-        const exec = (result as any).execution;
-        if (exec?.rows?.length) {
-          setPreview({ rows: exec.rows.slice(0, 5), columns: exec.columns || [], ui_hint: exec.ui_hint || widget.widget_type });
-        } else {
-          setError('Query returned no rows. Try a different prompt.');
-        }
+      const cid = await getChat();
+      if (!cid) { setError('No connection available to run this query.'); return; }
+      const result = await chatApi.ask(orgId, cid, prompt, true);
+      const exec = (result as any).execution;
+      const rows: Record<string, unknown>[] = exec?.rows || [];
+      // ui_hint comes from the assistant message (LLM-suggested chart type)
+      const uiHint: string = (result as any).assistantMessage?.ui_hint || widget.widget_type;
+      if (rows.length > 0) {
+        setSql(exec?.generated_query || sql); // update SQL pane with what LLM generated
+        setPreview({ rows: rows.slice(0, 5), columns: exec?.columns || [], ui_hint: uiHint });
+        setLastRanVia('prompt');
       } else {
-        if (!sql.trim()) return;
-        const result = await chatApi.executeDraft(orgId, activeChatId, '', sql);
-        const exec = result.execution ?? result;
-        if ((exec?.rows?.length ?? exec?.row_count) > 0) {
-          setPreview({ rows: (exec.rows || []).slice(0, 5), columns: exec.columns || [], ui_hint: widget.widget_type });
-        } else {
-          setError('Query returned no rows. Try a different SQL.');
-        }
+        setError('Query returned no rows. Try rephrasing your prompt.');
       }
-    } catch (e: any) { setError(e?.message || 'Query failed'); }
+    } catch (e: any) { setError(e?.message || 'Query failed.'); }
     finally { setRunning(false); }
   }
 
-  function handleApply() {
-    if (!preview) return;
-    onUpdate({ query_prompt: prompt, result_rows: preview.rows, result_columns: preview.columns, ui_hint: preview.ui_hint, widget_type: preview.ui_hint || widget.widget_type });
-    onClose();
+  async function handleRunSQL() {
+    if (!sql.trim()) return;
+    setRunning(true); setError(''); setPreview(null);
+    try {
+      const cid = await getChat();
+      if (!cid) { setError('No connection available to run this query.'); return; }
+      const result = await chatApi.executeDraft(orgId, cid, '', sql);
+      const exec = result.execution ?? result;
+      const rows: Record<string, unknown>[] = exec?.rows || [];
+      const rowCount: number = exec?.row_count ?? rows.length;
+      if (rowCount > 0 || rows.length > 0) {
+        setPreview({ rows: rows.slice(0, 5), columns: exec?.columns || [], ui_hint: exec?.ui_hint || widget.widget_type });
+        setLastRanVia('sql');
+      } else {
+        setError('Query returned no rows. Check your SQL and try again.');
+      }
+    } catch (e: any) { setError(e?.message || 'SQL execution failed.'); }
+    finally { setRunning(false); }
   }
+
+  async function handleApply() {
+    if (!preview) return;
+    setSaving(true); setError('');
+    try {
+      const patch: Partial<WidgetData> = {
+        // Always save the new results
+        result_rows:    preview.rows,
+        result_columns: preview.columns,
+        ui_hint:        preview.ui_hint,
+        widget_type:    preview.ui_hint || widget.widget_type,
+        // Only update prompt when it was the prompt that was run
+        query_prompt:   lastRanVia === 'prompt' ? prompt : widget.query_prompt,
+        // Always save the SQL that was actually executed (so inspect finds it next time)
+        sql:            sql,
+      };
+      // Persist to DB (sql goes into query_definition.sql via updateWidget)
+      await dashboardApi.updateWidget(orgId, dashId, pageId, widget.id, {
+        ...widget,
+        ...patch,
+      });
+      onUpdate(patch);
+      onClose();
+    } catch (e: any) {
+      setError('Failed to save: ' + (e?.message || 'unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const noConnection = !chatId && !connectionId;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-border rounded-2xl w-full max-w-xl shadow-2xl" onClick={e => e.stopPropagation()} style={{ boxShadow: 'var(--shadow-elevated)' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+      <div
+        className="bg-card border border-border rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]"
+        onClick={e => e.stopPropagation()}
+        style={{ boxShadow: 'var(--shadow-elevated)' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Edit Widget Query</h2>
             <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xs">{widget.title}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><X className="w-4 h-4" /></button>
-        </div>
-
-        {/* Mode toggle */}
-        <div className="flex gap-1 px-5 pt-4">
-          <button
-            onClick={() => { setMode('prompt'); setPreview(null); setError(''); }}
-            className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${mode === 'prompt' ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'}`}
-          >
-            Natural language prompt
-          </button>
-          <button
-            onClick={() => { setMode('sql'); setPreview(null); setError(''); }}
-            className={`flex-1 py-1.5 rounded-lg text-xs font-medium border transition-all ${mode === 'sql' ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground'}`}
-          >
-            Direct SQL
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
-          {mode === 'prompt' ? (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data prompt</label>
-              <textarea
-                value={prompt}
-                onChange={e => { setPrompt(e.target.value); setPreview(null); }}
-                rows={3}
-                disabled={running}
-                placeholder="e.g. Show top 10 customers by revenue"
-                className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
-              />
-            </div>
-          ) : (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">SQL query</label>
-              {sqlLoading ? (
-                <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                  <span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
-                  Loading current SQL…
-                </div>
-              ) : (
-                <textarea
-                  value={sql}
-                  onChange={e => { setSql(e.target.value); setPreview(null); }}
-                  rows={6}
-                  disabled={running}
-                  placeholder="SELECT * FROM table LIMIT 100"
-                  className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y min-h-[100px] disabled:opacity-50 transition-all"
-                  spellCheck={false}
-                />
-              )}
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+
+          {noConnection && (
+            <div className="text-xs text-warning bg-warning/8 border border-warning/20 rounded-xl px-3 py-2">
+              This dashboard has no datasource connected — queries cannot be run.
             </div>
           )}
 
+          {/* ── Prompt section ── */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-foreground">Data prompt</label>
+              <span className="text-[10px] text-muted-foreground">Natural language — AI writes the SQL</span>
+            </div>
+            <textarea
+              value={prompt}
+              onChange={e => { setPrompt(e.target.value); setPreview(null); }}
+              rows={2}
+              disabled={running || saving}
+              placeholder="e.g. Show top 10 customers by total revenue"
+              className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
+            />
+            <button
+              onClick={handleRunPrompt}
+              disabled={running || saving || !prompt.trim() || noConnection}
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 border border-border rounded-lg text-xs font-medium text-foreground disabled:opacity-40 transition-colors"
+            >
+              {running && lastRanVia !== 'sql'
+                ? <><span className="w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Running…</>
+                : <><Play className="w-3 h-3 text-primary" />Run with prompt</>}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">or</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+
+          {/* ── SQL section ── */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-foreground">Generated SQL</label>
+              <span className="text-[10px] text-muted-foreground">Edit directly and run</span>
+            </div>
+            {sqlLoading ? (
+              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+                <span className="w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
+                Loading last executed SQL…
+              </div>
+            ) : (
+              <textarea
+                value={sql}
+                onChange={e => { setSql(e.target.value); setPreview(null); }}
+                rows={5}
+                disabled={running || saving}
+                placeholder="SELECT * FROM your_table LIMIT 100"
+                className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-xs font-mono text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y min-h-[80px] disabled:opacity-50 transition-all"
+                spellCheck={false}
+              />
+            )}
+            <button
+              onClick={handleRunSQL}
+              disabled={running || saving || !sql.trim() || noConnection}
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 border border-border rounded-lg text-xs font-medium text-foreground disabled:opacity-40 transition-colors"
+            >
+              {running && lastRanVia === 'sql'
+                ? <><span className="w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Running…</>
+                : <><Play className="w-3 h-3 text-primary" />Run SQL directly</>}
+            </button>
+          </div>
+
+          {/* Error */}
           {error && (
             <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
           )}
 
+          {/* Preview */}
           {preview && (
             <div className="bg-success/5 border border-success/20 rounded-xl p-3">
               <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1.5">
-                <Check className="w-3.5 h-3.5 text-success" /> {preview.rows.length}+ rows · {preview.ui_hint}
+                <Check className="w-3.5 h-3.5 text-success" />
+                {preview.rows.length} rows preview · chart type: {preview.ui_hint}
+                <span className="ml-auto text-[10px] text-success font-medium">
+                  Ready to apply
+                </span>
               </p>
               <div className="overflow-x-auto">
                 <table className="text-xs w-full">
-                  <thead><tr>{preview.columns.map(c => <th key={c} className="px-2 py-1 text-left text-muted-foreground whitespace-nowrap">{c}</th>)}</tr></thead>
-                  <tbody>{preview.rows.slice(0, 3).map((row, i) => (
-                    <tr key={i} className="border-t border-border/40">{preview.columns.map(c => <td key={c} className="px-2 py-1 text-foreground truncate max-w-[100px]">{String(row[c] ?? '')}</td>)}</tr>
-                  ))}</tbody>
+                  <thead>
+                    <tr>
+                      {preview.columns.map(c => (
+                        <th key={c} className="px-2 py-1 text-left text-muted-foreground whitespace-nowrap font-medium">{c}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.rows.slice(0, 3).map((row, i) => (
+                      <tr key={i} className="border-t border-border/40">
+                        {preview.columns.map(c => (
+                          <td key={c} className="px-2 py-1 text-foreground truncate max-w-[120px]">
+                            {String(row[c] ?? '')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
             </div>
           )}
         </div>
 
-        <div className="flex gap-2 px-5 pb-5">
-          <button onClick={onClose} className="px-4 py-2 border border-border text-muted-foreground rounded-xl text-sm hover:bg-muted transition-colors">Cancel</button>
+        {/* Footer */}
+        <div className="flex gap-2 px-5 py-4 border-t border-border shrink-0">
           <button
-            onClick={handleRun}
-            disabled={running || (mode === 'prompt' ? !prompt.trim() : !sql.trim()) || (!chatId && !connectionId)}
-            className="flex-1 py-2 bg-muted hover:bg-muted/80 border border-border rounded-xl text-sm font-medium text-foreground disabled:opacity-40 transition-colors flex items-center justify-center gap-2">
-            {running ? <><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Running…</> : <><Play className="w-3.5 h-3.5 text-primary" />Run Query</>}
+            onClick={onClose}
+            className="px-4 py-2 border border-border text-muted-foreground rounded-xl text-sm hover:bg-muted transition-colors"
+          >
+            Cancel
           </button>
-          <button onClick={handleApply} disabled={!preview}
-            className="px-5 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
-            Apply
+          <button
+            onClick={handleApply}
+            disabled={!preview || saving}
+            className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          >
+            {saving
+              ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Saving…</>
+              : 'Apply & Save'}
           </button>
         </div>
       </div>
@@ -1051,17 +1251,34 @@ export function DashboardBuilder({
   function buildWidgets(page: Record<string, unknown>) {
     setWidgets(((page?.widgets as Record<string, unknown>[]) || []).map(w => {
       const qd = w.query_definition as Record<string, unknown> || {};
+      // For card-based widgets, fall back to the card's last-execution cached data
+      // (card_result_preview is a JSON string of rows; card_result_columns is a string[])
+      let cardRows: Record<string, unknown>[] = [];
+      let cardCols: string[] = [];
+      if (w.card_id) {
+        if (w.card_result_preview) {
+          try { cardRows = JSON.parse(w.card_result_preview as string); } catch { cardRows = []; }
+        }
+        if (Array.isArray(w.card_result_columns)) cardCols = w.card_result_columns as string[];
+      }
+      const resultRows = (qd.result_rows as Record<string, unknown>[] | undefined)?.length
+        ? qd.result_rows as Record<string, unknown>[]
+        : cardRows;
+      const resultCols = (qd.result_columns as string[] | undefined)?.length
+        ? qd.result_columns as string[]
+        : cardCols;
       return {
         id: String(w.id), title: String(w.title || ''),
-        widget_type: String(w.widget_type || 'table'),
+        widget_type: normalizeWidgetType(String(qd.ui_hint || w.card_chart_type || w.widget_type || 'table')),
         query_prompt: String(qd.prompt || w.query_prompt || ''),
         position_x: Number(w.grid_x ?? w.position_x) || 0,
         position_y: Number(w.grid_y ?? w.position_y) || 0,
         width: Number(w.grid_w ?? w.width) || 4,
         height: Number(w.grid_h ?? w.height) || 3,
-        result_rows: (qd.result_rows || w.result_rows || []) as Record<string, unknown>[],
-        result_columns: (qd.result_columns || w.result_columns || []) as string[],
-        ui_hint: String(qd.ui_hint || w.ui_hint || w.widget_type || 'table'),
+        result_rows: resultRows,
+        result_columns: resultCols,
+        ui_hint: normalizeWidgetType(String(qd.ui_hint || w.card_chart_type || w.ui_hint || w.widget_type || 'table')),
+        sql: String(qd.sql || w.card_raw_query || ''),
       };
     }));
   }
@@ -1119,6 +1336,7 @@ export function DashboardBuilder({
       result_rows: ((qd.result_rows || raw.result_rows || []) as Record<string, unknown>[]),
       result_columns: (qd.result_columns || raw.result_columns || []) as string[],
       ui_hint: String(qd.ui_hint || raw.ui_hint || raw.widget_type || 'table'),
+      sql: String(qd.sql || raw.sql || ''),
     };
     if (raw.is_dropped) setWidgets(ws => [...ws, w]);
     else { const maxY = widgets.reduce((m, ww) => Math.max(m, (ww.position_y || 0) + (ww.height || 3)), 0); setWidgets(ws => [...ws, { ...w, position_y: maxY }]); }
@@ -1166,24 +1384,117 @@ export function DashboardBuilder({
     finally { setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: false } : w)); }
   }
 
+  /**
+   * Auto-execute a card widget's SQL against its connection and store the
+   * results in the widget's query_definition so the widget shows data.
+   * Called after addWidget when the card has no cached execution data.
+   */
+  async function autoExecuteCardWidget(
+    widgetId: string,
+    sql: string,
+    connectionId: string,
+    pageId: string,
+    widgetTitle: string,
+    widgetType: string,
+  ) {
+    if (!org) return;
+    try {
+      // Find or create a chat for this connection so we can run the SQL
+      const { chats } = await chatApi.list(String(org.id), { connectionId });
+      let execChatId: string;
+      if (chats.length > 0) {
+        execChatId = chats[0].id;
+      } else {
+        const { chat } = await chatApi.create(String(org.id), { connectionId });
+        execChatId = chat.id;
+      }
+
+      const result = await chatApi.executeDraft(String(org.id), execChatId, '', sql);
+      const exec = result.execution ?? result;
+      const rows: Record<string, unknown>[] = (exec?.rows || []).slice(0, 100);
+      const cols: string[] = exec?.columns || [];
+
+      if (rows.length > 0 || cols.length > 0) {
+        // Persist results to the widget so a page reload also shows data
+        await dashboardApi.updateWidget(String(org.id), dashId, pageId, widgetId, {
+          title: widgetTitle,
+          query_prompt: widgetTitle,
+          result_rows: rows,
+          result_columns: cols,
+          sql,
+          ui_hint: widgetType,
+          widget_type: widgetType,
+        });
+        setWidgets(prev => prev.map(w =>
+          w.id === widgetId
+            ? { ...w, result_rows: rows, result_columns: cols, isLoading: false }
+            : w,
+        ));
+      } else {
+        setWidgets(prev => prev.map(w => w.id === widgetId ? { ...w, isLoading: false } : w));
+      }
+    } catch (e) {
+      console.error('Card widget auto-execute failed:', e);
+      setWidgets(prev => prev.map(w => w.id === widgetId ? { ...w, isLoading: false } : w));
+    }
+  }
+
   async function handleCardClick(card: any) {
     if (!org || !activePage) return;
     const maxY = widgets.reduce((m, w) => Math.max(m, (w.position_y || 0) + (w.height || 3)), 0);
     try {
+      const cardQd = typeof card.query_definition === 'string'
+        ? JSON.parse(card.query_definition) : (card.query_definition || {});
+      const cardSql = card.raw_query || cardQd.sql || '';
+      const widgetType = normalizeWidgetType(card.chart_type);
+      const contextType = card.datasource_context_type || 'connection';
+
+      // Prefer execution data already cached on the card (from card.service list JOIN)
+      let initRows: Record<string, unknown>[] = [];
+      let initCols: string[] = [];
+      if (card.last_result_preview) {
+        try { initRows = JSON.parse(card.last_result_preview); } catch { initRows = []; }
+      }
+      if (Array.isArray(card.last_result_columns)) initCols = card.last_result_columns;
+
       const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
-        title: card.name, widget_type: card.chart_type === 'data_table' ? 'table' : (card.chart_type || 'table'),
-        cardId: card.id, gridX: 0, gridY: maxY, gridW: 4, gridH: 3,
-        datasourceScopeType: 'connection', uiHint: card.chart_type,
+        title: card.name,
+        widget_type: widgetType,
+        cardId: card.id,
+        gridX: 0, gridY: maxY, gridW: 4, gridH: 3,
+        datasourceScopeType: contextType,
+        datasourceContextId: card.datasource_context_id,
+        sql: cardSql,
+        queryPrompt: card.name,
+        resultRows: initRows,
+        resultColumns: initCols,
+        uiHint: widgetType,
       });
-      const rw = res.widget, qd = rw.query_definition || {};
+
+      const rw = res.widget;
+      const newWidgetId = String(rw.id);
+      const needsExec = initRows.length === 0 && !!cardSql && contextType === 'connection' && !!card.datasource_context_id;
+
       setWidgets(prev => [...prev, {
-        id: String(rw.id), title: String(rw.title || ''), widget_type: String(rw.widget_type || 'table'),
-        query_prompt: String(qd.prompt || rw.query_prompt || ''),
+        id: newWidgetId,
+        title: String(rw.title || ''),
+        widget_type: widgetType,
+        query_prompt: card.name,
         position_x: 0, position_y: maxY, width: 4, height: 3,
-        result_rows: qd.result_rows || rw.result_rows || [],
-        result_columns: qd.result_columns || rw.result_columns || [],
-        ui_hint: String(qd.ui_hint || rw.ui_hint || rw.widget_type || 'table'),
+        result_rows: initRows,
+        result_columns: initCols,
+        ui_hint: widgetType,
+        sql: cardSql,
+        isLoading: needsExec,
       }]);
+
+      // If the card has never been executed, run its SQL now so the widget shows data
+      if (needsExec) {
+        autoExecuteCardWidget(
+          newWidgetId, cardSql, card.datasource_context_id,
+          activePage, card.name, widgetType,
+        );
+      }
     } catch (e) { console.error(e); }
   }
 
@@ -1417,19 +1728,40 @@ export function DashboardBuilder({
                 if (hint.startsWith('{')) {
                   const data = JSON.parse(hint);
                   if (data.type === 'card' && org) {
+                    const widgetType = normalizeWidgetType(data.chartType);
+                    const cardSql = data.rawQuery || '';
+                    const contextType = data.contextType || 'connection';
+                    const needsExec = !!cardSql && contextType === 'connection' && !!data.contextId;
                     const res = await dashboardApi.addWidget(String(org.id), dashId, activePage!, {
-                      title: data.title, widget_type: data.chartType === 'data_table' ? 'table' : (data.chartType || 'table'),
-                      cardId: data.cardId, gridX: item.x, gridY: item.y, gridW: 4, gridH: 3, datasourceScopeType: 'connection', uiHint: data.chartType,
+                      title: data.title,
+                      widget_type: widgetType,
+                      cardId: data.cardId,
+                      gridX: item.x, gridY: item.y, gridW: 4, gridH: 3,
+                      datasourceScopeType: contextType,
+                      datasourceContextId: data.contextId || undefined,
+                      sql: cardSql,
+                      queryPrompt: data.title,
+                      resultRows: [], resultColumns: [],
+                      uiHint: widgetType,
                     });
-                    const rw = res.widget, qd = rw.query_definition || {};
+                    const rw = res.widget;
+                    const newWidgetId = String(rw.id);
                     setWidgets(prev => [...prev, {
-                      id: String(rw.id), title: String(rw.title || ''), widget_type: String(rw.widget_type || 'table'),
-                      query_prompt: String(qd.prompt || rw.query_prompt || ''),
+                      id: newWidgetId, title: String(rw.title || ''), widget_type: widgetType,
+                      query_prompt: data.title,
                       position_x: item.x, position_y: item.y, width: 4, height: 3,
-                      result_rows: qd.result_rows || rw.result_rows || [],
-                      result_columns: qd.result_columns || rw.result_columns || [],
-                      ui_hint: String(qd.ui_hint || rw.ui_hint || rw.widget_type || 'table'),
+                      result_rows: [],
+                      result_columns: [],
+                      ui_hint: widgetType,
+                      sql: cardSql,
+                      isLoading: needsExec,
                     }]);
+                    if (needsExec) {
+                      autoExecuteCardWidget(
+                        newWidgetId, cardSql, data.contextId,
+                        activePage!, data.title, widgetType,
+                      );
+                    }
                   }
                 } else {
                   setDefaultPosition({ x: item.x, y: item.y, w: 4, h: 3 });

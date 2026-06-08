@@ -130,10 +130,13 @@ export class CardService {
         c.*,
         a.display_name AS created_by_name,
         a.avatar_url AS created_by_avatar,
-        cf.name AS folder_name
+        cf.name AS folder_name,
+        qe.result_preview AS last_result_preview,
+        qe.result_columns AS last_result_columns
       FROM analytics_cards c
       JOIN accounts a ON a.id = c.created_by
       LEFT JOIN card_folders cf ON cf.id = c.folder_id AND cf.deleted_at IS NULL
+      LEFT JOIN query_executions qe ON qe.id = c.last_execution_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderClause}
       LIMIT $${p} OFFSET $${p + 1}

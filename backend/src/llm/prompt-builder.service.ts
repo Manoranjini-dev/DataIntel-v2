@@ -86,15 +86,22 @@ Pick whichever makes the answer easiest to understand for a non-technical user:
 - "list": Simple text listing — single or two-column result of names, emails, IDs, URLs. No numeric analysis needed
 - "data_table": Catch-all for detailed multi-column records or when no chart adds value. DEFAULT for > 5 columns or raw record lookups
 
-DECISION RULES:
-- If result will be 1 number → metric_card
-- If result will be 1 row, 2+ numbers → stat_grid
-- If result groups by time → line_chart or area_chart
-- If result groups by category with 1 number → bar_chart or horizontal_bar
-- If result shows proportions, few categories → donut_chart
-- If result shows 2 comparable numbers → comparison_card
-- If result is a plain list of names/IDs → list
-- If result has > 5 columns or is raw records → data_table
+DECISION RULES (in priority order — stop at the first matching rule):
+0. USER EXPLICIT PREFERENCE — HIGHEST PRIORITY: If the user's prompt contains ANY explicit chart type request (e.g. "pie chart", "bar chart", "as a line", "show as table", "in a donut", "trend chart"), you MUST use exactly that chart type. NEVER override user preference with heuristics.
+- "pie chart" / "in pie" / "pie" → pie_chart
+- "donut" → donut_chart
+- "bar chart" / "bar graph" / "bar" → bar_chart
+- "line chart" / "line graph" / "as a line" / "trend" → line_chart
+- "area chart" / "area" → area_chart
+- "table" / "as a table" / "show me the data" → data_table
+1. If result will be 1 number → metric_card
+2. If result will be 1 row, 2+ numbers → stat_grid
+3. If result groups by time → line_chart or area_chart
+4. If result groups by category with 1 number and ≤8 categories → bar_chart
+5. If result shows proportions, few categories → donut_chart
+6. If result shows 2 comparable numbers → comparison_card
+7. If result is a plain list of names/IDs → list
+8. If result has > 5 columns or is raw records → data_table
 
 FOLLOW-UP QUESTIONS — REQUIRED (exactly 3):
 Think like a business analyst guiding the user deeper into their data:
@@ -280,11 +287,12 @@ Rules: max 3 steps; _join_key must match the top-level agg name; only use multi-
 - "comparison_card": Two aggregated values side by side (this month vs last month)
 - "funnel_chart": Ordered pipeline stages with decreasing counts
 
-DECISION RULES:
-- 1 number → metric_card | 1 row, multiple numbers → stat_grid
-- Groups by time → line_chart or area_chart | Groups by category → bar_chart
-- Proportions, few categories → donut_chart | Plain list → list
-- >5 columns or raw records → data_table
+DECISION RULES (priority order):
+0. USER EXPLICIT PREFERENCE — HIGHEST PRIORITY: If the user's prompt contains an explicit chart type ("pie chart", "bar chart", "as a line", "donut", "table", etc.) use that type. NEVER override user preference.
+1. 1 number → metric_card | 1 row, multiple numbers → stat_grid
+2. Groups by time → line_chart or area_chart | Groups by category → bar_chart
+3. Proportions, few categories → donut_chart | Plain list → list
+4. >5 columns or raw records → data_table
 
 ═══ FOLLOW-UP QUESTIONS — REQUIRED (exactly 3, plain English) ═══
 1. A drill-down into a sub-dimension of the current result
