@@ -61,6 +61,11 @@ export class ChatQueryService {
     );
     if (!conn) throw new BadRequestException('Connection not found');
 
+    // Load conversation history BEFORE persisting the new user message so it is not
+    // included in recentMessages (which would cause it to appear twice in the LLM
+    // context: once from history, once from userPrompt — confusing the model).
+    const recentMessages = await this.getRecentMessages(chatId, 10);
+
     // 1. Persist user message
     const userMsg = await this.chatService.addMessage(chatId, 'user', prompt);
 
@@ -70,10 +75,16 @@ export class ChatQueryService {
       // 2. Build schema context from normalized tables
       const compressedSchema = await this.buildSchemaContext(conn.id);
 
-      // 3. Load recent messages for memory
-      const recentMessages = await this.getRecentMessages(chatId, 10);
+      // Early-exit when schema is absent: avoids burning LLM retries on a query
+      // that will always produce empty SQL — surface a clear error instead.
+      if (compressedSchema.startsWith('-- No schema')) {
+        throw new Error(
+          'Could not generate a SQL query — the schema for this connection may not be synced yet. ' +
+          'Please navigate to Connection Settings → Schema Sync and run a sync, then retry your question.',
+        );
+      }
 
-      // 4. Generate SQL via LLM using proper LLMContext
+      // 3. Generate SQL via LLM using proper LLMContext
       const connectorFamily = this.getConnectorFamily(conn.connector_type);
       const llmContext = this.promptBuilder.assembleContext({
         compressedSchema,
@@ -85,7 +96,7 @@ export class ChatQueryService {
 
       const llmResponse = await this.llmService.generateSQL(llmContext);
 
-      // Guard: empty SQL means the LLM couldn't find schema info (not synced, etc.)
+      // Guard: empty SQL after successful LLM parse (safety net)
       if (!llmResponse.sql?.trim()) {
         throw new Error(
           'Could not generate a SQL query — the schema for this connection may not be synced yet. ' +

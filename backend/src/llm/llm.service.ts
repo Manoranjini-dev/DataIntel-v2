@@ -47,13 +47,23 @@ export class LLMService {
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
+        // On retries, strongly reinforce the JSON-only requirement with an example
+        // structure so the model cannot mistake the response format.
+        const retryHint =
+          context.connectorFamily === 'elasticsearch'
+            ? '{"query_dsl":{"_index":"...","size":0,"query":{"match_all":{}}},"explanation":"...","target_indices":["..."],"confidence":0.9,"intent":"search","ui_hint":"table","follow_up_questions":["...","...","..."]}'
+            : '{"sql":"SELECT ...","explanation":"...","tables_used":["..."],"confidence":0.9,"ui_hint":"table","follow_up_questions":["...","...","..."]}';
+
         const messagesForApi = attempt === 0
           ? messages
           : [
               ...messages,
               {
                 role: 'system' as const,
-                content: 'Your previous response was not valid JSON. Respond with ONLY a valid JSON object, no markdown or code fences.',
+                content:
+                  `CRITICAL FORMAT ERROR: Your previous output was not valid JSON. ` +
+                  `You MUST respond with ONLY a valid JSON object — no markdown, no code fences, no surrounding text. ` +
+                  `Required structure (fill in real values):\n${retryHint}`,
               },
             ];
 
