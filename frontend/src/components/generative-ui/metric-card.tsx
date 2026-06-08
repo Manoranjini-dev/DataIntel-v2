@@ -5,9 +5,10 @@ import type { QueryExecutionResult } from '@/lib/types';
 interface MetricCardProps {
   execution: QueryExecutionResult;
   title?: string;
+  compact?: boolean;
 }
 
-export function MetricCard({ execution, title }: MetricCardProps) {
+export function MetricCard({ execution, title, compact }: MetricCardProps) {
   const { rows, columns } = execution;
   if (!rows || rows.length === 0) return null;
 
@@ -39,16 +40,16 @@ export function MetricCard({ execution, title }: MetricCardProps) {
     : String(value ?? '—');
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-900 via-zinc-900 to-zinc-800/50 p-5">
-      <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-indigo-500/5" />
-      <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+    <div className={`relative overflow-hidden w-full flex flex-col justify-center bg-white ${compact ? 'h-full p-2' : 'rounded-xl border border-zinc-200 p-4 shadow-sm'}`}>
+      <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-zinc-100" />
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
         {label}
       </p>
-      <p className="mt-2 text-3xl font-bold tracking-tight text-white">
+      <p className="mt-2 text-3xl font-bold tracking-tight text-zinc-800">
         {formatted}
       </p>
       {execution.rowCount > 0 && (
-        <p className="mt-1.5 text-[11px] text-zinc-600">
+        <p className="mt-1.5 text-[11px] text-zinc-400">
           {execution.executionTime}ms
         </p>
       )}

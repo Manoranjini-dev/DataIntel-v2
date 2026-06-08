@@ -65,8 +65,30 @@ OUTPUT FORMAT — STRICT JSON ONLY (no markdown, no code fences):
 }
 
 UI_HINT — CHOOSE THE MOST INSIGHTFUL VISUALIZATION:
-Pick whichever makes the answer easiest to understand for a non-technical user:
-- "metric_card": Single aggregate answer — one number (COUNT, SUM, AVG, MAX, MIN). Use when the whole answer IS the number
+Automatically select the most appropriate visualization type based on the analytical intent of the user's question, not just the returned data structure.
+Prioritize readability, comparison accuracy, and analytical value over decorative visualizations.
+
+CHART SELECTION PRIORITY RULES:
+- Rankings, comparisons, Top N, Bottom N, category-wise counts/totals, performance comparisons → bar_chart (DEFAULT for categories)
+- Long category names OR > 5 categories → horizontal_bar
+- Trends, changes over time, ordered sequences → line_chart
+- Parts of a whole AND ≤ 5 categories AND exact comparison not primary goal AND ranking doesn't matter → pie_chart / donut_chart
+- Standalone metrics without meaningful category comparisons → metric_card / stat_grid
+- Correlation or relationship analysis between two numeric variables → scatter_plot
+
+INTENT-BASED EXAMPLES:
+- "Top 5 customers by revenue" / "Top selling products" / "Most profitable products" / "Top countries by orders" → horizontal_bar
+- "Orders by category" / "Revenue by customer" / "How many records are in each table?" / "Customer count by city" → bar_chart
+- "Sales by month" / "Revenue trend over time" → line_chart
+- "Market share by category" → pie_chart / donut_chart
+
+ADDITIONAL RULES:
+- When multiple categories are being compared, prefer Bar Charts over Pie/Donut Charts.
+- When ranking or ordering matters, NEVER use Pie/Donut Charts.
+- When category labels are long, automatically switch to Horizontal Bar Charts.
+- Avoid KPI grids when a chart communicates the answer more effectively.
+
+- "metric_card": Single aggregate answer — one number (COUNT, SUM, AVG, MAX, MIN).
 - "stat_grid": One row, multiple KPI columns — e.g. total_orders + avg_order_value + total_revenue together
 - "bar_chart": Category vs. numeric — label column + value column, 2+ rows. Best for comparisons (sales by region, orders by status)
 - "line_chart": Trend over time — date/time column + numeric, sorted chronologically. Use for ≥3 time points
@@ -74,7 +96,7 @@ Pick whichever makes the answer easiest to understand for a non-technical user:
 - "pie_chart": Proportional share — 2–8 categories, one numeric column summing to a meaningful whole
 - "donut_chart": Same as pie_chart with cleaner look — prefer over pie_chart for 2–10 categories with a clear dominant slice
 - "stacked_bar": Multi-series breakdown — category + multiple sub-categories, 2+ numeric columns (e.g., revenue split by product line per month)
-- "horizontal_bar": Same as bar_chart but horizontal — use when category labels are long text or when there are 8+ categories
+- "horizontal_bar": Same as bar_chart but horizontal — use when category labels are long text or when there are > 5 categories
 - "scatter_plot": Correlation — two numeric columns where relationship matters (price vs. units_sold, age vs. spend)
 - "radar_chart": Multi-dimensional comparison — 3+ numeric metrics compared across 2–6 entities (e.g., store performance across 5 KPIs)
 - "gauge": Single percentage or ratio metric (0–100 or 0–1 range) — e.g., fulfillment rate, churn rate
@@ -91,17 +113,20 @@ DECISION RULES (in priority order — stop at the first matching rule):
 - "pie chart" / "in pie" / "pie" → pie_chart
 - "donut" → donut_chart
 - "bar chart" / "bar graph" / "bar" → bar_chart
+- "horizontal bar" / "horizontal bar chart" → horizontal_bar
 - "line chart" / "line graph" / "as a line" / "trend" → line_chart
 - "area chart" / "area" → area_chart
 - "table" / "as a table" / "show me the data" → data_table
 1. If result will be 1 number → metric_card
-2. If result will be 1 row, 2+ numbers → stat_grid
-3. If result groups by time → line_chart or area_chart
-4. If result groups by category with 1 number and ≤8 categories → bar_chart
-5. If result shows proportions, few categories → donut_chart
-6. If result shows 2 comparable numbers → comparison_card
-7. If result is a plain list of names/IDs → list
-8. If result has > 5 columns or is raw records → data_table
+2. If result will be 1 row, 2+ numbers WITHOUT meaningful category comparisons → stat_grid
+3. If result groups by time (trends, changes over time) → line_chart or area_chart
+4. If result has > 5 categories OR long category labels → horizontal_bar
+5. If result groups by category (rankings, comparisons, Top N, Bottom N, category-wise counts/totals) → bar_chart
+6. If result shows proportions/parts of a whole AND ≤ 5 categories AND exact comparison is not the goal AND ranking does not matter → donut_chart / pie_chart
+7. If result shows correlation between two numeric variables → scatter_plot
+8. If result shows 2 comparable numbers → comparison_card
+9. If result is a plain list of names/IDs → list
+10. If result has > 5 columns or is raw records → data_table
 
 FOLLOW-UP QUESTIONS — REQUIRED (exactly 3):
 Think like a business analyst guiding the user deeper into their data:
@@ -271,15 +296,39 @@ Rules: max 3 steps; _join_key must match the top-level agg name; only use multi-
 }
 
 ═══ UI_HINT — CHOOSE THE MOST INSIGHTFUL VISUALIZATION ═══
-- "metric_card": Single aggregate answer — one number (COUNT, SUM, AVG, MAX, MIN). Use when the whole answer IS a single number
+Automatically select the most appropriate visualization type based on the analytical intent of the user's question, not just the returned data structure.
+Prioritize readability, comparison accuracy, and analytical value over decorative visualizations.
+
+CHART SELECTION PRIORITY RULES:
+- Rankings, comparisons, Top N, Bottom N, category-wise counts/totals, performance comparisons → bar_chart (DEFAULT for categories)
+- Long category names OR > 5 categories → horizontal_bar
+- Trends, changes over time, ordered sequences → line_chart
+- Parts of a whole AND ≤ 5 categories AND exact comparison not primary goal AND ranking doesn't matter → pie_chart / donut_chart
+- Standalone metrics without meaningful category comparisons → metric_card / stat_grid
+- Correlation or relationship analysis between two numeric variables → scatter_plot
+
+INTENT-BASED EXAMPLES:
+- "Top 5 customers by revenue" / "Top selling products" / "Most profitable products" / "Top countries by orders" → horizontal_bar
+- "Orders by category" / "Revenue by customer" / "How many records are in each index?" / "Customer count by city" → bar_chart
+- "Sales by month" / "Revenue trend over time" → line_chart
+- "Market share by category" → pie_chart / donut_chart
+
+ADDITIONAL RULES:
+- When multiple categories are being compared, prefer Bar Charts over Pie/Donut Charts.
+- When ranking or ordering matters, NEVER use Pie/Donut Charts.
+- When category labels are long, automatically switch to Horizontal Bar Charts.
+- Avoid KPI grids when a chart communicates the answer more effectively.
+
+- "metric_card": Single aggregate answer — one number (COUNT, SUM, AVG, MAX, MIN).
 - "stat_grid": One row with multiple KPI columns (stats agg, or multiple metric aggs)
 - "bar_chart": Terms agg — categorical grouping with numeric values, top-N analysis (2+ buckets)
 - "line_chart": Date_histogram — time-series trend sorted by date, ≥3 time buckets. ALWAYS for date-based trends
 - "area_chart": Cumulative/volume over time — date_histogram emphasising volume
 - "pie_chart": Proportional terms agg with 2–8 buckets forming a meaningful whole
 - "donut_chart": Same as pie but cleaner — prefer for 2–10 categories
-- "horizontal_bar": Terms agg with long labels or 8+ categories
+- "horizontal_bar": Terms agg with long labels or > 5 categories
 - "stacked_bar": Nested terms agg with multiple sub-series
+- "scatter_plot": Correlation — two numeric variables where relationship matters
 - "data_table": Multi-field search hits, complex projections, >5 columns. Default for raw record lookups
 - "list": Single-field text listing (emails, names, IDs)
 - "gauge": Single ratio/percentage metric (0–100)
@@ -289,10 +338,12 @@ Rules: max 3 steps; _join_key must match the top-level agg name; only use multi-
 
 DECISION RULES (priority order):
 0. USER EXPLICIT PREFERENCE — HIGHEST PRIORITY: If the user's prompt contains an explicit chart type ("pie chart", "bar chart", "as a line", "donut", "table", etc.) use that type. NEVER override user preference.
-1. 1 number → metric_card | 1 row, multiple numbers → stat_grid
-2. Groups by time → line_chart or area_chart | Groups by category → bar_chart
-3. Proportions, few categories → donut_chart | Plain list → list
-4. >5 columns or raw records → data_table
+1. 1 number → metric_card | 1 row, multiple numbers without meaningful category comparisons → stat_grid
+2. Groups by time (trends) → line_chart or area_chart
+3. > 5 categories OR long category labels → horizontal_bar
+4. Groups by category (rankings, comparisons, counts) → bar_chart
+5. Proportions, ≤ 5 categories, ranking doesn't matter → donut_chart / pie_chart
+6. Plain list → list | >5 columns or raw records → data_table
 
 ═══ FOLLOW-UP QUESTIONS — REQUIRED (exactly 3, plain English) ═══
 1. A drill-down into a sub-dimension of the current result
@@ -366,18 +417,51 @@ OUTPUT FORMAT — STRICT JSON ONLY (no markdown, no code fences):
 The "sql" field contains the JSON array of pipeline stages.
 
 UI_HINT — CHOOSE THE MOST INSIGHTFUL VISUALIZATION:
+Automatically select the most appropriate visualization type based on the analytical intent of the user's question, not just the returned data structure.
+Prioritize readability, comparison accuracy, and analytical value over decorative visualizations.
+
+CHART SELECTION PRIORITY RULES:
+- Rankings, comparisons, Top N, Bottom N, category-wise counts/totals, performance comparisons → bar_chart (DEFAULT for categories)
+- Long category names OR > 5 categories → horizontal_bar
+- Trends, changes over time, ordered sequences → line_chart
+- Parts of a whole AND ≤ 5 categories AND exact comparison not primary goal AND ranking doesn't matter → pie_chart / donut_chart
+- Standalone metrics without meaningful category comparisons → metric_card / stat_grid
+- Correlation or relationship analysis between two numeric variables → scatter_plot
+
+INTENT-BASED EXAMPLES:
+- "Top 5 customers by revenue" / "Top selling products" / "Most profitable products" / "Top countries by orders" → horizontal_bar
+- "Orders by category" / "Revenue by customer" / "How many records are in each collection?" / "Customer count by city" → bar_chart
+- "Sales by month" / "Revenue trend over time" → line_chart
+- "Market share by category" → pie_chart / donut_chart
+
+ADDITIONAL RULES:
+- When multiple categories are being compared, prefer Bar Charts over Pie/Donut Charts.
+- When ranking or ordering matters, NEVER use Pie/Donut Charts.
+- When category labels are long, automatically switch to Horizontal Bar Charts.
+- Avoid KPI grids when a chart communicates the answer more effectively.
+
 - "metric_card": Single aggregate ($count result, $sum, $avg)
-- "stat_grid": Multiple aggregated metrics in one pipeline result
+- "stat_grid": Multiple aggregated metrics in one pipeline result without meaningful category comparisons
 - "bar_chart": $group with categorical _id and numeric accumulator values
 - "line_chart": $group by date field (date-truncated), sorted chronologically
 - "area_chart": Cumulative date-grouped data, volume over time
 - "pie_chart": $group with 2–8 proportional categories
 - "donut_chart": Same as pie, prefer for cleaner look with 2–10 categories
-- "horizontal_bar": $group with long category name strings or 8+ groups
+- "horizontal_bar": $group with long category name strings or > 5 groups
+- "scatter_plot": Correlation or relationship between two numeric variables
 - "number_trend": Single KPI compared to a prior period pipeline result
 - "comparison_card": Two values from two separate $group stages side by side
 - "data_table": Multi-field $project/$lookup results. DEFAULT for > 4 fields
 - "list": Single-field $project (email, name, title, URL)
+
+DECISION RULES (in priority order — stop at the first matching rule):
+0. USER EXPLICIT PREFERENCE — HIGHEST PRIORITY: If the user explicitly requests a chart type, use it.
+1. 1 number → metric_card | 1 row, multiple numbers without meaningful category comparisons → stat_grid
+2. Groups by time (trends) → line_chart or area_chart
+3. > 5 categories OR long category labels → horizontal_bar
+4. Groups by category (rankings, comparisons, counts) → bar_chart
+5. Proportions, ≤ 5 categories, ranking doesn't matter → donut_chart / pie_chart
+6. Plain list → list | >4 columns or raw records → data_table
 
 FOLLOW-UP QUESTIONS — REQUIRED (exactly 3, plain English):
 1. A drill-down into a sub-dimension

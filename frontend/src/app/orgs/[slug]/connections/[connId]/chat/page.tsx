@@ -7,6 +7,7 @@ import { usePrefsStore } from '@/lib/prefs-store';
 import dynamic from 'next/dynamic';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { resolveComponent } from '@/components/generative-ui';
 import {
   Plus, Send, MessageSquare, Sparkles,
   CheckCircle2, XCircle, Code2, ChevronDown, Play,
@@ -710,6 +711,7 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
   const [selectedDash, setSelectedDash] = useState<string>('');
   const [pages, setPages] = useState<any[]>([]);
   const [selectedPage, setSelectedPage] = useState<string>('');
+  const [title, setTitle] = useState(message.content.slice(0, 60));
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
@@ -723,6 +725,7 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
 
   useEffect(() => {
     if (!selectedDash) return;
+    setSelectedPage(''); // Reset page until fetched
     dashboardApi.get(orgId, selectedDash).then(res => {
       setPages(res.pages || []);
       if (res.pages?.length > 0) setSelectedPage(String(res.pages[0].id));
@@ -733,15 +736,32 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
     if (!selectedDash || !selectedPage) return;
     setSaving(true); setError('');
     try {
-      // Normalize ui_hint to a valid widget_type enum value before sending to backend
-      const widgetType = normalizeWidgetType(message.ui_hint);
+      let parsedRows = [];
+      if (typeof message.result_preview === 'string') {
+        try { parsedRows = JSON.parse(message.result_preview); } catch { parsedRows = []; }
+        if (!Array.isArray(parsedRows)) parsedRows = [];
+      } else if (Array.isArray(message.result_preview)) {
+        parsedRows = message.result_preview;
+      }
+      
+      let parsedCols = message.result_columns || [];
+      if (typeof parsedCols === 'string') {
+        try { parsedCols = JSON.parse(parsedCols); } catch { parsedCols = []; }
+        if (!Array.isArray(parsedCols)) parsedCols = [];
+      }
+
+      // Resolve the actual component type used in the chat (auto-detect)
+      const resolvedHint = resolveComponent({ rows: parsedRows, columns: parsedCols } as any, message.ui_hint as any);
+      const widgetType = normalizeWidgetType(resolvedHint);
+
       await dashboardApi.addWidget(orgId, selectedDash, selectedPage, {
-        title: message.content.slice(0, 60),
+        title: title || 'Untitled Widget',
         widget_type: widgetType,
-        queryPrompt: message.content,               // natural language prompt
-        resultRows: message.result_preview || [],
-        resultColumns: message.result_columns || [],
-        uiHint: widgetType,
+        queryPrompt: message.content,
+        sql: message.generated_query || '',
+        resultRows: parsedRows,
+        resultColumns: parsedCols,
+        uiHint: resolvedHint,
         gridX: 0, gridY: 999, gridW: 4, gridH: 3,
         datasourceScopeType: 'connection',
         datasourceContextId: connId,
@@ -771,6 +791,15 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
             </div>
           ) : (
             <>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Card Title</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 mb-3"
+                />
+              </div>
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1.5">Dashboard</label>
                 <select value={selectedDash} onChange={e => setSelectedDash(e.target.value)}

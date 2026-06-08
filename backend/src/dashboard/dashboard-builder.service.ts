@@ -131,7 +131,7 @@ export class DashboardBuilderService {
       // Create default page
       await query(
         `INSERT INTO dashboard_pages (dashboard_id, name, is_default, order_index)
-         VALUES ($1, 'Overview', TRUE, 0)`,
+         VALUES ($1, 'Page 1', TRUE, 0)`,
         [dash.id],
       );
 
@@ -352,6 +352,10 @@ export class DashboardBuilderService {
 
   async addWidget(pageId: string, orgId: string, creator: SafeAccount, dto: CreateWidgetDto) {
     await this.orgPermissions.requireRole(orgId, creator.id, 'editor');
+    
+    const page = await this.db.queryOne<{ dashboard_id: string }>(
+      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
+    );
 
     const widget = await this.db.queryOne(
       `INSERT INTO dashboard_widgets_v2
@@ -386,6 +390,10 @@ export class DashboardBuilderService {
       orgId, accountId: creator.id,
       eventType: 'widget_added', resourceType: 'widget', resourceId: widget!.id,
     });
+
+    if (page?.dashboard_id) {
+      await this.invalidateDashboardCache(page.dashboard_id);
+    }
 
     return widget;
   }
@@ -431,6 +439,13 @@ export class DashboardBuilderService {
 
     // Invalidate widget cache
     await this.redis.del(RedisKeys.widgetResult(widgetId));
+    
+    const page = await this.db.queryOne<{ dashboard_id: string }>(
+      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
+    );
+    if (page?.dashboard_id) {
+      await this.invalidateDashboardCache(page.dashboard_id);
+    }
 
     return widget;
   }
@@ -448,6 +463,13 @@ export class DashboardBuilderService {
       orgId, accountId: remover.id,
       eventType: 'widget_removed', resourceType: 'widget', resourceId: widgetId,
     });
+    
+    const pageInfo = await this.db.queryOne<{ dashboard_id: string }>(
+      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
+    );
+    if (pageInfo?.dashboard_id) {
+      await this.invalidateDashboardCache(pageInfo.dashboard_id);
+    }
   }
 
   /**

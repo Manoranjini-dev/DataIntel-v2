@@ -9,8 +9,13 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
-  MoreHorizontal, RefreshCw, Type, Trash2, Play, Check,
+  MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal
 } from 'lucide-react';
+import {
+  DndContext, DragOverlay, PointerSensor, useDroppable,
+  useDraggable, useSensor, useSensors, DragEndEvent, DragStartEvent
+} from '@dnd-kit/core';
+import { GenerativeUIRenderer } from '../generative-ui';
 
 // ── Types ──────────────────────────────────────────────────────
 interface WidgetData {
@@ -35,18 +40,18 @@ interface WidgetData {
 // hints like 'data_table', 'stat_grid', 'stacked_bar' which aren't valid.
 function normalizeWidgetType(hint?: string | null): string {
   const MAP: Record<string, string> = {
-    data_table:      'table',
-    stat_grid:       'metric_card',
-    stacked_bar:     'bar_chart',
-    horizontal_bar:  'bar_chart',
-    scatter_plot:    'scatter',
-    gauge_chart:     'gauge',
-    funnel_chart:    'funnel',
-    timeline:        'line_chart',
-    radar_chart:     'bar_chart',
+    data_table: 'table',
+    stat_grid: 'metric_card',
+    stacked_bar: 'bar_chart',
+    horizontal_bar: 'bar_chart',
+    scatter_plot: 'scatter',
+    gauge_chart: 'gauge',
+    funnel_chart: 'funnel',
+    timeline: 'line_chart',
+    radar_chart: 'bar_chart',
     comparison_card: 'metric_card',
-    number_trend:    'metric_card',
-    list:            'table',
+    number_trend: 'metric_card',
+    list: 'table',
   };
   const VALID = new Set([
     'metric_card', 'line_chart', 'area_chart', 'bar_chart', 'pie_chart',
@@ -57,21 +62,23 @@ function normalizeWidgetType(hint?: string | null): string {
   return VALID.has(normalized) ? normalized : 'table';
 }
 
+
+
 // ── Templates ──────────────────────────────────────────────────
 const WIDGET_TEMPLATES = [
-  { type: 'metric_card',    name: 'KPI Card',         icon: '▣',  desc: 'Single key number'      },
-  { type: 'bar_chart',      name: 'Bar Chart',        icon: '▦',  desc: 'Compare categories'     },
-  { type: 'line_chart',     name: 'Line Chart',       icon: '↗',  desc: 'Trends over time'       },
-  { type: 'area_chart',     name: 'Area Chart',       icon: '◿',  desc: 'Volume over time'       },
-  { type: 'pie_chart',      name: 'Pie Chart',        icon: '◑',  desc: 'Part-to-whole'          },
-  { type: 'donut_chart',    name: 'Donut Chart',      icon: '◎',  desc: 'Proportion rings'       },
-  { type: 'horizontal_bar', name: 'Horizontal Bar',   icon: '▬',  desc: 'Ranked comparison'      },
-  { type: 'scatter_chart',  name: 'Scatter Plot',     icon: '⁝',  desc: 'Correlation / clusters' },
-  { type: 'funnel_chart',   name: 'Funnel',           icon: '▽',  desc: 'Conversion stages'      },
-  { type: 'gauge_chart',    name: 'Gauge',            icon: '◐',  desc: 'Single value vs target' },
-  { type: 'waterfall_chart',name: 'Waterfall',        icon: '⊟',  desc: 'Running totals'         },
-  { type: 'stat_grid',      name: 'Stat Grid',        icon: '⊞',  desc: 'Multiple metrics'       },
-  { type: 'table',          name: 'Data Table',       icon: '☰',  desc: 'Raw row data'           },
+  { type: 'metric_card', name: 'KPI Card', icon: '▣', desc: 'Single key number' },
+  { type: 'bar_chart', name: 'Bar Chart', icon: '▦', desc: 'Compare categories' },
+  { type: 'line_chart', name: 'Line Chart', icon: '↗', desc: 'Trends over time' },
+  { type: 'area_chart', name: 'Area Chart', icon: '◿', desc: 'Volume over time' },
+  { type: 'pie_chart', name: 'Pie Chart', icon: '◑', desc: 'Part-to-whole' },
+  { type: 'donut_chart', name: 'Donut Chart', icon: '◎', desc: 'Proportion rings' },
+  { type: 'horizontal_bar', name: 'Horizontal Bar', icon: '▬', desc: 'Ranked comparison' },
+  { type: 'scatter_chart', name: 'Scatter Plot', icon: '⁝', desc: 'Correlation / clusters' },
+  { type: 'funnel_chart', name: 'Funnel', icon: '▽', desc: 'Conversion stages' },
+  { type: 'gauge_chart', name: 'Gauge', icon: '◐', desc: 'Single value vs target' },
+  { type: 'waterfall_chart', name: 'Waterfall', icon: '⊟', desc: 'Running totals' },
+  { type: 'stat_grid', name: 'Stat Grid', icon: '⊞', desc: 'Multiple metrics' },
+  { type: 'table', name: 'Data Table', icon: '☰', desc: 'Raw row data' },
 ];
 
 const CHART_COLORS = ['#D97A1E', '#F5A623', '#50A0B4', '#6ECA97', '#E97B7B', '#9B8EF5'];
@@ -334,44 +341,53 @@ function Widget({
 
   const renderContent = () => {
     if (widget.isLoading) return (
-      <div className="h-full flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      <div className="h-full flex flex-col p-3">
+        {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </div>
       </div>
     );
     if (!rows.length) return (
-      <div className="h-full flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-        <span>No data</span>
+      <div
+        className={`h-full flex flex-col p-3 ${isEditing ? 'cursor-pointer hover:bg-muted/30 transition-colors' : ''}`}
+        onClick={() => isEditing && onEditQuery?.()}
+      >
+        {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
+          <span>{isEditing ? 'Click to configure query' : 'No data'}</span>
+        </div>
       </div>
     );
-    if (['metric_card', 'stat_grid', 'number_trend'].includes(hint)) return <MetricWidget title={widget.title} rows={rows} columns={columns} />;
-    if (['bar_chart', 'horizontal_bar', 'stacked_bar'].includes(hint)) return <BarWidget title={widget.title} rows={rows} columns={columns} />;
-    if (['line_chart', 'area_chart', 'timeline'].includes(hint)) return <LineWidget title={widget.title} rows={rows} columns={columns} />;
-    if (['pie_chart', 'donut_chart'].includes(hint)) return <PieWidget title={widget.title} rows={rows} columns={columns} />;
-    if (hint === 'scatter_chart') return <ScatterWidget title={widget.title} rows={rows} columns={columns} />;
-    if (hint === 'funnel_chart') return <FunnelWidget title={widget.title} rows={rows} columns={columns} />;
-    if (hint === 'gauge_chart') return <GaugeWidget title={widget.title} rows={rows} columns={columns} />;
-    if (hint === 'waterfall_chart') return <WaterfallWidget title={widget.title} rows={rows} columns={columns} />;
-    return <TableWidget title={widget.title} rows={rows} columns={columns} />;
+    return (
+      <div className="h-full w-full overflow-hidden p-1">
+        <GenerativeUIRenderer
+          execution={{ rows, columns, rowCount: rows.length, executionTimeMs: 0 } as any}
+          uiHint={hint as any}
+          title={widget.title}
+          compact={true}
+        />
+      </div>
+    );
   };
 
   return (
-    <div className={`relative h-full bg-card border rounded-xl overflow-hidden transition-all group ${
-      isEditing ? 'border-primary/30 cursor-grab active:cursor-grabbing ring-1 ring-primary/10' : 'border-border hover:border-border'
-    }`} style={{ boxShadow: 'var(--shadow-soft)' }}>
+    <div className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all group ${isEditing ? 'border-primary/30 cursor-grab active:cursor-grabbing ring-1 ring-primary/10' : 'border-border hover:border-border'
+      }`} style={{ boxShadow: 'var(--shadow-soft)' }}>
 
       {/* Drag handle */}
       {isEditing && (
-        <div className="drag-handle absolute top-0 left-0 right-0 h-7 z-20 flex items-center justify-center cursor-grab opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="widget-drag-handle absolute top-0 left-0 right-0 h-7 z-20 flex items-center justify-center cursor-grab opacity-0 group-hover:opacity-100 transition-opacity">
           <div className="w-10 h-1 bg-primary/30 rounded-full" />
         </div>
       )}
 
       {/* Edit menu */}
       {isEditing && (
-        <div className="absolute top-2 right-2 z-30" ref={menuRef}>
+        <div className="absolute top-2 right-2 bottom-2 z-30 flex flex-col items-end pointer-events-none" ref={menuRef}>
           {renaming ? (
-            <div className="flex items-center gap-1 bg-card border border-border rounded-lg px-2 py-1 shadow-lg">
+            <div className="flex items-center gap-1 bg-card border border-border rounded-lg px-2 py-1 shadow-lg pointer-events-auto shrink-0">
               <input
                 ref={inputRef}
                 value={draftTitle}
@@ -391,42 +407,42 @@ function Widget({
             <button
               onMouseDown={e => e.stopPropagation()}
               onClick={() => setMenuOpen(v => !v)}
-              className="w-7 h-7 rounded-lg bg-card/80 border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100"
+              className="w-7 h-7 rounded-lg bg-card/80 border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100 pointer-events-auto shrink-0"
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </button>
           )}
 
           {menuOpen && !renaming && (
-            <div className="absolute top-8 right-0 w-52 bg-card border border-border rounded-xl shadow-xl z-40 py-1 max-h-72 overflow-y-auto" onMouseDown={e => e.stopPropagation()}>
+            <div className="mt-1 w-52 bg-card border border-border rounded-xl shadow-xl z-40 py-1 overflow-y-auto pointer-events-auto shrink" onMouseDown={e => e.stopPropagation()}>
               <button onClick={() => { setMenuOpen(false); setRenaming(true); setDraftTitle(widget.title); }}
-                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
                 <Type className="w-3.5 h-3.5 text-muted-foreground" /> Rename
               </button>
               <button onClick={() => { setMenuOpen(false); onSuggestTitle?.(); }}
-                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
                 <Sparkles className="w-3.5 h-3.5 text-primary" /> AI suggest title
               </button>
               <button onClick={() => { setMenuOpen(false); onEditQuery?.(); }}
-                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
                 <Play className="w-3.5 h-3.5 text-primary" /> Edit query
               </button>
               {otherPages && otherPages.length > 0 && (
                 <>
-                  <div className="mx-3 my-1 h-px bg-border" />
-                  <p className="px-3 py-1 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">Move to page</p>
+                  <div className="mx-3 my-1 h-px bg-border shrink-0" />
+                  <p className="px-3 py-1 text-[10px] text-muted-foreground font-semibold uppercase tracking-wider shrink-0">Move to page</p>
                   {otherPages.map(p => (
                     <button key={p.id} onClick={() => { setMenuOpen(false); onMoveToPage?.(p.id); }}
-                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/></svg>
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2" /></svg>
                       {p.name}
                     </button>
                   ))}
                 </>
               )}
-              <div className="mx-3 my-1 h-px bg-border" />
+              <div className="mx-3 my-1 h-px bg-border shrink-0" />
               <button onClick={() => { setMenuOpen(false); onRemove?.(); }}
-                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors">
+                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors shrink-0">
                 <Trash2 className="w-3.5 h-3.5" /> Remove widget
               </button>
             </div>
@@ -446,6 +462,62 @@ function Widget({
       )}
 
       <div className="relative z-10 h-full">{renderContent()}</div>
+    </div>
+  );
+}
+
+function DashboardWidgetDroppable({ widget, children }: { widget: WidgetData, children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `drop-widget-${widget.id}`,
+    data: { type: 'widget-drop', widget },
+  });
+  return (
+    <div ref={setNodeRef} className="h-full w-full relative">
+      {isOver && (
+        <div className="absolute inset-0 bg-primary/20 z-50 border-2 border-primary border-dashed rounded-xl pointer-events-none" />
+      )}
+      {children}
+    </div>
+  );
+}
+
+function DraggableTemplateItem({ template, onClick }: { template: any, onClick: () => void }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `template-${template.type}`,
+    data: { type: 'template', template },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`flex items-center gap-2.5 p-2.5 bg-muted/30 border border-border/50 rounded-xl cursor-grab active:cursor-grabbing hover:bg-muted/60 hover:border-primary/20 transition-all select-none ${isDragging ? 'opacity-50' : ''}`}
+      onClick={onClick}
+    >
+      <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">{template.icon}</div>
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium text-foreground">{template.name}</p>
+        <p className="text-[10px] text-muted-foreground truncate">{template.desc}</p>
+      </div>
+    </div>
+  );
+}
+
+function DraggableCardItem({ card, onClick }: { card: any, onClick: () => void }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `card-${card.id}`,
+    data: { type: 'card', card },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className={`flex items-center gap-2.5 p-2.5 bg-muted/30 border border-border/50 rounded-xl cursor-grab active:cursor-grabbing hover:bg-muted/60 hover:border-primary/20 transition-all select-none ${isDragging ? 'opacity-50' : ''}`}
+      onClick={onClick}
+    >
+      <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 text-[11px] font-bold text-accent/70">{(card.chart_type || 'C').slice(0, 1).toUpperCase()}</div>
+      <p className="text-[11px] font-medium text-foreground truncate">{card.name}</p>
     </div>
   );
 }
@@ -471,7 +543,7 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
           {(['templates', 'cards'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)}
               className={`flex-1 text-[11px] py-1.5 rounded-md font-medium transition-all ${tab === t ? 'bg-card text-foreground shadow-sm border border-border' : 'text-muted-foreground hover:text-foreground'}`}>
-              {t === 'templates' ? 'Templates' : 'Library'}
+              {t === 'templates' ? 'Widgets' : 'Cards'}
             </button>
           ))}
         </div>
@@ -479,47 +551,14 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
 
       <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
         {tab === 'templates' && WIDGET_TEMPLATES.map(w => (
-          <div key={w.type}
-            className="flex items-center gap-2.5 p-2.5 bg-muted/30 border border-border/50 rounded-xl cursor-pointer hover:bg-muted/60 hover:border-primary/20 transition-all"
-            draggable
-            unselectable="on"
-            onClick={() => onTemplateClick?.(w.type)}
-            onDragStart={e => { e.dataTransfer.setData('text/plain', w.type); (window as any).__draggedWidgetHint = w.type; }}
-          >
-            <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center text-sm font-bold text-primary shrink-0">{w.icon}</div>
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium text-foreground">{w.name}</p>
-              <p className="text-[10px] text-muted-foreground truncate">{w.desc}</p>
-            </div>
-          </div>
+          <DraggableTemplateItem key={w.type} template={w} onClick={() => onTemplateClick?.(w.type)} />
         ))}
 
         {tab === 'cards' && (
           cards.length === 0
             ? <p className="text-[11px] text-muted-foreground text-center mt-6 leading-relaxed">No cards in library yet</p>
             : cards.map(c => (
-              <div key={c.id}
-                className="flex items-center gap-2.5 p-2.5 bg-muted/30 border border-border/50 rounded-xl cursor-pointer hover:bg-muted/60 hover:border-primary/20 transition-all"
-                draggable
-                unselectable="on"
-                onClick={() => onCardClick?.(c)}
-                onDragStart={e => {
-                  const hint = JSON.stringify({
-                    type: 'card',
-                    cardId: c.id,
-                    chartType: c.chart_type,
-                    title: c.name,
-                    rawQuery: c.raw_query || (c.query_definition as any)?.sql || '',
-                    contextType: c.datasource_context_type || 'connection',
-                    contextId: c.datasource_context_id || '',
-                  });
-                  e.dataTransfer.setData('text/plain', hint);
-                  (window as any).__draggedWidgetHint = hint;
-                }}
-              >
-                <div className="w-7 h-7 rounded-lg bg-accent/10 flex items-center justify-center shrink-0 text-[11px] font-bold text-accent/70">{(c.chart_type || 'C').slice(0,1).toUpperCase()}</div>
-                <p className="text-[11px] font-medium text-foreground truncate">{c.name}</p>
-              </div>
+              <DraggableCardItem key={c.id} card={c} onClick={() => onCardClick?.(c)} />
             ))
         )}
       </div>
@@ -573,7 +612,7 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
         datasourceScopeType: 'connection',
         resultRows: (exec?.rows as Record<string, unknown>[])?.slice(0, 100) || [],
         resultColumns: (exec?.columns as string[]) || [],
-        uiHint: widgetType,
+        uiHint: rawHint,
         gridX: defaultPosition?.x, gridY: defaultPosition?.y,
         gridW: defaultPosition?.w, gridH: defaultPosition?.h,
       });
@@ -917,14 +956,14 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
 }) {
   const [prompt, setPrompt] = useState(widget.query_prompt || '');
   // Seed from widget.sql immediately (set during addWidget / previous handleApply)
-  const [sql, setSql]       = useState(widget.sql || '');
+  const [sql, setSql] = useState(widget.sql || '');
   const [sqlLoading, setSqlLoading] = useState(false);
   // 'prompt' = last ran via prompt, 'sql' = last ran via sql
   const [lastRanVia, setLastRanVia] = useState<'prompt' | 'sql' | null>(null);
   const [running, setRunning] = useState(false);
-  const [saving,  setSaving]  = useState(false);
+  const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; columns: string[]; ui_hint: string } | null>(null);
-  const [error,   setError]   = useState('');
+  const [error, setError] = useState('');
 
   // Load the current SQL from the widget's last execution on mount.
   // widget.sql is the immediate fallback (seeded from query_definition.sql above).
@@ -938,9 +977,9 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
         if (execSql) setSql(execSql);
         // else: keep widget.sql that was seeded into state above
       })
-      .catch(() => {/* no execution record — widget.sql from query_definition is used */})
+      .catch(() => {/* no execution record — widget.sql from query_definition is used */ })
       .finally(() => setSqlLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Get or create the chat needed for execution
@@ -1003,14 +1042,14 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     try {
       const patch: Partial<WidgetData> = {
         // Always save the new results
-        result_rows:    preview.rows,
+        result_rows: preview.rows,
         result_columns: preview.columns,
-        ui_hint:        preview.ui_hint,
-        widget_type:    preview.ui_hint || widget.widget_type,
+        ui_hint: preview.ui_hint,
+        widget_type: preview.ui_hint || widget.widget_type,
         // Only update prompt when it was the prompt that was run
-        query_prompt:   lastRanVia === 'prompt' ? prompt : widget.query_prompt,
+        query_prompt: lastRanVia === 'prompt' ? prompt : widget.query_prompt,
         // Always save the SQL that was actually executed (so inspect finds it next time)
-        sql:            sql,
+        sql: sql,
       };
       // Persist to DB (sql goes into query_definition.sql via updateWidget)
       await dashboardApi.updateWidget(orgId, dashId, pageId, widget.id, {
@@ -1182,8 +1221,6 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     </div>
   );
 }
-
-// ── Main Dashboard Builder ─────────────────────────────────────
 export function DashboardBuilder({
   orgSlug, dashId, backUrl, backLabel, titleOverride, subtitleOverride,
 }: {
@@ -1200,12 +1237,13 @@ export function DashboardBuilder({
   const [saving, setSaving] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | undefined>();
 
-  const [inspectWidgetId,  setInspectWidgetId]  = useState<string | null>(null);
+  const [inspectWidgetId, setInspectWidgetId] = useState<string | null>(null);
   const [editQueryWidgetId, setEditQueryWidgetId] = useState<string | null>(null);
   const [filters, setFilters] = useState<any[]>([]);
   const [versions, setVersions] = useState<any[]>([]);
   const [showVersions, setShowVersions] = useState(false);
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+  const isDroppingRef = useRef(false);
   const [showAddWidget, setShowAddWidget] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -1219,9 +1257,23 @@ export function DashboardBuilder({
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(1200);
 
+  const [activeDragItem, setActiveDragItem] = useState<{ type: string; data: any } | null>(null);
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const data = event.active.data.current;
+    if (data) {
+      setActiveDragItem({ type: data.type, data: data[data.type] });
+    }
+  }, []);
+
   useEffect(() => {
     const measure = () => { if (containerRef.current) setContainerWidth(containerRef.current.offsetWidth); };
     measure();
+
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
@@ -1243,7 +1295,7 @@ export function DashboardBuilder({
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgSlug, dashId]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -1316,7 +1368,13 @@ export function DashboardBuilder({
     if (!org) return;
     setSaving(true);
     try {
-      await dashboardApi.updateLayout(String(org.id), dashId, widgets.map(w => ({ i: w.id, x: w.position_x, y: w.position_y, w: w.width, h: w.height })));
+      await dashboardApi.updateLayout(String(org.id), dashId, widgets.map(w => ({
+        widgetId: w.id,
+        gridX: w.position_x,
+        gridY: w.position_y,
+        gridW: w.width,
+        gridH: w.height
+      })));
       const result = await dashboardApi.saveVersion(String(org.id), dashId, undefined);
       setVersions(vs => [result.version, ...vs]);
     } catch (e) { console.error(e); }
@@ -1338,8 +1396,19 @@ export function DashboardBuilder({
       ui_hint: String(qd.ui_hint || raw.ui_hint || raw.widget_type || 'table'),
       sql: String(qd.sql || raw.sql || ''),
     };
+    const tempId = (defaultPosition as any)?.tempId;
+    if (tempId) {
+      setWidgets(ws => ws.map(old => old.id === tempId ? { ...old, ...w, id: w.id, isLoading: false } : old));
+      return;
+    }
+
     if (raw.is_dropped) setWidgets(ws => [...ws, w]);
-    else { const maxY = widgets.reduce((m, ww) => Math.max(m, (ww.position_y || 0) + (ww.height || 3)), 0); setWidgets(ws => [...ws, { ...w, position_y: maxY }]); }
+    else {
+      setWidgets(ws => {
+        const maxY = ws.reduce((m, ww) => Math.max(m, (ww.position_y || 0) + (ww.height || 3)), 0);
+        return [...ws, { ...w, position_y: maxY }];
+      });
+    }
   }
 
   function removeWidget(id: string) { setWidgets(ws => ws.filter(w => w.id !== id)); }
@@ -1359,7 +1428,7 @@ export function DashboardBuilder({
         datasourceScopeType: 'connection',
       });
       // Remove from current page backend
-      await dashboardApi.deleteWidget?.(String(org.id), dashId, activePage, widgetId).catch(() => {});
+      await dashboardApi.deleteWidget?.(String(org.id), dashId, activePage, widgetId).catch(() => { });
       // Remove from local state
       removeWidget(widgetId);
     } catch (e) { console.error(e); }
@@ -1506,7 +1575,95 @@ export function DashboardBuilder({
     setShowAddWidget(true);
   }
 
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    setActiveDragItem(null);
+    const { active, over } = event;
+
+    if (!over) return;
+
+    const isZone = over.id === 'dashboard-drop-zone';
+    const isWidget = over.data?.current?.type === 'widget-drop';
+
+    if (isZone || isWidget) {
+      const activeData = active.data?.current;
+      if (!activeData || !org || !activePage) return;
+
+      let targetX = 0;
+      let targetY = widgets.reduce((m, w) => Math.max(m, (w.position_y || 0) + (w.height || 3)), 0);
+
+      if (isWidget) {
+        const overWidget = over?.data?.current?.widget as WidgetData;
+        targetX = overWidget.position_x;
+        targetY = overWidget.position_y;
+      }
+
+      if (activeData.type === 'template') {
+        const newWidgetId = 'temp-' + Date.now();
+        const newWidget: WidgetData = {
+          id: newWidgetId, title: activeData.template.name, widget_type: activeData.template.type,
+          query_prompt: '', position_x: targetX, position_y: targetY,
+          width: 4, height: 3, isLoading: true,
+        };
+
+        setWidgets(prev => [newWidget, ...prev]);
+
+        try {
+          const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
+            title: activeData.template.name, widget_type: activeData.template.type,
+            gridX: targetX, gridY: targetY, gridW: 4, gridH: 3,
+            datasourceScopeType: 'connection',
+            sql: '', queryPrompt: '', resultRows: [], resultColumns: [], uiHint: activeData.template.type,
+          });
+
+          setWidgets(ws => ws.map(w => w.id === newWidgetId ? { ...w, id: String(res.widget.id), isLoading: false } : w));
+        } catch (e) { console.error(e); }
+
+      } else if (activeData.type === 'card') {
+        const card = activeData.card;
+        const widgetType = normalizeWidgetType(card.chart_type);
+        const cardSql = card.raw_query || (typeof card.query_definition === 'string' ? JSON.parse(card.query_definition).sql : card.query_definition?.sql) || '';
+        const contextType = card.datasource_context_type || 'connection';
+
+        const newWidgetId = 'card-' + Date.now();
+        const newWidget: WidgetData = {
+          id: newWidgetId, title: card.name, widget_type: widgetType,
+          query_prompt: card.name, position_x: targetX, position_y: targetY, width: 4, height: 3,
+          result_rows: [], result_columns: [], ui_hint: widgetType,
+          sql: cardSql, isLoading: true,
+        };
+
+        setWidgets(prev => [newWidget, ...prev]);
+
+        try {
+          const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
+            title: card.name, widget_type: widgetType, cardId: card.id,
+            gridX: targetX, gridY: targetY, gridW: 4, gridH: 3,
+            datasourceScopeType: contextType, datasourceContextId: card.datasource_context_id || undefined,
+            sql: cardSql, queryPrompt: card.name, resultRows: [], resultColumns: [], uiHint: widgetType,
+          });
+
+          const needsExec = !!cardSql && contextType === 'connection' && !!card.datasource_context_id;
+          setWidgets(ws => ws.map(w => w.id === newWidgetId ? { ...w, id: String(res.widget.id), isLoading: needsExec } : w));
+          if (needsExec) {
+            autoExecuteCardWidget(String(res.widget.id), cardSql, card.datasource_context_id, activePage, card.name, widgetType);
+          }
+        } catch (e) { console.error(e); }
+      }
+    }
+  }, [activePage, widgets, org, dashId]);
+
   const layout = widgets.map(w => ({ i: w.id, x: w.position_x || 0, y: w.position_y || 0, w: Math.max(1, w.width || 4), h: Math.max(1, w.height || 3), minW: 2, minH: 2 }));
+
+  const { isOver, setNodeRef } = useDroppable({ id: 'dashboard-drop-zone' });
+  const mergedRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setNodeRef(node);
+      if (containerRef && 'current' in containerRef && typeof containerRef.current !== 'undefined') {
+        (containerRef as any).current = node;
+      }
+    },
+    [setNodeRef],
+  );
 
   if (loading) return (
     <div className="flex-1 flex items-center justify-center bg-background">
@@ -1515,387 +1672,426 @@ export function DashboardBuilder({
   );
 
   return (
-    <div className="h-full bg-background text-foreground flex flex-col min-h-0 w-full">
+    <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+      <div className="h-full bg-background text-foreground flex flex-col min-h-0 w-full">
+        <style dangerouslySetInnerHTML={{
+          __html: `
+        .react-grid-placeholder {
+          background: hsl(var(--primary)) !important;
+          opacity: 0.15 !important;
+          border: 2px dashed hsl(var(--primary)) !important;
+          border-radius: 0.75rem !important;
+          transition: all 0.1s ease;
+        }
+        .react-grid-item.dropping {
+          visibility: visible !important;
+          background: hsl(var(--primary)) !important;
+          opacity: 0.15 !important;
+          border: 2px dashed hsl(var(--primary)) !important;
+          border-radius: 0.75rem !important;
+          z-index: 1000 !important;
+        }
+        .react-resizable-handle {
+          opacity: 1 !important;
+          z-index: 100 !important;
+        }
+        .react-resizable-handle::after {
+          content: '';
+          position: absolute;
+          background: hsl(var(--primary));
+          border-radius: 2px;
+        }
+        .react-resizable-handle-se {
+          bottom: 2px !important;
+          right: 2px !important;
+          width: 14px !important;
+          height: 14px !important;
+          background-image: none !important;
+          cursor: se-resize !important;
+        }
+        .react-resizable-handle-se::after {
+          right: 2px; bottom: 2px; width: 6px; height: 6px;
+          background: transparent;
+          border-right: 3px solid hsl(var(--primary));
+          border-bottom: 3px solid hsl(var(--primary));
+          border-radius: 1px;
+        }
+        .react-resizable-handle-e {
+          right: 0 !important; top: 0 !important; height: 100% !important; width: 10px !important;
+          cursor: e-resize !important; background-image: none !important;
+        }
+        .react-resizable-handle-e::after {
+          right: 3px; top: 50%; transform: translateY(-50%); width: 4px; height: 24px;
+        }
+        .react-resizable-handle-s {
+          bottom: 0 !important; left: 0 !important; width: 100% !important; height: 10px !important;
+          cursor: s-resize !important; background-image: none !important;
+        }
+        .react-resizable-handle-s::after {
+          bottom: 3px; left: 50%; transform: translateX(-50%); width: 24px; height: 4px;
+        }
+      `}} />
 
-      {/* ── Top bar ──────────────────────────────────────────── */}
-      <header className="border-b border-border bg-background/95 backdrop-blur-md px-4 py-2.5 flex items-center gap-3 shrink-0" style={{ boxShadow: 'var(--shadow-soft)' }}>
-        {backUrl ? (
-          <Link href={backUrl} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-xs mr-1">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
-            {backLabel || 'Back'}
-          </Link>
-        ) : (
-          <Link href={`/orgs/${orgSlug}/dashboards`} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
-          </Link>
-        )}
+        {/* ── Top bar ──────────────────────────────────────────── */}
+        <header className="border-b border-border bg-background/95 backdrop-blur-md px-4 py-2.5 flex items-center gap-3 shrink-0" style={{ boxShadow: 'var(--shadow-soft)' }}>
+          {backUrl ? (
+            <Link href={backUrl} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-xs mr-1">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
+              {backLabel || 'Back'}
+            </Link>
+          ) : (
+            <Link href={`/orgs/${orgSlug}/dashboards`} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
+            </Link>
+          )}
 
-        <div className="w-px h-4 bg-border shrink-0" />
+          <div className="w-px h-4 bg-border shrink-0" />
 
-        <LayoutGrid className="w-4 h-4 text-primary shrink-0" />
-        <div className="min-w-0">
-          <h1 className="text-sm font-semibold text-foreground truncate leading-tight">{titleOverride || String(dashboard?.name || '')}</h1>
-          {subtitleOverride && <p className="text-[10px] text-muted-foreground">{subtitleOverride}</p>}
-        </div>
-        {Boolean(dashboard?.is_published) && (
-          <span className="text-[10px] px-2 py-0.5 bg-success/10 border border-success/20 text-success rounded-full font-semibold shrink-0">Published</span>
-        )}
+          <LayoutGrid className="w-4 h-4 text-primary shrink-0" />
+          <div className="min-w-0">
+            <h1 className="text-sm font-semibold text-foreground truncate leading-tight">{titleOverride || String(dashboard?.name || '')}</h1>
+            {subtitleOverride && <p className="text-[10px] text-muted-foreground">{subtitleOverride}</p>}
+          </div>
+          {Boolean(dashboard?.is_published) && (
+            <span className="text-[10px] px-2 py-0.5 bg-success/10 border border-success/20 text-success rounded-full font-semibold shrink-0">Published</span>
+          )}
 
-        <div className="ml-auto flex items-center gap-2">
-          {/* AI Generate */}
-          <button onClick={() => setShowGenerate(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
-            style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
-            <Sparkles className="w-3.5 h-3.5" /> Generate
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {/* AI Generate */}
+            <button onClick={() => setShowGenerate(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
+              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
+              <Sparkles className="w-3.5 h-3.5" /> Generate
+            </button>
 
-          {/* History */}
-          <button onClick={() => setShowVersions(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${showVersions ? 'bg-muted border-border text-foreground' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
-            <History className="w-3.5 h-3.5" /> History
-          </button>
+            {/* History */}
+            <button onClick={() => setShowVersions(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${showVersions ? 'bg-muted border-border text-foreground' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
+              <History className="w-3.5 h-3.5" /> History
+            </button>
 
-          {/* Edit toggle */}
-          <button onClick={() => setIsEditing(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${isEditing ? 'bg-primary/15 border-primary/40 text-primary' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
-            <Play className={`w-3.5 h-3.5 ${isEditing ? 'rotate-0' : ''}`} />
-            {isEditing ? 'Editing' : 'Edit'}
-          </button>
+            {/* Edit toggle */}
+            <button onClick={() => setIsEditing(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${isEditing ? 'bg-primary/15 border-primary/40 text-primary' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
+              <Play className={`w-3.5 h-3.5 ${isEditing ? 'rotate-0' : ''}`} />
+              {isEditing ? 'Editing' : 'Edit'}
+            </button>
 
-          {/* Save */}
-          <button onClick={handleSave} disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-all">
-            <Save className="w-3.5 h-3.5" />
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </header>
+            {/* Save */}
+            <button onClick={handleSave} disabled={saving}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-all">
+              <Save className="w-3.5 h-3.5" />
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </header>
 
-      {/* ── Page tabs ──────────────────────────────────────── */}
-      <div className="border-b border-border px-4 flex items-center gap-0.5 bg-background shrink-0">
-        {pages.map(page => {
-          const id = String(page.id);
-          const active = activePage === id;
-          return (
-            <div key={id} className="relative group/tab flex items-center">
-              {renamingPage === id ? (
-                <div className="flex items-center px-3 py-2.5 border-b-2 border-primary">
-                  <input
-                    value={pageNameDraft}
-                    onChange={e => setPageNameDraft(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') { setRenamingPage(null); /* TODO: save page name */ }
-                      if (e.key === 'Escape') setRenamingPage(null);
-                    }}
-                    onBlur={() => setRenamingPage(null)}
-                    autoFocus
-                    className="text-xs font-medium bg-transparent text-foreground outline-none w-20"
-                  />
-                </div>
-              ) : (
-                <button
-                  onClick={() => switchPage(id)}
-                  onDoubleClick={() => isEditing && (setRenamingPage(id), setPageNameDraft(String(page.name)))}
-                  className={`px-3.5 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                >
-                  {String(page.name)}
-                </button>
-              )}
-              {isEditing && pages.length > 1 && (
-                confirmDeletePageId === id ? (
-                  <div className="flex items-center gap-1 px-1.5 py-1">
-                    <span className="text-[10px] text-destructive font-medium">Delete?</span>
-                    <button
-                      onClick={e => deletePage(id, e)}
-                      className="w-4 h-4 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity"
-                      title="Confirm delete"
-                    >
-                      <Check className="w-2.5 h-2.5" />
-                    </button>
-                    <button
-                      onClick={e => { e.stopPropagation(); setConfirmDeletePageId(null); }}
-                      className="w-4 h-4 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors"
-                      title="Cancel"
-                    >
-                      <X className="w-2.5 h-2.5" />
-                    </button>
+        {/* ── Page tabs ──────────────────────────────────────── */}
+        <div className="border-b border-border px-4 flex items-center gap-0.5 bg-background shrink-0">
+          {pages.map(page => {
+            const id = String(page.id);
+            const active = activePage === id;
+            return (
+              <div key={id} className="relative group/tab flex items-center">
+                {renamingPage === id ? (
+                  <div className="flex items-center px-3 py-2.5 border-b-2 border-primary">
+                    <input
+                      value={pageNameDraft}
+                      onChange={e => setPageNameDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { setRenamingPage(null); /* TODO: save page name */ }
+                        if (e.key === 'Escape') setRenamingPage(null);
+                      }}
+                      onBlur={() => setRenamingPage(null)}
+                      autoFocus
+                      className="text-xs font-medium bg-transparent text-foreground outline-none w-20"
+                    />
                   </div>
                 ) : (
                   <button
-                    onClick={e => deletePage(id, e)}
-                    className="opacity-0 group-hover/tab:opacity-100 absolute -top-0.5 -right-1.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all text-[10px]"
-                    title="Delete page"
+                    onClick={() => switchPage(id)}
+                    onDoubleClick={() => isEditing && (setRenamingPage(id), setPageNameDraft(String(page.name)))}
+                    className={`px-3.5 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
                   >
-                    <X className="w-2.5 h-2.5" />
+                    {String(page.name)}
                   </button>
-                )
-              )}
-            </div>
-          );
-        })}
-        {isEditing && (
-          <button onClick={addPage}
-            className="flex items-center gap-1 px-3 py-2.5 text-xs text-muted-foreground/60 hover:text-primary transition-colors border-b-2 border-transparent">
-            <Plus className="w-3.5 h-3.5" /> Page
-          </button>
-        )}
-      </div>
-
-      {/* ── Edit mode bar ──────────────────────────────────── */}
-      {isEditing && (
-        <div className="bg-primary/8 border-b border-primary/20 px-4 py-2 flex items-center gap-3 shrink-0">
-          <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-          <p className="text-xs text-primary/80 font-medium">Edit mode · Drag to reposition · Resize from corners · Double-click page tab to rename</p>
-          <button onClick={() => setShowAddWidget(true)}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-xs text-primary font-semibold transition-colors">
-            <Plus className="w-3.5 h-3.5" /> Add Widget
-          </button>
-        </div>
-      )}
-
-      {/* ── Filter bar (only if filters exist or editing) ── */}
-      {(filters.length > 0 || isEditing) && (
-        <div className="border-b border-border px-4 py-2 flex items-center gap-2 bg-muted/20 shrink-0">
-          <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
-            Filters
-          </span>
-          {filters.map(f => (
-            <div key={f.id} className="flex items-center gap-1.5 bg-card border border-border rounded-lg px-2.5 py-1 text-xs">
-              <span className="text-muted-foreground">{f.name}:</span>
-              <span className="text-foreground font-medium">{f.default_value || 'All'}</span>
-              {isEditing && (
-                <button onClick={() => dashboardApi.removeFilter(String(org?.id), dashId, f.id).then(() => setFilters(fs => fs.filter(x => x.id !== f.id)))}
-                  className="ml-0.5 text-muted-foreground hover:text-destructive transition-colors"><X className="w-3 h-3" /></button>
-              )}
-            </div>
-          ))}
+                )}
+                {isEditing && pages.length > 1 && (
+                  confirmDeletePageId === id ? (
+                    <div className="flex items-center gap-1 px-1.5 py-1">
+                      <span className="text-[10px] text-destructive font-medium">Delete?</span>
+                      <button
+                        onClick={e => deletePage(id, e)}
+                        className="w-4 h-4 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity"
+                        title="Confirm delete"
+                      >
+                        <Check className="w-2.5 h-2.5" />
+                      </button>
+                      <button
+                        onClick={e => { e.stopPropagation(); setConfirmDeletePageId(null); }}
+                        className="w-4 h-4 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors"
+                        title="Cancel"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={e => deletePage(id, e)}
+                      className="opacity-0 group-hover/tab:opacity-100 absolute -top-0.5 -right-1.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all text-[10px]"
+                      title="Delete page"
+                    >
+                      <X className="w-2.5 h-2.5" />
+                    </button>
+                  )
+                )}
+              </div>
+            );
+          })}
           {isEditing && (
-            <button onClick={() => { const n = window.prompt('Filter name:'); if (!n) return; dashboardApi.addFilter(String(org?.id), dashId, { name: n, filterType: 'text', operator: '=', defaultValue: '' }).then(res => setFilters(fs => [...fs, res.filter])); }}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs border border-dashed border-border text-muted-foreground rounded-lg hover:border-primary/30 hover:text-primary transition-colors">
-              <Plus className="w-3 h-3" /> Add Filter
+            <button onClick={addPage}
+              className="flex items-center gap-1 px-3 py-2.5 text-xs text-muted-foreground/60 hover:text-primary transition-colors border-b-2 border-transparent">
+              <Plus className="w-3.5 h-3.5" /> Page
             </button>
           )}
         </div>
-      )}
 
-      {/* ── Canvas + Sidebar ───────────────────────────────── */}
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        <div className="flex-1 overflow-auto bg-muted/10 p-4" ref={containerRef}>
-          {widgets.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full gap-5 text-center min-h-[400px]">
-              <div className="w-16 h-16 rounded-2xl bg-muted/50 border border-border flex items-center justify-center">
-                <LayoutGrid className="w-7 h-7 text-muted-foreground/40" />
+        {/* ── Edit mode bar ──────────────────────────────────── */}
+        {isEditing && (
+          <div className="bg-primary/8 border-b border-primary/20 px-4 py-2 flex items-center gap-3 shrink-0">
+            <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+            <p className="text-xs text-primary/80 font-medium">Edit mode · Drag to reposition · Resize from corners</p>
+            <button onClick={() => setShowAddWidget(true)}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-xs text-primary font-semibold transition-colors">
+              <Plus className="w-3.5 h-3.5" /> Add Widget
+            </button>
+          </div>
+        )}
+
+        {/* ── Filter bar (only if filters exist or editing) ── */}
+        {(filters.length > 0 || isEditing) && (
+          <div className="border-b border-border px-4 py-2 flex items-center gap-2 bg-muted/20 shrink-0">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></svg>
+              Filters
+            </span>
+            {filters.map(f => (
+              <div key={f.id} className="flex items-center gap-1.5 bg-card border border-border rounded-lg px-2.5 py-1 text-xs">
+                <span className="text-muted-foreground">{f.name}:</span>
+                <span className="text-foreground font-medium">{f.default_value || 'All'}</span>
+                {isEditing && (
+                  <button onClick={() => dashboardApi.removeFilter(String(org?.id), dashId, f.id).then(() => setFilters(fs => fs.filter(x => x.id !== f.id)))}
+                    className="ml-0.5 text-muted-foreground hover:text-destructive transition-colors"><X className="w-3 h-3" /></button>
+                )}
               </div>
-              <div>
-                <p className="text-foreground font-semibold mb-1">Empty page</p>
-                <p className="text-muted-foreground text-sm">
-                  {isEditing
-                    ? 'Click "Add Widget" or drag templates from the sidebar'
-                    : 'Click "Edit" to start building your dashboard'}
-                </p>
-              </div>
-              {!isEditing && (
-                <div className="flex gap-2">
-                  <button onClick={() => setIsEditing(true)}
-                    className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity">
-                    Start editing
-                  </button>
-                  <button onClick={() => setShowGenerate(true)}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white hover:opacity-90 transition-opacity"
-                    style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}>
-                    <Sparkles className="w-4 h-4" /> Generate with AI
-                  </button>
+            ))}
+            {isEditing && (
+              <button onClick={() => { const n = window.prompt('Filter name:'); if (!n) return; dashboardApi.addFilter(String(org?.id), dashId, { name: n, filterType: 'text', operator: '=', defaultValue: '' }).then(res => setFilters(fs => [...fs, res.filter])); }}
+                className="flex items-center gap-1 px-2.5 py-1 text-xs border border-dashed border-border text-muted-foreground rounded-lg hover:border-primary/30 hover:text-primary transition-colors">
+                <Plus className="w-3 h-3" /> Add Filter
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Canvas + Sidebar ───────────────────────────────── */}
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          <div className={`flex-1 overflow-auto bg-muted/10 p-4 transition-colors ${isOver ? 'bg-primary/5' : ''}`} ref={mergedRef}>
+            {isOver && isEditing && (
+              <div className="mb-4 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/50 bg-primary/5 py-6">
+                <div className="flex items-center gap-2 text-primary">
+                  <Plus className="h-4 w-4" />
+                  <span className="text-sm font-medium">Release to add widget</span>
                 </div>
-              )}
+              </div>
+            )}
+            {widgets.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-5 text-center min-h-[400px]">
+                <div className="w-16 h-16 rounded-2xl bg-muted/50 border border-border flex items-center justify-center">
+                  <LayoutGrid className="w-7 h-7 text-muted-foreground/40" />
+                </div>
+                <div>
+                  <p className="text-foreground font-semibold mb-1">Empty page</p>
+                  <p className="text-muted-foreground text-sm">
+                    {isEditing
+                      ? 'Click "Add Widget" or drag widgets from the sidebar'
+                      : 'Click "Edit" to start building your dashboard'}
+                  </p>
+                </div>
+                {!isEditing && (
+                  <div className="flex gap-2">
+                    <button onClick={() => setIsEditing(true)}
+                      className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity">
+                      Start editing
+                    </button>
+                    <button onClick={() => setShowGenerate(true)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+                      style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}>
+                      <Sparkles className="w-4 h-4" /> Generate with AI
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ResponsiveGridLayout
+                className="layout"
+                width={containerWidth}
+                style={{ minHeight: 'calc(100vh - 220px)' }}
+                layouts={{ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }}
+                breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+                cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
+                rowHeight={80}
+                margin={[12, 12]}
+                containerPadding={[0, 0]}
+                draggableHandle=".widget-drag-handle"
+                isDraggable={isEditing}
+                isResizable={isEditing}
+                resizeHandles={['s', 'e', 'se']}
+                onLayoutChange={(newLayout: any) => {
+                  if (isDroppingRef.current) return;
+                  setWidgets(ws => ws.map(w => {
+                    const item = newLayout.find((l: any) => l.i === w.id);
+                    return item ? { ...w, position_x: item.x, position_y: item.y, width: item.w, height: item.h } : w;
+                  }));
+                }}
+              >
+                {widgets.map(widget => (
+                  <div key={widget.id} className="relative h-full">
+                    <DashboardWidgetDroppable widget={widget}>
+                      {isEditing && (
+                        <div className="widget-drag-handle absolute top-0 left-0 right-0 h-8 z-20 cursor-grab active:cursor-grabbing" />
+                      )}
+                      <Widget
+                        widget={widget}
+                        isEditing={isEditing}
+                        onRemove={() => removeWidget(widget.id)}
+                        onInspect={() => setInspectWidgetId(widget.id)}
+                        onRename={title => renameWidget(widget.id, title)}
+                        onSuggestTitle={() => suggestWidgetTitle(widget.id)}
+                        onEditQuery={() => setEditQueryWidgetId(widget.id)}
+                        otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
+                        onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
+                      />
+                    </DashboardWidgetDroppable>
+                  </div>
+                ))}
+              </ResponsiveGridLayout>
+            )}
+          </div>
+
+          {/* Widget sidebar (edit mode only) */}
+          {isEditing && <WidgetSidebar orgId={String(org?.id)} onCardClick={handleCardClick} onTemplateClick={handleTemplateClick} />}
+
+          {/* Version history panel */}
+          {showVersions && (
+            <div className="w-60 bg-card border-l border-border flex flex-col shrink-0 h-full overflow-hidden">
+              <div className="px-4 py-3.5 border-b border-border flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Version History</h3>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">View and restore</p>
+                </div>
+                <button onClick={() => setShowVersions(false)} className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                {versions.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground text-center mt-6">No versions saved yet</p>
+                ) : versions.map(v => (
+                  <div key={v.id} className="p-3 bg-muted/30 border border-border rounded-xl">
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs font-semibold text-foreground">v{v.version}</span>
+                      <span className="text-[10px] text-muted-foreground">{new Date(v.created_at).toLocaleDateString()}</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{v.commit_message || 'No message'}</p>
+                    <button
+                      disabled={restoringVersionId === v.id}
+                      onClick={async () => {
+                        if (!org) return;
+                        setRestoringVersionId(v.id);
+                        try {
+                          await dashboardApi.restoreVersion(String(org.id), dashId, v.id);
+                          // Reload pages + widgets from server
+                          const data = await dashboardApi.get(String(org.id), dashId);
+                          setPages(data.pages || []);
+                          const first = data.pages?.[0];
+                          if (first) { setActivePage(String(first.id)); buildWidgets(first as any); }
+                          setShowVersions(false);
+                        } catch (e) { console.error(e); }
+                        finally { setRestoringVersionId(null); }
+                      }}
+                      className="text-[10px] text-primary hover:opacity-80 font-semibold disabled:opacity-40"
+                    >
+                      {restoringVersionId === v.id ? 'Restoring…' : 'Restore'}
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
-          ) : (
-            <ResponsiveGridLayout
-              className="layout"
-              width={containerWidth}
-              layouts={{ lg: layout }}
-              breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
-              cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
-              rowHeight={80}
-              margin={[12, 12]}
-              containerPadding={[0, 0]}
-              isDraggable={isEditing}
-              isResizable={isEditing}
-              isDroppable={isEditing}
-              onDrop={async (_layout: any, item: any, e: Event) => {
-                const hint = (window as any).__draggedWidgetHint || (e as unknown as DragEvent).dataTransfer?.getData('text/plain');
-                if (!hint || !item) return;
-                if (hint.startsWith('{')) {
-                  const data = JSON.parse(hint);
-                  if (data.type === 'card' && org) {
-                    const widgetType = normalizeWidgetType(data.chartType);
-                    const cardSql = data.rawQuery || '';
-                    const contextType = data.contextType || 'connection';
-                    const needsExec = !!cardSql && contextType === 'connection' && !!data.contextId;
-                    const res = await dashboardApi.addWidget(String(org.id), dashId, activePage!, {
-                      title: data.title,
-                      widget_type: widgetType,
-                      cardId: data.cardId,
-                      gridX: item.x, gridY: item.y, gridW: 4, gridH: 3,
-                      datasourceScopeType: contextType,
-                      datasourceContextId: data.contextId || undefined,
-                      sql: cardSql,
-                      queryPrompt: data.title,
-                      resultRows: [], resultColumns: [],
-                      uiHint: widgetType,
-                    });
-                    const rw = res.widget;
-                    const newWidgetId = String(rw.id);
-                    setWidgets(prev => [...prev, {
-                      id: newWidgetId, title: String(rw.title || ''), widget_type: widgetType,
-                      query_prompt: data.title,
-                      position_x: item.x, position_y: item.y, width: 4, height: 3,
-                      result_rows: [],
-                      result_columns: [],
-                      ui_hint: widgetType,
-                      sql: cardSql,
-                      isLoading: needsExec,
-                    }]);
-                    if (needsExec) {
-                      autoExecuteCardWidget(
-                        newWidgetId, cardSql, data.contextId,
-                        activePage!, data.title, widgetType,
-                      );
-                    }
-                  }
-                } else {
-                  setDefaultPosition({ x: item.x, y: item.y, w: 4, h: 3 });
-                  setDefaultHint(hint);
-                  setShowAddWidget(true);
-                }
-                (window as any).__draggedWidgetHint = null;
-              }}
-              droppingItem={{ i: '__dropping__', w: 4, h: 3, x: 0, y: 0 } as any}
-              onLayoutChange={(newLayout: any) => {
-                setWidgets(ws => ws.map(w => {
-                  const item = newLayout.find((l: any) => l.i === w.id);
-                  return item ? { ...w, position_x: item.x, position_y: item.y, width: item.w, height: item.h } : w;
-                }));
-              }}
-            >
-              {widgets.map(widget => (
-                <div key={widget.id} className="relative h-full">
-                  {isEditing && (
-                    <div className="drag-handle absolute top-0 left-0 right-0 h-8 z-20 cursor-grab active:cursor-grabbing" />
-                  )}
-                  <Widget
-                    widget={widget}
-                    isEditing={isEditing}
-                    onRemove={() => removeWidget(widget.id)}
-                    onInspect={() => setInspectWidgetId(widget.id)}
-                    onRename={title => renameWidget(widget.id, title)}
-                    onSuggestTitle={() => suggestWidgetTitle(widget.id)}
-                    onEditQuery={() => setEditQueryWidgetId(widget.id)}
-                    otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
-                    onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
-                  />
-                </div>
-              ))}
-            </ResponsiveGridLayout>
           )}
         </div>
 
-        {/* Widget sidebar (edit mode only) */}
-        {isEditing && <WidgetSidebar orgId={String(org?.id)} onCardClick={handleCardClick} onTemplateClick={handleTemplateClick} />}
-
-        {/* Version history panel */}
-        {showVersions && (
-          <div className="w-60 bg-card border-l border-border flex flex-col shrink-0 h-full overflow-hidden">
-            <div className="px-4 py-3.5 border-b border-border flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Version History</h3>
-                <p className="text-[10px] text-muted-foreground mt-0.5">View and restore</p>
-              </div>
-              <button onClick={() => setShowVersions(false)} className="p-1 rounded-md hover:bg-muted text-muted-foreground transition-colors">
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              {versions.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground text-center mt-6">No versions saved yet</p>
-              ) : versions.map(v => (
-                <div key={v.id} className="p-3 bg-muted/30 border border-border rounded-xl">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-semibold text-foreground">v{v.version}</span>
-                    <span className="text-[10px] text-muted-foreground">{new Date(v.created_at).toLocaleDateString()}</span>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{v.commit_message || 'No message'}</p>
-                  <button
-                    disabled={restoringVersionId === v.id}
-                    onClick={async () => {
-                      if (!org) return;
-                      setRestoringVersionId(v.id);
-                      try {
-                        await dashboardApi.restoreVersion(String(org.id), dashId, v.id);
-                        // Reload pages + widgets from server
-                        const data = await dashboardApi.get(String(org.id), dashId);
-                        setPages(data.pages || []);
-                        const first = data.pages?.[0];
-                        if (first) { setActivePage(String(first.id)); buildWidgets(first as any); }
-                        setShowVersions(false);
-                      } catch (e) { console.error(e); }
-                      finally { setRestoringVersionId(null); }
-                    }}
-                    className="text-[10px] text-primary hover:opacity-80 font-semibold disabled:opacity-40"
-                  >
-                    {restoringVersionId === v.id ? 'Restoring…' : 'Restore'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ── Modals ─────────────────────────────────────────── */}
-      {showAddWidget && org && activePage && (
-        <AddWidgetDialog
-          orgId={String(org.id)} dashId={dashId} pageId={activePage}
-          chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
-          onChatCreated={setActiveChatId}
-          defaultHint={defaultHint} defaultPosition={defaultPosition || undefined}
-          onAdd={handleWidgetAdded} onClose={() => { setShowAddWidget(false); setDefaultHint(''); setDefaultPosition(null); }}
-        />
-      )}
-
-      {showGenerate && org && activePage && (
-        <GenerateDialog
-          orgId={String(org.id)} dashId={dashId} pageId={activePage}
-          chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
-          onChatCreated={setActiveChatId}
-          onWidgetAdded={handleWidgetAdded}
-          onClose={() => setShowGenerate(false)}
-        />
-      )}
-
-      {inspectWidgetId && (
-        <QueryInspectorModal
-          widgetId={inspectWidgetId} orgId={String(org?.id)} dashId={dashId} pageId={activePage!}
-          onClose={() => setInspectWidgetId(null)}
-        />
-      )}
-
-      {editQueryWidgetId && org && (() => {
-        const w = widgets.find(x => x.id === editQueryWidgetId);
-        if (!w) return null;
-        return (
-          <EditQueryDialog
-            widget={w}
-            orgId={String(org.id)}
-            dashId={dashId}
-            pageId={activePage!}
-            chatId={activeChatId}
-            connectionId={dashboard?.connection_id as string | undefined}
-            onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
-            onClose={() => setEditQueryWidgetId(null)}
+        {/* ── Modals ─────────────────────────────────────────── */}
+        {showAddWidget && org && activePage && (
+          <AddWidgetDialog
+            orgId={String(org.id)} dashId={dashId} pageId={activePage}
+            chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
+            onChatCreated={setActiveChatId}
+            defaultHint={defaultHint} defaultPosition={defaultPosition || undefined}
+            onAdd={handleWidgetAdded} onClose={() => {
+              if ((defaultPosition as any)?.tempId) {
+                const tid = (defaultPosition as any).tempId;
+                setWidgets(ws => ws.filter(w => w.id !== tid));
+              }
+              setShowAddWidget(false); setDefaultHint(''); setDefaultPosition(null);
+            }}
           />
-        );
-      })()}
-    </div>
+        )}
+
+        {showGenerate && org && activePage && (
+          <GenerateDialog
+            orgId={String(org.id)} dashId={dashId} pageId={activePage}
+            chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
+            onChatCreated={setActiveChatId}
+            onWidgetAdded={handleWidgetAdded}
+            onClose={() => setShowGenerate(false)}
+          />
+        )}
+
+        {inspectWidgetId && (
+          <QueryInspectorModal
+            widgetId={inspectWidgetId} orgId={String(org?.id)} dashId={dashId} pageId={activePage!}
+            onClose={() => setInspectWidgetId(null)}
+          />
+        )}
+
+        {editQueryWidgetId && org && (() => {
+          const w = widgets.find(x => x.id === editQueryWidgetId);
+          if (!w) return null;
+          return (
+            <EditQueryDialog
+              widget={w}
+              orgId={String(org.id)}
+              dashId={dashId}
+              pageId={activePage!}
+              chatId={activeChatId}
+              connectionId={dashboard?.connection_id as string | undefined}
+              onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
+              onClose={() => setEditQueryWidgetId(null)}
+            />
+          );
+        })()}
+
+        <DragOverlay>
+          {activeDragItem ? (
+            <div className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-2xl z-[100]">
+              <span className="text-xs font-medium text-foreground">
+                {activeDragItem.type === 'template' ? activeDragItem.data.name : activeDragItem.data.name}
+              </span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </div>
+    </DndContext>
   );
 }

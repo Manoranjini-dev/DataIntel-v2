@@ -32,7 +32,7 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
 
   if (!rows || rows.length === 0 || columns.length === 0) {
     return (
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 text-center text-sm text-zinc-500">
+      <div className={`w-full flex items-center justify-center text-center text-sm text-zinc-500 ${compact ? 'h-full' : 'rounded-2xl border border-zinc-200 bg-white p-6'}`}>
         No data returned
       </div>
     );
@@ -47,32 +47,32 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
     }
   };
 
-  const maxRows = compact ? 10 : 50;
+  const maxRows = 500;
   const displayRows = sortedRows.slice(0, maxRows);
 
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 overflow-hidden">
+    <div className={`w-full flex flex-col overflow-hidden bg-white ${compact ? 'h-full' : 'rounded-xl border border-zinc-200 shadow-sm'}`}>
       {title && (
-        <div className="border-b border-zinc-800 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wider text-zinc-500">
-            {title} <span className="text-zinc-600">· {rows.length} rows</span>
+        <div className="border-b border-zinc-200 px-4 py-3 shrink-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+            {title} <span className="text-zinc-400">· {rows.length} rows</span>
           </p>
         </div>
       )}
-      <div className="overflow-x-auto">
+      <div className={`w-full overflow-auto ${compact ? 'flex-1 min-h-0' : 'max-h-[300px]'}`}>
         <table className="w-full text-left">
           <thead>
-            <tr className="border-b border-zinc-800">
+            <tr className="border-b border-zinc-200">
               {columns.map((col) => (
                 <th
                   key={col}
                   onClick={() => handleSort(col)}
-                  className="cursor-pointer whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 transition-colors hover:text-zinc-300"
+                  className="cursor-pointer whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 transition-colors hover:text-zinc-700 bg-zinc-50/50 sticky top-0 z-10"
                 >
                   <span className="flex items-center gap-1">
                     {col.replace(/_/g, ' ')}
                     {sortCol === col && (
-                      <span className="text-indigo-400">
+                      <span className="text-zinc-800">
                         {sortDir === 'asc' ? '↑' : '↓'}
                       </span>
                     )}
@@ -85,7 +85,7 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
             {displayRows.map((row, i) => (
               <tr
                 key={i}
-                className="border-b border-zinc-800/50 transition-colors hover:bg-zinc-800/30"
+                className="border-b border-zinc-100 transition-colors hover:bg-zinc-50"
               >
                 {columns.map((col) => {
                   const val = row[col];
@@ -98,7 +98,7 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
                   return (
                     <td
                       key={col}
-                      className="whitespace-nowrap px-4 py-2 text-[13px] text-zinc-300"
+                      className="whitespace-nowrap px-4 py-2 text-[13px] text-zinc-800"
                       title={display.length > 40 ? display : undefined}
                     >
                       {display.length > 50 ? display.slice(0, 50) + '…' : display}
@@ -111,7 +111,7 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
         </table>
       </div>
       {rows.length > maxRows && (
-        <div className="border-t border-zinc-800 px-4 py-2 text-center text-[11px] text-zinc-600">
+        <div className="border-t border-zinc-200 bg-white px-4 py-2 text-center text-[11px] text-zinc-500 shrink-0 sticky bottom-0">
           Showing {maxRows} of {rows.length} rows
         </div>
       )}

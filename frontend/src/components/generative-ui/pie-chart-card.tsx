@@ -19,6 +19,7 @@ const COLORS = [
 interface PieChartCardProps {
   execution: QueryExecutionResult;
   title?: string;
+  compact?: boolean;
 }
 
 function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
@@ -35,14 +36,14 @@ const CustomTooltip = ({
   if (!active || !payload?.length) return null;
   const item = payload[0];
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-2.5 text-xs shadow-xl">
-      <p className="font-medium text-zinc-300">{item.payload._label}</p>
-      <p className="text-zinc-400 mt-1">{item.value?.toLocaleString()}</p>
+    <div className="rounded-lg border border-zinc-200 bg-white p-2.5 text-xs shadow-md">
+      <p className="font-medium text-zinc-800">{item.payload._label}</p>
+      <p className="text-zinc-500 mt-1">{item.value?.toLocaleString()}</p>
     </div>
   );
 };
 
-export function PieChartCard({ execution, title }: PieChartCardProps) {
+export function PieChartCard({ execution, title, compact }: PieChartCardProps) {
   const { rows, columns } = execution;
 
   const schema = useMemo(() => {
@@ -63,32 +64,34 @@ export function PieChartCard({ execution, title }: PieChartCardProps) {
   if (!schema) return null;
 
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4">
+    <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
       {title && (
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-zinc-500">
+        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shrink-0">
           {title}
         </p>
       )}
-      <ResponsiveContainer width="100%" height={260}>
-        <PieChart>
-          <Pie
-            data={schema.data}
-            dataKey={schema.metricCol}
-            nameKey="_label"
-            cx="50%"
-            cy="50%"
-            outerRadius={90}
-            innerRadius={40}
-            paddingAngle={2}
-          >
-            {schema.data.map((_entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-            ))}
-          </Pie>
-          <Tooltip content={<CustomTooltip />} />
-          <Legend wrapperStyle={{ fontSize: 11, color: '#71717a' }} />
-        </PieChart>
-      </ResponsiveContainer>
+      <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
+        <ResponsiveContainer width="100%" height={compact ? "100%" : 220}>
+          <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+            <Pie
+              data={schema.data}
+              dataKey={schema.metricCol}
+              nameKey="_label"
+              cx="50%"
+              cy="45%"
+              outerRadius="80%"
+              innerRadius="45%"
+              paddingAngle={2}
+            >
+              {schema.data.map((_entry, index) => (
+                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+              ))}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 11, color: '#71717a' }} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }

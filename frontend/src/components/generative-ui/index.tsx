@@ -181,60 +181,60 @@ export function GenerativeUIRenderer({
   let viz;
   switch (resolved) {
     case 'metric_card':
-      viz = <MetricCard execution={execution} title={title} />;
+      viz = <MetricCard execution={execution} title={title} compact={compact} />;
       break;
     case 'stat_grid':
-      viz = <StatGrid execution={execution} title={title} />;
+      viz = <StatGrid execution={execution} title={title} compact={compact} />;
       break;
     case 'bar_chart':
-      viz = <BarChartCard execution={execution} title={title} />;
+      viz = <BarChartCard execution={execution} title={title} compact={compact} />;
       break;
     case 'line_chart':
-      viz = <LineChartCard execution={execution} title={title} />;
+      viz = <LineChartCard execution={execution} title={title} compact={compact} />;
       break;
     case 'area_chart':
-      viz = <AreaChartCard execution={execution} title={title} />;
+      viz = <AreaChartCard execution={execution} title={title} compact={compact} />;
       break;
     case 'pie_chart':
-      viz = <PieChartCard execution={execution} title={title} />;
+      viz = <PieChartCard execution={execution} title={title} compact={compact} />;
       break;
     case 'list':
-      viz = <ListCard execution={execution} title={title} />;
+      viz = <ListCard execution={execution} title={title} compact={compact} />;
       break;
     default:
       viz = <DataTableCard execution={execution} title={title} compact={compact} />;
   }
 
   return (
-    <div className="space-y-2">
+    <div className={`flex flex-col w-full ${compact ? 'h-full' : 'space-y-2'}`}>
       {/* Toggle tabs */}
-      <div className="flex gap-1 rounded-lg bg-zinc-800/60 p-1 w-fit">
+      <div className={`flex gap-1 rounded-lg bg-white border border-zinc-200 p-1 w-fit shadow-sm ${compact ? 'mb-2 shrink-0' : ''}`}>
         <button
           onClick={() => setView('chart')}
           title="Chart view"
-          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-            view === 'chart'
-              ? 'bg-zinc-700 text-white shadow-sm'
-              : 'text-zinc-500 hover:text-zinc-300'
-          }`}
+          className={`rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-all ${view === 'chart'
+            ? 'bg-white text-zinc-800 shadow-sm border border-zinc-200'
+            : 'bg-white text-zinc-500 hover:text-zinc-700 border border-transparent'
+            }`}
         >
           Chart
         </button>
         <button
           onClick={() => setView('table')}
           title="Table view"
-          className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-            view === 'table'
-              ? 'bg-zinc-700 text-white shadow-sm'
-              : 'text-zinc-500 hover:text-zinc-300'
-          }`}
+          className={`rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-all ${view === 'table'
+            ? 'bg-white text-zinc-800 shadow-sm border border-zinc-200'
+            : 'bg-white text-zinc-500 hover:text-zinc-700 border border-transparent'
+            }`}
         >
           Table
         </button>
       </div>
 
       {/* Content */}
-      {view === 'chart' ? viz : <DataTableCard execution={execution} compact={compact} />}
+      <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
+        {view === 'chart' ? viz : <DataTableCard execution={execution} compact={compact} />}
+      </div>
     </div>
   );
 }
