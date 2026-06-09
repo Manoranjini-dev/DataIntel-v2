@@ -138,10 +138,11 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
   const xAxisHeight = isHorizontal ? 30 : (rotationAngle === -45 ? 70 : 30);
   const safeInterval = xLabelsCount > 20 ? 'preserveEnd' : 0;
 
-  // Calculate left margin dynamically based on label length
-  const labelFontSize = maxLabelLength > 20 ? 10 : 11;
-  const charWidth = labelFontSize === 10 ? 5.5 : 6.5;
-  const leftMargin = isHorizontal ? Math.min(Math.max(maxLabelLength * charWidth, 60), 400) : -20;
+  // Calculate Y-axis width dynamically based on label length to prevent clipping
+  const maxYValLength = Math.max(...schema.data.map((d: any) => String(d[schema.numericCols[0]] || '').length));
+  const verticalYAxisWidth = Math.max(maxYValLength * 8 + 16, 40);
+  const horizontalYAxisWidth = Math.min(Math.max(maxLabelLength * 6.5 + 16, 60), 300);
+  const yAxisWidth = isHorizontal ? horizontalYAxisWidth : verticalYAxisWidth;
 
   // Dynamic scaling for horizontal bars based on category count
   let barThickness = 30;
@@ -169,19 +170,19 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
     : 220 + xAxisHeight - 30;
 
   return (
-    <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
+      <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
       {title && (
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 shrink-0">
           {title}
         </p>
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden' : ''}`}>
-        <div style={{ minHeight: compact ? calculatedHeight : undefined, height: compact ? '100%' : calculatedHeight, width: '100%' }}>
+        <div style={{ minHeight: compact ? (isHorizontal ? calculatedHeight : undefined) : undefined, height: compact ? '100%' : calculatedHeight, width: '100%' }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart 
               data={schema.data} 
               layout={isHorizontal ? "vertical" : "horizontal"} 
-              margin={{ top: 10, right: 20, left: leftMargin, bottom: 0 }}
+              margin={{ top: 10, right: 20, left: 10, bottom: 0 }}
             >
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" horizontal={!isHorizontal} vertical={isHorizontal} />
             <XAxis
@@ -199,7 +200,7 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
               tick={isHorizontal ? <CustomYAxisTick maxLabelLength={maxLabelLength} /> : axisStyle} 
               axisLine={{ stroke: '#d4d4d8' }} 
               tickLine={false} 
-              width={isHorizontal ? leftMargin + 20 : 40}
+              width={yAxisWidth}
               interval={isHorizontal ? 0 : 'preserveEnd'}
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f4f4f5' }} />

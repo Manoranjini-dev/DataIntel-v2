@@ -115,7 +115,14 @@ export function LineChartCard({ execution, title, compact }: LineChartCardProps)
   const axisStyle = { fill: '#71717a', fontSize: 11 };
 
   const xLabelsCount = schema.data.length;
-  const needsRotation = xLabelsCount > 5;
+  const maxLabelLength = Math.max(...schema.data.map((d) => String(d._label).length));
+  const isHorizontal = xLabelsCount > 10 || maxLabelLength > 12;
+
+  // Calculate Y-axis width dynamically based on max value length
+  const maxValLength = Math.max(...schema.data.map((d: any) => String(d[schema.numericCols[0]] || '').length));
+  const yAxisWidth = Math.max(maxValLength * 8 + 16, 40);
+
+  const needsRotation = !isHorizontal && maxLabelLength > 8;
   const rotationAngle = xLabelsCount > 10 ? -90 : (needsRotation ? -45 : 0);
   const xAxisHeight = rotationAngle === -90 ? 100 : (rotationAngle === -45 ? 70 : 30);
   const safeInterval = xLabelsCount > 20 ? 'preserveEnd' : 0;
@@ -129,7 +136,7 @@ export function LineChartCard({ execution, title, compact }: LineChartCardProps)
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
         <ResponsiveContainer width="100%" height={compact ? "100%" : 220 + xAxisHeight - 30}>
-          <LineChart data={schema.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+          <LineChart data={schema.data} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
             <XAxis 
               dataKey="_label" 
@@ -139,7 +146,7 @@ export function LineChartCard({ execution, title, compact }: LineChartCardProps)
               axisLine={{ stroke: '#d4d4d8' }} 
               tickLine={false} 
             />
-            <YAxis tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} />
+            <YAxis tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={yAxisWidth} />
             <Tooltip content={<CustomTooltip />} />
             {schema.numericCols.length > 1 && (
               <Legend wrapperStyle={{ fontSize: 11, color: '#71717a', paddingTop: '10px' }} />

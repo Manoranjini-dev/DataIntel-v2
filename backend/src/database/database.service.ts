@@ -12,18 +12,25 @@ export class DatabaseService {
 
   /** Execute a parameterized query */
   async query<T extends QueryResultRow = any>(sql: string, params?: any[]): Promise<QueryResult<T>> {
-    return this.pool.query<T>(sql, params);
+    try {
+      return await this.pool.query<T>(sql, params);
+    } catch (error: any) {
+      if (error.message?.includes('Connection terminated') || error.message?.includes('timeout')) {
+        return await this.pool.query<T>(sql, params);
+      }
+      throw error;
+    }
   }
 
   /** Get a single row or null */
   async queryOne<T extends QueryResultRow = any>(sql: string, params?: any[]): Promise<T | null> {
-    const result = await this.pool.query<T>(sql, params);
+    const result = await this.query<T>(sql, params);
     return result.rows[0] || null;
   }
 
   /** Get all rows */
   async queryMany<T extends QueryResultRow = any>(sql: string, params?: any[]): Promise<T[]> {
-    const result = await this.pool.query<T>(sql, params);
+    const result = await this.query<T>(sql, params);
     return result.rows;
   }
 

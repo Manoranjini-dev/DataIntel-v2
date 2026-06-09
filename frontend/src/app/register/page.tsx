@@ -39,14 +39,8 @@ export default function RegisterPage() {
 
         {/* Logo / branding */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-3 mb-4">
-            <div
-              className="w-11 h-11 rounded-2xl flex items-center justify-center shadow-lg"
-              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
-            >
-              <Zap className="w-6 h-6 text-white" />
-            </div>
-            <span className="text-2xl font-bold text-foreground tracking-tight">DataIntel</span>
+          <div className="inline-flex items-center justify-center mb-4">
+            <img src="/image.png" alt="C1X Logo" style={{ height: 44, width: 'auto', objectFit: 'contain' }} />
           </div>
           <h1 className="text-2xl font-bold text-foreground">Create your account</h1>
           <p className="text-sm text-muted-foreground mt-1">Start managing your data sources in minutes</p>

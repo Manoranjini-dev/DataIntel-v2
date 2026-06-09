@@ -450,16 +450,7 @@ function Widget({
         </div>
       )}
 
-      {/* Inspect button (view mode) */}
-      {!isEditing && onInspect && (
-        <button
-          onClick={e => { e.stopPropagation(); onInspect(); }}
-          className="absolute top-2 right-2 z-30 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-background/80 border border-border text-muted-foreground hover:text-foreground transition-all backdrop-blur-sm"
-          title="Inspect"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
-      )}
+
 
       <div className="relative z-10 h-full">{renderContent()}</div>
     </div>
@@ -1475,17 +1466,37 @@ export function DashboardBuilder({
 
   async function suggestWidgetTitle(widgetId: string) {
     const widget = widgets.find(w => w.id === widgetId);
-    if (!widget || !activeChatId || !org) return;
+    if (!widget || !org) return;
     setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: true } : w));
     try {
       const cols = (widget.result_columns || []).join(', ');
       const hint = widget.ui_hint || widget.widget_type;
-      const result = await chatApi.ask(String(org.id), activeChatId,
-        `Suggest a concise, human-friendly title (max 6 words) for a ${hint} chart with columns: ${cols}. Respond with ONLY the title, no quotes or explanation.`, true);
-      const title = (result as any)?.assistantMessage?.content?.trim() || widget.title;
-      renameWidget(widgetId, title.replace(/^["']|["']$/g, ''));
-    } catch (e) { console.error(e); }
-    finally { setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: false } : w)); }
+      const intent = widget.query_prompt ? `\nBusiness Intent: ${widget.query_prompt}` : '';
+      const sqlContext = widget.sql ? `\nSQL Logic: ${widget.sql.slice(0, 400)}` : '';
+      
+      const prompt = `Visualization Type: ${hint}
+Columns: ${cols}${intent}${sqlContext}
+
+Based on the above data context, suggest a highly relevant dashboard card title.`;
+      
+      const result = await chatApi.suggestTitle(String(org.id), prompt);
+      const title = result.title?.trim() || widget.title;
+      const cleanTitle = title.replace(/^["']|["']$/g, '');
+      renameWidget(widgetId, cleanTitle);
+      
+      // Persist the generated title to the backend so it survives refresh
+      if (activePage) {
+        await dashboardApi.updateWidget(String(org.id), dashId, activePage, widgetId, {
+          ...widget,
+          title: cleanTitle,
+        });
+      }
+    } catch (e: any) {
+      console.error('Suggest title failed:', e);
+      alert('Failed to generate AI title: ' + (e.message || 'Unknown error'));
+    } finally {
+      setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: false } : w));
+    }
   }
 
   /**

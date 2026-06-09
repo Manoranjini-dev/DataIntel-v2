@@ -75,16 +75,8 @@ export default function LandingPage() {
         {/* ── Header ─────────────────────────────────────────── */}
         <header className="flex items-center justify-between py-5">
           <div className="flex items-center gap-3">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
-              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
-            >
-              <Zap className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <p className="text-base font-bold text-white tracking-tight">C1X</p>
-              <p className="text-[11px] text-[hsl(35_4%_55%)]">SQL Intelligence Platform</p>
-            </div>
+            <img src="/image.png" alt="C1X Logo" style={{ height: 32, width: 'auto', objectFit: 'contain' }} />
+            <p className="text-[11px] text-[hsl(35_4%_55%)] pt-0.5">SQL Intelligence Platform</p>
           </div>
 
           <nav className="flex items-center gap-3">
@@ -234,7 +226,7 @@ export default function LandingPage() {
         <section className="pb-24">
           <div
             className="rounded-2xl p-10 text-center"
-            style={{ background: 'linear-gradient(135deg, rgba(217,122,30,0.15), rgba(245,166,35,0.10), rgba(80,160,180,0.08))' , border: '1px solid rgba(217,122,30,0.25)' }}
+            style={{ background: 'linear-gradient(135deg, rgba(217,122,30,0.15), rgba(245,166,35,0.10), rgba(80,160,180,0.08))', border: '1px solid rgba(217,122,30,0.25)' }}
           >
             <h2 className="text-3xl font-bold text-white mb-3">
               Ready to ask your first question?
@@ -264,14 +256,8 @@ export default function LandingPage() {
         {/* ── Footer ─────────────────────────────────────────── */}
         <footer className="border-t border-[hsl(30_4%_18%)] py-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[hsl(35_4%_45%)]">
           <div className="flex items-center gap-2.5">
-            <div
-              className="w-6 h-6 rounded-lg flex items-center justify-center"
-              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
-            >
-              <Zap className="w-3.5 h-3.5 text-white" />
-            </div>
-            <span className="font-semibold text-[hsl(38_8%_70%)]">C1X</span>
-            <span>· SQL Intelligence Platform</span>
+            <img src="/image.png" alt="C1X Logo" style={{ height: 18, width: 'auto', objectFit: 'contain' }} />
+            <span className="ml-1">· SQL Intelligence Platform</span>
           </div>
           <span>© {new Date().getFullYear()} C1X. All rights reserved.</span>
         </footer>

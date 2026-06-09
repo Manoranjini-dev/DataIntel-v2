@@ -72,7 +72,7 @@ export function PieChartCard({ execution, title, compact }: PieChartCardProps) {
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
         <ResponsiveContainer width="100%" height={compact ? "100%" : 220}>
-          <PieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+          <PieChart margin={{ top: 10, right: 10, bottom: 10, left: 10 }}>
             <Pie
               data={schema.data}
               dataKey={schema.metricCol}

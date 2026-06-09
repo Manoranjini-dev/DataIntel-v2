@@ -9,6 +9,7 @@ import { ChatService } from './chat.service';
 import { ChatQueryService } from './chat-query.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SafeAccount } from '../auth/auth.service';
+import { LLMService } from '../llm/llm.service';
 import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 class CreateChatDto {
@@ -28,11 +29,16 @@ class ExecuteDraftDto {
   @IsString() @IsNotEmpty() sql!: string;
 }
 
+class SuggestTitleDto {
+  @IsString() @IsNotEmpty() prompt!: string;
+}
+
 @Controller('orgs/:orgId/chats')
 export class ChatController {
   constructor(
     private readonly chatService: ChatService,
     private readonly chatQueryService: ChatQueryService,
+    private readonly llmService: LLMService,
   ) {}
 
   @Get()
@@ -56,6 +62,33 @@ export class ChatController {
   ) {
     const chat = await this.chatService.create(orgId, user, dto);
     return { chat };
+  }
+
+
+
+  @Post('suggest-title')
+  @HttpCode(HttpStatus.OK)
+  async suggestTitle(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Body() dto: SuggestTitleDto,
+  ) {
+    const systemPrompt = `You are an expert Data Analyst and UI Designer. Your task is to generate high-quality, professional, and concise titles for dashboard cards based on the provided context (business intent, SQL logic, visualization type, and columns).
+
+Rules:
+1. Title length must be strictly between 3 and 8 words.
+2. Focus on the primary metric, dimension, or business trend being visualized.
+3. Avoid generic terms like "Chart", "Dashboard", "Analysis", "Report", "Card", or "Visualization".
+4. Use clear, business-friendly language.
+5. If the SQL contains filters (e.g. 'WHERE status = active') or aggregations (e.g. 'SUM(revenue)'), reflect them gracefully in the title (e.g. 'Active User Revenue').
+6. Do NOT wrap the title in quotes.
+7. Return ONLY the title text, nothing else.`;
+
+    const title = await this.llmService.generateFreeText(systemPrompt, dto.prompt, 50);
+    if (title.includes('AI service error')) {
+      throw new Error(title);
+    }
+    return { title };
   }
 
   @Get(':chatId')

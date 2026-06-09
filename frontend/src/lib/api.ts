@@ -280,6 +280,14 @@ export const chatApi = {
     return handleResponse<any>(r);
   },
 
+  suggestTitle: async (orgId: string, prompt: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/suggest-title`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    });
+    return handleResponse<{ title: string }>(r);
+  },
+
   archive: async (orgId: string, chatId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/archive`, { method: 'POST' });
     return handleResponse<{ success: boolean }>(r);

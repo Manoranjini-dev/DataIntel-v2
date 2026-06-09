@@ -99,8 +99,8 @@ export class ChatQueryService {
       // Guard: empty SQL after successful LLM parse (safety net)
       if (!llmResponse.sql?.trim()) {
         throw new Error(
-          'Could not generate a SQL query — the schema for this connection may not be synced yet. ' +
-          'Please navigate to Connection Settings → Schema Sync and run a sync, then retry your question.',
+          'Could not generate a SQL query for your prompt. ' +
+          'Please ensure your question relates to the available data and try refining your request.',
         );
       }
 
@@ -281,6 +281,9 @@ export class ChatQueryService {
        JOIN connection_tables ct ON ct.schema_id = cs.id
        JOIN connection_columns cc ON cc.table_id = ct.id
        WHERE cs.connection_id = $1
+         AND cs.deleted_at IS NULL
+         AND ct.deleted_at IS NULL
+         AND cc.deleted_at IS NULL
        GROUP BY ct.table_name
        ORDER BY ct.table_name`,
       [connectionId],

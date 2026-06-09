@@ -6,24 +6,23 @@ import { LayoutDashboard, CreditCard, Database, Layers, Settings } from 'lucide-
 import { useOrgStore } from '../../store/org';
 import { useAuthStore } from '@/lib/auth-store';
 
-// C1X logo — dark box, white C, orange 1, white X
+// C1X logo — from image file
 function C1XLogo({ size = 32 }: { size?: number }) {
   return (
-    <svg width={Math.round(size * 1.44)} height={size} viewBox="0 0 52 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect width="52" height="36" rx="5" fill="#2B2B2B" />
-      <text x="6"  y="26" fontFamily="'Arial Black','Arial',sans-serif" fontWeight="900" fontSize="21" fill="white">C</text>
-      <text x="19" y="26" fontFamily="'Arial Black','Arial',sans-serif" fontWeight="900" fontSize="21" fill="#F5A623">1</text>
-      <text x="31" y="26" fontFamily="'Arial Black','Arial',sans-serif" fontWeight="900" fontSize="21" fill="white">X</text>
-    </svg>
+    <img
+      src="/image.png"
+      alt="C1X Logo"
+      style={{ height: size, width: 'auto', objectFit: 'contain' }}
+    />
   );
 }
 
 const NAV_ITEMS = [
-  { href: 'dashboards',  icon: LayoutDashboard, label: 'Dashboard'    },
-  { href: 'cards',       icon: CreditCard,      label: 'Cards'        },
-  { href: 'connections', icon: Database,        label: 'Data Sources' },
-  { href: 'combos',      icon: Layers,          label: 'Combos'       },
-  { href: 'settings',    icon: Settings,        label: 'Settings'     },
+  { href: 'dashboards', icon: LayoutDashboard, label: 'Dashboard' },
+  { href: 'cards', icon: CreditCard, label: 'Cards' },
+  { href: 'connections', icon: Database, label: 'Data Sources' },
+  { href: 'combos', icon: Layers, label: 'Combos' },
+  { href: 'settings', icon: Settings, label: 'Settings' },
 ] as const;
 
 export function Sidebar() {
@@ -53,7 +52,7 @@ export function Sidebar() {
       <nav className="flex-1 px-3 space-y-0.5">
         {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
           const fullHref = `/orgs/${activeSlug}/${href}`;
-          const active   = pathname.startsWith(fullHref);
+          const active = pathname.startsWith(fullHref);
           return (
             <Link
               key={href}

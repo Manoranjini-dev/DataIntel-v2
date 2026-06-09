@@ -20,7 +20,7 @@ export class LLMService {
     private readonly promptBuilder: PromptBuilderService,
   ) {
     const apiKey = this.configService.get<string>('OPEN_ROUTER_KEY');
-    const baseURL = this.configService.get<string>('OPEN_ROUTER_API_URL');
+    const baseURL = this.configService.get<string>('OPEN_ROUTER_API_URL') || 'https://openrouter.ai/api/v1';
 
     if (!apiKey) {
       throw new Error('OPEN_ROUTER_KEY is required');
@@ -203,24 +203,31 @@ Rules — follow every one without exception:
     userContent: string,
     maxTokens = 512,
   ): Promise<string> {
-    try {
-      const completion = await this.client.chat.completions.create({
-        model: this.model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-        temperature: 0.5,
-        max_tokens: maxTokens,
-      });
-      const text = completion.choices[0]?.message?.content?.trim();
-      if (!text) throw new Error('Empty response');
-      return text;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.warn(`generateFreeText failed: ${msg}`);
-      throw new Error(`AI explanation failed: ${msg}`);
+    let lastError = 'Unknown error';
+    
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        const completion = await this.client.chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+          ],
+          temperature: 0.5,
+          max_tokens: maxTokens,
+        });
+        const text = completion.choices[0]?.message?.content?.trim();
+        if (!text) throw new Error('Empty response');
+        return text;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.warn(`generateFreeText attempt ${attempt + 1} failed: ${lastError}`);
+      }
     }
+    
+    // Return a fallback instead of throwing an unhandled error that crashes the endpoint
+    this.logger.error(`AI explanation failed after retries: ${lastError}. Returning fallback.`);
+    return `No explanation could be generated at this time due to an AI service error. Details: ${lastError}`;
   }
 
   /** Parse LLM response — strict JSON only */
