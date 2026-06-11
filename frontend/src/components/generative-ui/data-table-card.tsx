@@ -49,6 +49,7 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
 
   const maxRows = 500;
   const displayRows = sortedRows.slice(0, maxRows);
+  console.log(`[DEBUG TRACE] Rendered Count: ${displayRows.length}`);
 
   return (
     <div className={`w-full flex flex-col overflow-hidden bg-white ${compact ? 'h-full' : 'rounded-xl border border-zinc-200 shadow-sm'}`}>

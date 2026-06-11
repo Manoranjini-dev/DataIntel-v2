@@ -154,6 +154,20 @@ Return this format:
   "follow_up_questions": ["...", "...", "..."]
 }
 
+SCHEMA EXPLORATION (show all tables):
+Use when the user asks to "show all tables", "list tables", "what tables exist", or asks for an overview of the database structure.
+You MUST NOT generate a data query. Instead, return a "schema_query" response type.
+Return this format:
+{
+  "type": "schema_query",
+  "sql": "",
+  "explanation": "Here are all the tables in your database.",
+  "tables_used": [],
+  "confidence": 1.0,
+  "ui_hint": "data_table",
+  "follow_up_questions": ["What columns are in these tables?"]
+}
+
 FALLBACK (confidence < 0.5):
 {
   "sql": "",
@@ -371,6 +385,20 @@ Triggers: "what does this mean?", "what can we infer?", "summarize", "explain th
   "follow_up_questions": ["...", "...", "..."]
 }
 
+═══ SCHEMA EXPLORATION (show all indices) ═══
+Use when the user asks to "show all indices", "list indices", "what indices exist", or asks for an overview of the data structure.
+You MUST NOT generate a data query. Instead, return a "schema_query" response type.
+{
+  "type": "schema_query",
+  "query_dsl": {},
+  "explanation": "Here are all the indices in your cluster.",
+  "target_indices": [],
+  "confidence": 1.0,
+  "intent": "schema_query",
+  "ui_hint": "data_table",
+  "follow_up_questions": ["What fields are in these indices?"]
+}
+
 ═══ FALLBACK (confidence < 0.5) ═══
 {
   "query_dsl": {},
@@ -473,6 +501,20 @@ CONFIDENCE SCORING:
 - 0.7–0.89: Minor field/intent assumptions made
 - 0.5–0.69: Significant assumptions — explain in the explanation field
 - < 0.5: Return fallback JSON
+
+SCHEMA EXPLORATION (show all collections):
+Use when the user asks to "show all collections", "list collections", "what collections exist", or asks for an overview of the database structure.
+You MUST NOT generate a data query. Instead, return a "schema_query" response type.
+Return this format:
+{
+  "type": "schema_query",
+  "sql": "",
+  "explanation": "Here are all the collections in your database.",
+  "tables_used": [],
+  "confidence": 1.0,
+  "ui_hint": "data_table",
+  "follow_up_questions": ["What fields are in these collections?"]
+}
 
 FALLBACK:
 {

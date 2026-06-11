@@ -97,54 +97,94 @@ export class ChatQueryService {
       const llmResponse = await this.llmService.generateSQL(llmContext);
 
       // Guard: empty SQL after successful LLM parse (safety net)
-      if (!llmResponse.sql?.trim()) {
+      if (llmResponse.type !== 'schema_query' && llmResponse.type !== 'conversational' && !llmResponse.sql?.trim()) {
         throw new Error(
           'Could not generate a SQL query for your prompt. ' +
           'Please ensure your question relates to the available data and try refining your request.',
         );
       }
 
-      // 5. Execute via MCP (create temporary session)
-      const password = decrypt(conn.encrypted_password, this.encKey);
-      const session = await this.mcpService.createSession({
-        host: conn.host,
-        port: conn.port,
-        username: conn.username,
-        password,
-        database: conn.database_name,
-        connectorType: conn.connector_type as ConnectorType,
-      });
-
       let execResult: any = null;
       let execStatus = 'success';
       let execError: string | null = null;
+      let insight = '';
 
-      try {
-        const mcpResult = await this.mcpService.executeReadQuery(session.sessionId, llmResponse.sql);
-        if (!mcpResult.success) {
+      if (llmResponse.type === 'schema_query') {
+        // 5a. Handle schema queries natively via our synced schema database
+        // We fetch ALL tables to avoid truncating schema discovery.
+        try {
+          const tablesResult = await this.db.queryMany<any>(
+            `SELECT ct.table_name, COUNT(cc.id)::int as column_count
+             FROM connection_schemas cs
+             JOIN connection_tables ct ON ct.schema_id = cs.id
+             LEFT JOIN connection_columns cc ON cc.table_id = ct.id AND cc.deleted_at IS NULL
+             WHERE cs.connection_id = $1 AND cs.deleted_at IS NULL AND ct.deleted_at IS NULL
+             GROUP BY ct.table_name
+             ORDER BY ct.table_name`,
+            [conn.id],
+          );
+
+          const totalTables = tablesResult.length;
+          console.log(`[DEBUG TRACE] Database Count: ${totalTables}`);
+          execResult = {
+            rows: tablesResult,
+            columns: ['table_name', 'column_count'],
+            rowCount: totalTables,
+          };
+
+          insight = `Showing all ${totalTables} tables available in the schema.`;
+            
+          llmResponse.explanation = insight;
+          if (!llmResponse.ui_hint) llmResponse.ui_hint = 'data_table';
+
+        } catch (err: any) {
           execStatus = 'failed';
-          execError = mcpResult.error || 'Query execution failed';
-        } else {
-          execResult = mcpResult.data;
+          execError = err.message || 'Failed to fetch schema metadata';
         }
-      } finally {
-        await this.mcpService.destroySession(session.sessionId).catch(() => {});
+
+      } else if (llmResponse.type === 'conversational') {
+        // 5b. Conversational response — no query execution
+        insight = llmResponse.explanation;
+        execResult = { rows: [], columns: [], rowCount: 0 };
+        
+      } else {
+        // 5c. Execute data query via MCP (create temporary session)
+        const password = decrypt(conn.encrypted_password, this.encKey);
+        const session = await this.mcpService.createSession({
+          host: conn.host,
+          port: conn.port,
+          username: conn.username,
+          password,
+          database: conn.database_name,
+          connectorType: conn.connector_type as ConnectorType,
+        });
+
+        try {
+          const mcpResult = await this.mcpService.executeReadQuery(session.sessionId, llmResponse.sql);
+          if (!mcpResult.success) {
+            execStatus = 'failed';
+            execError = mcpResult.error || 'Query execution failed';
+          } else {
+            execResult = mcpResult.data;
+          }
+        } finally {
+          await this.mcpService.destroySession(session.sessionId).catch(() => {});
+        }
+
+        // 6. Interpret results if it was a real query
+        if (execStatus === 'success' && execResult) {
+          insight = await this.llmService.interpretResults(
+            prompt,
+            llmResponse.sql,
+            execResult.columns || [],
+            execResult.rows || [],
+            execResult.rowCount || 0,
+            connectorFamily as any,
+          ).catch(() => '');
+        }
       }
 
       const execTimeMs = Date.now() - start;
-
-      // 6. Interpret results
-      let insight = '';
-      if (execStatus === 'success' && execResult) {
-        insight = await this.llmService.interpretResults(
-          prompt,
-          llmResponse.sql,
-          execResult.columns || [],
-          execResult.rows || [],
-          execResult.rowCount || 0,
-          connectorFamily as any,
-        ).catch(() => '');
-      }
 
       // 7. Persist query_executions
       const execRecord = await this.db.queryOne(
@@ -161,7 +201,7 @@ export class ChatQueryService {
           llmResponse.tables_used, llmResponse.confidence,
           execStatus, execTimeMs,
           execResult?.rowCount || 0,
-          JSON.stringify(execResult?.rows?.slice(0, 25) || []),
+          JSON.stringify(execResult?.rows?.slice(0, 5000) || []),
           execResult?.columns || [],
           execError,
           insight,
@@ -192,7 +232,7 @@ export class ChatQueryService {
         details: { chatId, execTimeMs, rowCount: execResult?.rowCount },
       });
 
-      return {
+      const apiResponse = {
         userMessage: userMsg,
         assistantMessage: assistantMsg,
         execution: {
@@ -201,6 +241,8 @@ export class ChatQueryService {
           columns: execResult?.columns || [],
         },
       };
+      console.log(`[DEBUG TRACE] API Count: ${apiResponse.execution.rows.length}`);
+      return apiResponse;
 
     } catch (err: any) {
       this.logger.error(`Chat query failed: ${err.message}`);
@@ -261,7 +303,7 @@ export class ChatQueryService {
          row_count=$5, result_preview=$6, result_columns=$7, error_message=$8, completed_at=NOW()
          WHERE id=$1`,
         [executionId, sql, status, execTimeMs, rowCount,
-         JSON.stringify(rows.slice(0, 25)), columns, error],
+         JSON.stringify(rows.slice(0, 5000)), columns, error],
       ).catch(() => {});
     }
 

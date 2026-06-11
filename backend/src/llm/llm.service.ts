@@ -251,14 +251,16 @@ Rules — follow every one without exception:
       throw new Error(`LLM output is not valid JSON: ${cleaned.substring(0, 200)}`);
     }
 
-    // Conversational response — LLM answered analytically, no query needed
-    if (parsed.type === 'conversational') {
+    // Conversational or schema_query response — no data query needed
+    if (parsed.type === 'conversational' || parsed.type === 'schema_query') {
       return {
-        type: 'conversational',
+        type: parsed.type,
         sql: '',
         explanation: (parsed.explanation as string) || '',
         tables_used: [],
         confidence: (parsed.confidence as number) ?? 1.0,
+        ui_hint: (parsed.ui_hint as UIHint) || undefined,
+        schema_query_params: parsed.schema_query_params as any,
         follow_up_questions: Array.isArray(parsed.follow_up_questions)
           ? (parsed.follow_up_questions as string[]).slice(0, 3)
           : undefined,
@@ -326,14 +328,16 @@ Rules — follow every one without exception:
       throw new Error(`LLM output is not valid JSON: ${cleaned.substring(0, 200)}`);
     }
 
-    // Conversational response — LLM answered analytically, no query needed
-    if (parsed.type === 'conversational') {
+    // Conversational or schema_query response — no data query needed
+    if (parsed.type === 'conversational' || parsed.type === 'schema_query') {
       return {
-        type: 'conversational',
+        type: parsed.type,
         sql: '',
         explanation: (parsed.explanation as string) || '',
         tables_used: [],
         confidence: (parsed.confidence as number) ?? 1.0,
+        ui_hint: (parsed.ui_hint as UIHint) || undefined,
+        schema_query_params: parsed.schema_query_params as any,
         follow_up_questions: Array.isArray(parsed.follow_up_questions)
           ? (parsed.follow_up_questions as string[]).slice(0, 3)
           : undefined,

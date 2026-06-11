@@ -325,13 +325,15 @@ export default function ConnectionChatPage() {
   async function loadMessages(orgId: string, cid: string) {
     try {
       const { messages: msgs } = await chatApi.getMessages(orgId, cid);
-      setMessages(msgs.map((m: any) => ({
+      const msgsData = msgs.map((m: any) => ({
         ...m,
         result_preview: typeof m.result_preview === 'string' ? JSON.parse(m.result_preview) : (m.result_preview || []),
         result_columns: typeof m.result_columns === 'string' ? JSON.parse(m.result_columns) : (m.result_columns || []),
         // Persisted messages are already executed
         pending_execution: false,
-      })));
+      }));
+      console.log(`[DEBUG TRACE] Frontend State Count (Load): ${msgsData[msgsData.length - 1]?.result_preview?.length || 0}`);
+      setMessages(msgsData);
     } catch (e) { console.error(e); }
   }
 
@@ -368,7 +370,7 @@ export default function ConnectionChatPage() {
         exec_status: exec?.status ?? 'success',
         row_count: exec?.row_count,
         execution_time_ms: exec?.execution_time_ms,
-        result_preview: exec?.rows?.slice(0, 50) ?? [],
+        result_preview: exec?.rows ?? [],
         result_columns: exec?.columns ?? [],
         // executeDraft returns no ui_hint — keep the existing value from when the
         // LLM originally created this message (stored in chat_messages.ui_hint)
@@ -434,7 +436,7 @@ export default function ConnectionChatPage() {
             row_count: autoExecute ? exec?.row_count : undefined,
             execution_time_ms: autoExecute ? exec?.execution_time_ms : undefined,
             generated_query: exec?.generated_query,
-            result_preview: autoExecute ? (exec?.rows?.slice(0, 50) ?? []) : [],
+            result_preview: autoExecute ? (exec?.rows ?? []) : [],
             result_columns: autoExecute ? (exec?.columns ?? []) : [],
             // ui_hint comes from assistantMessage (stored in chat_messages.ui_hint by the LLM).
             // query_executions has no ui_hint column, so do NOT read exec?.ui_hint — it is
@@ -446,6 +448,7 @@ export default function ConnectionChatPage() {
             // When autoExecute=OFF, mark as pending so UI shows editable SQL
             pending_execution: !autoExecute && !!exec?.generated_query,
           });
+          console.log(`[DEBUG TRACE] Frontend State Count (Ask): ${autoExecute ? (exec?.rows?.length || 0) : 0}`);
         }
 
         return [...filtered, ...newMsgs];

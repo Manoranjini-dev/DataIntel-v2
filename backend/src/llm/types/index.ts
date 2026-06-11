@@ -41,7 +41,7 @@ export interface LLMContext {
  */
 export interface LLMResponse {
   /** 'conversational' when the LLM answered analytically without generating a query */
-  type?: 'data_query' | 'conversational';
+  type?: 'data_query' | 'conversational' | 'schema_query';
   sql: string;
   explanation: string;
   tables_used: string[];
@@ -49,6 +49,7 @@ export interface LLMResponse {
   intent?: string; // ES-specific: 'search' | 'aggregate' | 'count' | 'analyze'
   ui_hint?: UIHint; // Generative UI — recommended frontend component
   follow_up_questions?: string[]; // Suggested next questions for non-technical users
+  schema_query_params?: { limit: number; offset: number }; // Used when type is 'schema_query'
 }
 
 export interface LLMStreamChunk {

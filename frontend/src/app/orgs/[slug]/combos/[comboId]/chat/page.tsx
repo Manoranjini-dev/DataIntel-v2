@@ -251,7 +251,7 @@ function AddToDashboardModal({ orgId, message, onClose }: {
         widget_type: message.ui_hint?.replace('data_table', 'table') || 'table',
         queryPrompt: message.content,
         datasourceScopeType: 'combo',
-        resultRows: message.rows?.slice(0, 100) || [],
+        resultRows: message.rows || [],
         resultColumns: message.columns || [],
         uiHint: message.ui_hint || 'table',
         gridX: 0, gridY: 0, gridW: 6, gridH: 4,
@@ -311,7 +311,7 @@ function SaveCardModal({ orgId, message, onClose }: {
         name: name.trim(),
         chart_type: message.ui_hint || 'table',
         raw_query: message.content,
-        result_cache: { rows: message.rows?.slice(0, 100) || [], columns: message.columns || [] },
+        result_cache: { rows: message.rows || [], columns: message.columns || [] },
         visibility: 'org_shared',
       });
       onClose();
