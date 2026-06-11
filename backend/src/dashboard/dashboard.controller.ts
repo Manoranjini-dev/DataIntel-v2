@@ -65,6 +65,18 @@ export class DashboardController {
     return { dashboard, pages: pagesWithWidgets };
   }
 
+  @Put(':dashId')
+  @ApiOperation({ summary: 'Update a dashboard' })
+  async update(
+    @OrgId() orgId: string,
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { name?: string; description?: string },
+  ) {
+    const dashboard = await this.builder.updateDashboard(dashId, orgId, user, dto);
+    return { dashboard };
+  }
+
   @Post(':dashId/publish')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Publish draft layout' })

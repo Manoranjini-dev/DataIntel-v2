@@ -64,7 +64,15 @@ export class PersistentConnectionService {
   async create(orgId: string, user: SafeAccount, dto: CreateConnectionDto) {
     await this.orgService.requireRole(orgId, user.id, 'editor');
 
-    const encryptedPassword = encrypt(dto.password, this.encKey);
+    const encryptedPassword = dto.password ? encrypt(dto.password, this.encKey) : encrypt('', this.encKey);
+
+    const connectionOptions = {
+      ...(dto.connectionOptions || {}),
+      databricksHttpPath: dto.databricksHttpPath,
+      bigqueryProjectId: dto.bigqueryProjectId,
+      bigqueryDatasetId: dto.bigqueryDatasetId,
+      bigqueryKeyJson: dto.bigqueryKeyJson,
+    };
 
     const conn = await this.db.queryOne(
       `INSERT INTO datasource_connections
@@ -75,9 +83,9 @@ export class PersistentConnectionService {
                  database_name, username, ssl_enabled, status, created_at`,
       [
         orgId, dto.name, dto.description || null, dto.connectorType,
-        dto.host, dto.port, dto.databaseName, dto.username, encryptedPassword,
-        dto.sslEnabled ?? false,
-        JSON.stringify(dto.connectionOptions || {}),
+        dto.host || '', dto.port || 0, dto.databaseName || '', dto.username || '', encryptedPassword,
+        dto.sslEnabled ?? dto.ssl ?? false,
+        JSON.stringify(connectionOptions),
         user.id,
       ],
     );
@@ -101,6 +109,22 @@ export class PersistentConnectionService {
       ? encrypt(dto.password, this.encKey)
       : undefined;
 
+    let mergedOptions = undefined;
+    if (dto.connectionOptions || dto.databricksHttpPath || dto.bigqueryProjectId || dto.bigqueryDatasetId || dto.bigqueryKeyJson) {
+      const currentOptions = typeof existing.connection_options === 'string' 
+        ? JSON.parse(existing.connection_options) 
+        : (existing.connection_options || {});
+      
+      mergedOptions = JSON.stringify({
+        ...currentOptions,
+        ...(dto.connectionOptions || {}),
+        ...(dto.databricksHttpPath ? { databricksHttpPath: dto.databricksHttpPath } : {}),
+        ...(dto.bigqueryProjectId ? { bigqueryProjectId: dto.bigqueryProjectId } : {}),
+        ...(dto.bigqueryDatasetId ? { bigqueryDatasetId: dto.bigqueryDatasetId } : {}),
+        ...(dto.bigqueryKeyJson ? { bigqueryKeyJson: dto.bigqueryKeyJson } : {}),
+      });
+    }
+
     const conn = await this.db.queryOne(
       `UPDATE datasource_connections SET
          name = COALESCE($3, name),
@@ -110,11 +134,12 @@ export class PersistentConnectionService {
          username = COALESCE($7, username),
          encrypted_password = COALESCE($8, encrypted_password),
          ssl_enabled = COALESCE($9, ssl_enabled),
+         connection_options = COALESCE($10, connection_options),
          updated_at = NOW()
        WHERE id = $1 AND org_id = $2
        RETURNING id, name, host, port, status, updated_at`,
       [connId, orgId, dto.name, dto.description, dto.host, dto.port,
-       dto.username, encryptedPassword, dto.sslEnabled],
+       dto.username, encryptedPassword, dto.sslEnabled ?? dto.ssl, mergedOptions],
     );
 
     await this.audit.log({
@@ -221,28 +246,72 @@ export class PersistentConnectionService {
       );
       const schemaId = schemaRow.rows[0].id;
 
-      for (const table of (schemaResult?.tables || [])) {
-        const tableRow = await query(
+      const tables = schemaResult?.tables || [];
+      if (tables.length > 0) {
+        const tableValues: any[] = [];
+        const tablePlaceholders: string[] = [];
+        let paramIdx = 1;
+
+        for (const table of tables) {
+          tablePlaceholders.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, 'table', $${paramIdx++})`);
+          tableValues.push(schemaId, connId, table.name, table.rowCountEstimate || null);
+        }
+
+        const tablesRow = await query(
           `INSERT INTO connection_tables
              (schema_id, connection_id, table_name, table_type, row_count_estimate)
-           VALUES ($1, $2, $3, 'table', $4) RETURNING id`,
-          [schemaId, connId, table.name, table.rowCountEstimate || null],
+           VALUES ${tablePlaceholders.join(', ')} RETURNING id, table_name`,
+          tableValues
         );
-        const tableId = tableRow.rows[0].id;
 
-        for (let i = 0; i < (table.columns || []).length; i++) {
-          const col = table.columns[i];
-          const fk = (table.foreignKeys || []).find(f => f.columnName === col.name);
-          await query(
-            `INSERT INTO connection_columns
-               (table_id, connection_id, column_name, data_type, is_nullable,
-                is_primary_key, is_foreign_key, fk_ref_table, fk_ref_column,
-                ordinal_position, description)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-            [tableId, connId, col.name, col.type, col.nullable ?? true,
-             col.isPrimaryKey ?? false, !!fk, fk ? fk.referencedTable : null, fk ? fk.referencedColumn : null,
-             i, col.comment || null],
-          );
+        const tableIdMap = new Map<string, string>();
+        for (const row of tablesRow.rows) {
+          tableIdMap.set(row.table_name, row.id);
+        }
+
+        const colValues: any[] = [];
+        const colPlaceholders: string[] = [];
+        
+        for (const table of tables) {
+          const tableId = tableIdMap.get(table.name);
+          if (!tableId) continue;
+          
+          for (let i = 0; i < (table.columns || []).length; i++) {
+            const col = table.columns[i];
+            const fk = (table.foreignKeys || []).find(f => f.columnName === col.name);
+            
+            colPlaceholders.push(''); // placeholder to maintain array length
+            colValues.push(
+              tableId, connId, col.name, col.type, col.nullable ?? true,
+              col.isPrimaryKey ?? false, !!fk, fk ? fk.referencedTable : null, fk ? fk.referencedColumn : null,
+              i, col.comment || null
+            );
+          }
+        }
+
+        if (colValues.length > 0) {
+          const colsPerChunk = 5000;
+          const paramsPerCol = 11;
+          
+          for (let i = 0; i < colPlaceholders.length; i += colsPerChunk) {
+            const chunkEnd = Math.min(i + colsPerChunk, colPlaceholders.length);
+            const chunkValues = colValues.slice(i * paramsPerCol, chunkEnd * paramsPerCol);
+            
+            const chunkPlaceholders = [];
+            for (let j = 0; j < chunkEnd - i; j++) {
+              const base = j * paramsPerCol;
+              chunkPlaceholders.push(`($${base+1}, $${base+2}, $${base+3}, $${base+4}, $${base+5}, $${base+6}, $${base+7}, $${base+8}, $${base+9}, $${base+10}, $${base+11})`);
+            }
+
+            await query(
+              `INSERT INTO connection_columns
+                 (table_id, connection_id, column_name, data_type, is_nullable,
+                  is_primary_key, is_foreign_key, fk_ref_table, fk_ref_column,
+                  ordinal_position, description)
+               VALUES ${chunkPlaceholders.join(', ')}`,
+              chunkValues
+            );
+          }
         }
       }
 

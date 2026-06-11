@@ -339,6 +339,19 @@ export const dashboardApi = {
     return data;
   },
 
+  update: async (orgId: string, dashId: string, data: { name?: string; description?: string }) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ dashboard: any }>(r);
+  },
+
+  delete: async (orgId: string, dashId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`, { method: 'DELETE' });
+    return handleResponse<any>(r);
+  },
+
   save: async (orgId: string, dashId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/publish`, { method: 'POST' });
     return handleResponse<{ dashboard: any }>(r);

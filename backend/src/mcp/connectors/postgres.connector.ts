@@ -53,12 +53,104 @@ export class PostgresConnector extends BaseMCPConnector {
         await client.connect();
 
         const tables = await this.getTables(client);
-        const tableSchemas: TableSchema[] = [];
+        
+        const allColumnsResult = await client.query(
+          `SELECT 
+            c.table_name, c.column_name, c.data_type, c.is_nullable, c.column_default,
+            CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END as is_primary_key
+           FROM information_schema.columns c
+           LEFT JOIN (
+             SELECT tc.table_name, ku.column_name 
+             FROM information_schema.table_constraints tc
+             JOIN information_schema.key_column_usage ku ON tc.constraint_name = ku.constraint_name
+             WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = 'public'
+           ) pk ON c.column_name = pk.column_name AND c.table_name = pk.table_name
+           WHERE c.table_schema = 'public'
+           ORDER BY c.table_name, c.ordinal_position`
+        );
 
+        const allFkResult = await client.query(
+          `SELECT 
+            tc.table_name,
+            kcu.column_name,
+            ccu.table_name AS referenced_table,
+            ccu.column_name AS referenced_column,
+            tc.constraint_name
+           FROM information_schema.table_constraints tc
+           JOIN information_schema.key_column_usage kcu 
+             ON tc.constraint_name = kcu.constraint_name
+           JOIN information_schema.constraint_column_usage ccu 
+             ON ccu.constraint_name = tc.constraint_name
+           WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'`
+        );
+
+        const allIdxResult = await client.query(
+          `SELECT 
+            t.relname as table_name,
+            i.relname as index_name,
+            a.attname as column_name,
+            ix.indisunique as is_unique
+           FROM pg_class t
+           JOIN pg_index ix ON t.oid = ix.indrelid
+           JOIN pg_class i ON i.oid = ix.indexrelid
+           JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+           JOIN pg_namespace n ON n.oid = t.relnamespace
+           WHERE t.relkind = 'r' AND n.nspname = 'public'
+           ORDER BY t.relname, i.relname, a.attnum`
+        );
+
+        const colsByTable = new Map<string, TableColumn[]>();
+        for (const r of allColumnsResult.rows) {
+          const t = r.table_name as string;
+          if (!colsByTable.has(t)) colsByTable.set(t, []);
+          colsByTable.get(t)!.push({
+            name: r.column_name as string,
+            type: r.data_type as string,
+            nullable: r.is_nullable === 'YES',
+            isPrimaryKey: r.is_primary_key as boolean,
+            defaultValue: r.column_default as string | null,
+          });
+        }
+
+        const fksByTable = new Map<string, ForeignKey[]>();
+        for (const r of allFkResult.rows) {
+          const t = r.table_name as string;
+          if (!fksByTable.has(t)) fksByTable.set(t, []);
+          fksByTable.get(t)!.push({
+            columnName: r.column_name as string,
+            referencedTable: r.referenced_table as string,
+            referencedColumn: r.referenced_column as string,
+            constraintName: r.constraint_name as string,
+          });
+        }
+
+        const idxByTable = new Map<string, TableIndex[]>();
+        const indexGroups = new Map<string, Map<string, { columns: string[]; unique: boolean }>>();
+        for (const r of allIdxResult.rows) {
+          const t = r.table_name as string;
+          const idxName = r.index_name as string;
+          if (!indexGroups.has(t)) indexGroups.set(t, new Map());
+          
+          const tGroups = indexGroups.get(t)!;
+          if (!tGroups.has(idxName)) {
+            tGroups.set(idxName, { columns: [], unique: r.is_unique as boolean });
+          }
+          tGroups.get(idxName)!.columns.push(r.column_name as string);
+        }
+        
+        for (const [t, groups] of indexGroups.entries()) {
+          idxByTable.set(t, Array.from(groups.entries()).map(([name, info]) => ({
+            name,
+            columns: info.columns,
+            unique: info.unique,
+          })));
+        }
+
+        const tableSchemas: TableSchema[] = [];
         for (const tableName of tables) {
-          const columns = await this.getColumns(client, tableName);
-          const foreignKeys = await this.getForeignKeys(client, tableName);
-          const indexes = await this.getIndexes(client, tableName);
+          const columns = colsByTable.get(tableName) || [];
+          const foreignKeys = fksByTable.get(tableName) || [];
+          const indexes = idxByTable.get(tableName) || [];
           const primaryKeys = columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
 
           tableSchemas.push({

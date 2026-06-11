@@ -147,6 +147,31 @@ export class DashboardBuilderService {
     return dash;
   }
 
+  async updateDashboard(dashId: string, orgId: string, updater: SafeAccount, dto: { name?: string; description?: string }) {
+    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+
+    const dash = await this.db.queryOne(
+      `UPDATE dashboards
+       SET name = COALESCE($3, name),
+           description = COALESCE($4, description),
+           updated_at = NOW(),
+           updated_by = $2
+       WHERE id = $1 AND org_id = $5 AND deleted_at IS NULL
+       RETURNING *`,
+      [dashId, updater.id, dto.name ?? null, dto.description ?? null, orgId],
+    );
+
+    if (!dash) throw new NotFoundException('Dashboard not found');
+
+    await this.audit.log({
+      orgId, accountId: updater.id,
+      eventType: 'dashboard_updated', resourceType: 'dashboard', resourceId: dashId,
+      details: { name: dash.name },
+    });
+
+    return dash;
+  }
+
   async publishDashboard(dashId: string, orgId: string, publisher: SafeAccount) {
     await this.orgPermissions.requireRole(orgId, publisher.id, 'editor');
 
@@ -182,8 +207,8 @@ export class DashboardBuilderService {
     await this.orgPermissions.requireRole(orgId, deleter.id, 'admin');
     await this.db.query(
       `UPDATE dashboards SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW()
-       WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [dashId, deleter.id],
+       WHERE id = $1 AND org_id = $3 AND deleted_at IS NULL`,
+      [dashId, deleter.id, orgId],
     );
     await this.invalidateDashboardCache(dashId);
     await this.audit.log({

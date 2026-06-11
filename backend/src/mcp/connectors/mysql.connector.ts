@@ -50,12 +50,84 @@ export class MySQLConnector extends BaseMCPConnector {
       const connection = await this.createConnection(params);
       try {
         const tables = await this.getTables(connection, params.database);
-        const tableSchemas: TableSchema[] = [];
+        
+        const [allColumnsRows] = await connection.execute<mysql.RowDataPacket[]>(
+          `SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, COLUMN_DEFAULT, COLUMN_COMMENT
+           FROM INFORMATION_SCHEMA.COLUMNS
+           WHERE TABLE_SCHEMA = ?
+           ORDER BY TABLE_NAME, ORDINAL_POSITION`,
+          [params.database]
+        );
 
+        const [allFkRows] = await connection.execute<mysql.RowDataPacket[]>(
+          `SELECT 
+            TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME, CONSTRAINT_NAME
+           FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+           WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL`,
+          [params.database]
+        );
+
+        const [allIdxRows] = await connection.execute<mysql.RowDataPacket[]>(
+          `SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, NON_UNIQUE
+           FROM INFORMATION_SCHEMA.STATISTICS
+           WHERE TABLE_SCHEMA = ?
+           ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX`,
+          [params.database]
+        );
+
+        const colsByTable = new Map<string, TableColumn[]>();
+        for (const r of allColumnsRows) {
+          const t = r.TABLE_NAME as string;
+          if (!colsByTable.has(t)) colsByTable.set(t, []);
+          colsByTable.get(t)!.push({
+            name: r.COLUMN_NAME as string,
+            type: r.DATA_TYPE as string,
+            nullable: r.IS_NULLABLE === 'YES',
+            isPrimaryKey: r.COLUMN_KEY === 'PRI',
+            defaultValue: r.COLUMN_DEFAULT as string | null,
+            comment: r.COLUMN_COMMENT as string | undefined,
+          });
+        }
+
+        const fksByTable = new Map<string, ForeignKey[]>();
+        for (const r of allFkRows) {
+          const t = r.TABLE_NAME as string;
+          if (!fksByTable.has(t)) fksByTable.set(t, []);
+          fksByTable.get(t)!.push({
+            columnName: r.COLUMN_NAME as string,
+            referencedTable: r.REFERENCED_TABLE_NAME as string,
+            referencedColumn: r.REFERENCED_COLUMN_NAME as string,
+            constraintName: r.CONSTRAINT_NAME as string,
+          });
+        }
+
+        const idxByTable = new Map<string, TableIndex[]>();
+        const indexGroups = new Map<string, Map<string, { columns: string[]; unique: boolean }>>();
+        for (const r of allIdxRows) {
+          const t = r.TABLE_NAME as string;
+          const idxName = r.INDEX_NAME as string;
+          if (!indexGroups.has(t)) indexGroups.set(t, new Map());
+          
+          const tGroups = indexGroups.get(t)!;
+          if (!tGroups.has(idxName)) {
+            tGroups.set(idxName, { columns: [], unique: r.NON_UNIQUE === 0 });
+          }
+          tGroups.get(idxName)!.columns.push(r.COLUMN_NAME as string);
+        }
+        
+        for (const [t, groups] of indexGroups.entries()) {
+          idxByTable.set(t, Array.from(groups.entries()).map(([name, info]) => ({
+            name,
+            columns: info.columns,
+            unique: info.unique,
+          })));
+        }
+
+        const tableSchemas: TableSchema[] = [];
         for (const tableName of tables) {
-          const columns = await this.getColumns(connection, params.database, tableName);
-          const foreignKeys = await this.getForeignKeys(connection, params.database, tableName);
-          const indexes = await this.getIndexes(connection, params.database, tableName);
+          const columns = colsByTable.get(tableName) || [];
+          const foreignKeys = fksByTable.get(tableName) || [];
+          const indexes = idxByTable.get(tableName) || [];
           const primaryKeys = columns.filter((c) => c.isPrimaryKey).map((c) => c.name);
 
           tableSchemas.push({
