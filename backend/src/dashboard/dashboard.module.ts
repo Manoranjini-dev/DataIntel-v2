@@ -8,6 +8,7 @@ import { CacheModule } from '../cache/cache.module';
 import { AuditModule } from '../audit/audit.module';
 import { MCPModule } from '../mcp/mcp.module';
 import { LLMModule } from '../llm/llm.module';
+import { ComboModule } from '../combo/combo.module';
 import { DashboardBuilderService } from './dashboard-builder.service';
 import { DashboardCacheService } from './dashboard-cache.service';
 import { DashboardPermissionsService } from './dashboard-permissions.service';
@@ -23,6 +24,7 @@ import { WidgetExecutionService } from './widget-execution.service';
     AuditModule,
     MCPModule,
     LLMModule,
+    ComboModule,
   ],
   controllers: [DashboardController],
   providers: [

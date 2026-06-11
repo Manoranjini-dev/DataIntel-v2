@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { comboApi, chatApi, orgApi, dashboardApi, cardApi } from '@/lib/api';
 import { usePrefsStore } from '@/lib/prefs-store';
 import dynamic from 'next/dynamic';
@@ -10,6 +11,7 @@ import remarkGfm from 'remark-gfm';
 import {
   Send, GitFork, CheckCircle2, XCircle,
   ChevronDown, ChevronRight, LayoutDashboard, BookMarked, X, Plus,
+  MessageSquare, RefreshCw,
 } from 'lucide-react';
 
 const GenerativeUIRenderer = dynamic(
@@ -34,6 +36,8 @@ interface ComboMessage {
   mergeStrategy?: string;
   ui_hint?: string;
   error?: boolean;
+  // execution_id for live-refresh lookup
+  execution_id?: string;
 }
 
 // ── Query plan breakdown ────────────────────────────────────────
@@ -166,13 +170,12 @@ function ComboBubble({
             </div>
           )}
 
-          {/* Query plan — controlled by showGeneratedSQL pref */}
-          {showQueryPlan && message.stepResults && message.plan && (
+          {/* Query plan */}
+          {message.stepResults && message.plan && (
             <SubQueryPlan plan={message.plan} stepResults={message.stepResults} />
           )}
-
-          {/* Step-result list when plan is hidden but there are steps */}
-          {!showQueryPlan && message.stepResults && (
+          {/* Step-result list when plan is not available */}
+          {message.stepResults && !message.plan && (
             <SubQueryPlan plan={message.plan} stepResults={message.stepResults} />
           )}
         </div>
@@ -221,123 +224,201 @@ function ComboBubble({
 }
 
 // ── Add to Dashboard Modal ──────────────────────────────────────
-function AddToDashboardModal({ orgId, message, onClose }: {
-  orgId: string; message: ComboMessage; onClose: () => void;
+function AddToDashboardModal({ orgId, comboId, message, onClose }: {
+  orgId: string; comboId: string; message: ComboMessage; onClose: () => void;
 }) {
   const [dashboards, setDashboards] = useState<any[]>([]);
   const [pages, setPages] = useState<any[]>([]);
-  const [selDash, setSelDash] = useState('');
-  const [selPage, setSelPage] = useState('');
+  const [selectedDash, setSelectedDash] = useState<string>('');
+  const [selectedPage, setSelectedPage] = useState<string>('');
+  const [title, setTitle] = useState(message.content.slice(0, 60));
   const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    dashboardApi.list(orgId).then(r => setDashboards((r as any).dashboards || [])).catch(() => {});
+    dashboardApi.list(orgId).then(res => {
+      const list = res.dashboards || [];
+      setDashboards(list);
+      if (list.length > 0) setSelectedDash(list[0].id);
+    }).catch(console.error);
   }, [orgId]);
 
   useEffect(() => {
-    if (!selDash) return;
-    dashboardApi.get(orgId, selDash).then((r: any) => {
-      const ps = r.dashboard?.pages || r.pages || [];
-      setPages(ps); setSelPage(ps[0]?.id || '');
-    }).catch(() => {});
-  }, [orgId, selDash]);
+    if (!selectedDash) return;
+    setSelectedPage(''); // Reset page until fetched
+    dashboardApi.get(orgId, selectedDash).then(res => {
+      const ps = res.pages || [];
+      setPages(ps);
+      if (ps.length > 0) setSelectedPage(String(ps[0].id));
+    }).catch(console.error);
+  }, [selectedDash, orgId]);
 
   async function handleAdd() {
-    if (!selDash || !selPage) return;
-    setSaving(true);
+    if (!selectedDash || !selectedPage) return;
+    setSaving(true); setError('');
     try {
-      await dashboardApi.addWidget(orgId, selDash, selPage, {
-        title: message.content.slice(0, 50),
-        widget_type: message.ui_hint?.replace('data_table', 'table') || 'table',
+      const widgetType = message.ui_hint?.replace('data_table', 'table') || 'table';
+      await dashboardApi.addWidget(orgId, selectedDash, selectedPage, {
+        title: title || 'Untitled Widget',
+        widget_type: widgetType,
         queryPrompt: message.content,
         datasourceScopeType: 'combo',
+        datasourceContextId: comboId,
         resultRows: message.rows || [],
         resultColumns: message.columns || [],
         uiHint: message.ui_hint || 'table',
-        gridX: 0, gridY: 0, gridW: 6, gridH: 4,
+        gridX: 0, gridY: 999, gridW: 6, gridH: 4,
       });
-      onClose();
-    } catch (e) { console.error(e); }
-    finally { setSaving(false); }
+      setDone(true);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to add widget. Please try again.');
+    } finally { setSaving(false); }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <span className="font-semibold text-foreground text-sm">Add to Dashboard</span>
-          <button onClick={onClose} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"><X className="w-4 h-4" /></button>
+          <div className="flex items-center gap-2">
+            <LayoutDashboard className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Add to Dashboard</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-4">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Dashboard</label>
-            <select value={selDash} onChange={e => setSelDash(e.target.value)}
-              className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
-              <option value="">Select a dashboard…</option>
-              {dashboards.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </div>
-          {pages.length > 0 && (
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Page</label>
-              <select value={selPage} onChange={e => setSelPage(e.target.value)}
-                className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
-                {pages.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+          {done ? (
+            <div className="text-center py-4">
+              <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-3" />
+              <p className="text-sm font-semibold text-foreground">Widget added!</p>
+              <p className="text-xs text-muted-foreground mt-1">Find it on your dashboard</p>
             </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Card Title</label>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={e => setTitle(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 mb-3"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Dashboard</label>
+                <select value={selectedDash} onChange={e => setSelectedDash(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                  {dashboards.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  {dashboards.length === 0 && <option value="">No dashboards yet</option>}
+                </select>
+              </div>
+              {pages.length > 1 && (
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Page</label>
+                  <select value={selectedPage} onChange={e => setSelectedPage(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    {pages.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+              )}
+              {error && (
+                <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
+              )}
+            </>
           )}
-          <button onClick={handleAdd} disabled={!selDash || !selPage || saving}
-            className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 disabled:opacity-40 transition-opacity flex items-center justify-center gap-2">
-            {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Adding…</> : <><Plus className="w-4 h-4" />Add Widget</>}
-          </button>
         </div>
+        {!done && (
+          <div className="flex gap-2 px-5 pb-5">
+            <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
+            <button onClick={handleAdd} disabled={saving || !selectedDash || !title.trim()}
+              className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
+              {saving ? 'Adding…' : 'Add Widget'}
+            </button>
+          </div>
+        )}
+        {done && <div className="pb-5 px-5"><button onClick={onClose} className="w-full py-2 bg-muted border border-border rounded-xl text-sm text-foreground hover:bg-muted/80 transition-colors">Close</button></div>}
       </div>
     </div>
   );
 }
 
 // ── Save Card Modal ─────────────────────────────────────────────
-function SaveCardModal({ orgId, message, onClose }: {
-  orgId: string; message: ComboMessage; onClose: () => void;
+function SaveCardModal({ orgId, comboId, message, onClose }: {
+  orgId: string; comboId: string; message: ComboMessage; onClose: () => void;
 }) {
   const [name, setName] = useState(message.content.slice(0, 60));
   const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
 
   async function handleSave() {
     if (!name.trim()) return;
-    setSaving(true);
+    setSaving(true); setError('');
     try {
+      const chartType = message.ui_hint?.replace('data_table', 'table') || 'table';
       await cardApi.create(orgId, {
-        name: name.trim(),
-        chart_type: message.ui_hint || 'table',
-        raw_query: message.content,
-        result_cache: { rows: message.rows || [], columns: message.columns || [] },
-        visibility: 'org_shared',
+        name,
+        description:            message.content.slice(0, 500),
+        rawQuery:               message.content || '',
+        chartType,
+        datasourceContextType:  'combo',
+        datasourceContextId:    comboId,
+        queryDefinition: {
+          prompt:    message.content,
+          sql:       '',
+          ui_hint:   chartType,
+        },
       });
-      onClose();
-    } catch (e) { console.error(e); }
-    finally { setSaving(false); }
+      setDone(true);
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save card. Please try again.');
+    } finally { setSaving(false); }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-sm">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <span className="font-semibold text-foreground text-sm">Save to Card Library</span>
-          <button onClick={onClose} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"><X className="w-4 h-4" /></button>
+          <div className="flex items-center gap-2">
+            <BookMarked className="w-4 h-4 text-primary" />
+            <h2 className="text-sm font-semibold text-foreground">Save to Card Library</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground"><X className="w-4 h-4" /></button>
         </div>
         <div className="p-5 space-y-4">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Card Name</label>
-            <input value={name} onChange={e => setName(e.target.value)}
-              className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
-              placeholder="e.g. Monthly Revenue by Source" />
-          </div>
-          <button onClick={handleSave} disabled={saving || !name.trim()}
-            className="w-full py-2.5 bg-primary text-white text-sm font-semibold rounded-xl hover:opacity-90 disabled:opacity-40 transition-opacity flex items-center justify-center gap-2">
-            {saving ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Saving…</> : <><BookMarked className="w-4 h-4" />Save Card</>}
-          </button>
+          {done ? (
+            <div className="text-center py-4">
+              <CheckCircle2 className="w-10 h-10 text-success mx-auto mb-3" />
+              <p className="text-sm font-semibold text-foreground">Card saved!</p>
+              <p className="text-xs text-muted-foreground mt-1">Available in your Card Library</p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Card Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 mb-3"
+                />
+              </div>
+              {error && (
+                <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
+              )}
+            </>
+          )}
         </div>
+        {!done && (
+          <div className="flex gap-2 px-5 pb-5">
+            <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
+            <button onClick={handleSave} disabled={saving || !name.trim()}
+              className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
+              {saving ? 'Saving…' : 'Save Card'}
+            </button>
+          </div>
+        )}
+        {done && <div className="pb-5 px-5"><button onClick={onClose} className="w-full py-2 bg-muted border border-border rounded-xl text-sm text-foreground hover:bg-muted/80 transition-colors">Close</button></div>}
       </div>
     </div>
   );
@@ -353,13 +434,25 @@ const SUGGESTIONS = [
 
 export default function ComboChatPage() {
   const { slug, comboId } = useParams<{ slug: string; comboId: string }>();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const { showGeneratedSQL } = usePrefsStore();
 
   const [org, setOrg] = useState<any>(null);
   const [combo, setCombo] = useState<any>(null);
-  const [chatId, setChatId] = useState<string | null>(null);
+  // ── History state (mirrors single-connection chat page) ──────
+  const [chats, setChats] = useState<any[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(
+    searchParams.get('chatId') && searchParams.get('chatId') !== 'new'
+      ? searchParams.get('chatId')
+      : null,
+  );
+  const [showChatList, setShowChatList] = useState(false);
+  const chatListRef = useRef<HTMLDivElement>(null);
+  // ────────────────────────────────────────────────────────────
   const [messages, setMessages] = useState<ComboMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [addToDashMsg, setAddToDashMsg] = useState<ComboMessage | null>(null);
@@ -372,6 +465,17 @@ export default function ComboChatPage() {
   useEffect(() => { loadData(); }, [slug, comboId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
+  // Close chat-list dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (chatListRef.current && !chatListRef.current.contains(e.target as Node)) {
+        setShowChatList(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   async function loadData() {
     setHistoryLoading(true);
     try {
@@ -383,22 +487,42 @@ export default function ComboChatPage() {
       const found = (c as any).combos?.find((x: any) => x.id === comboId);
       setCombo(found);
 
-      // Find or create a chat session for this combo
-      const { chats } = await chatApi.list(o.id, { comboId });
-      let cid: string;
-      if (chats.length > 0) {
-        cid = chats[0].id;
-      } else {
-        const { chat } = await chatApi.create(o.id, { comboId, title: found?.name || 'Combo Chat' });
-        cid = chat.id;
-      }
-      setChatId(cid);
+      // Load ALL chats for this combo (for history panel)
+      const { chats: chatList } = await chatApi.list(o.id, { comboId });
+      setChats(chatList);
 
-      // Load existing message history
-      const { messages: hist } = await chatApi.getMessages(o.id, cid);
+      // Determine active chat: URL param → first in list → auto-create
+      const urlChatId = searchParams.get('chatId');
+      let activeChatId = currentChatId;
+
+      if (urlChatId && urlChatId !== 'new') {
+        activeChatId = urlChatId;
+      } else if (!activeChatId) {
+        if (chatList.length > 0) {
+          activeChatId = chatList[0].id;
+        } else {
+          // No existing chats — create the first one
+          const { chat } = await chatApi.create(o.id, { comboId, title: found?.name || 'Combo Chat' });
+          activeChatId = chat.id;
+          setChats([chat]);
+        }
+      }
+
+      setCurrentChatId(activeChatId);
+      // Sync URL without causing a navigation
+      router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=${activeChatId}`, { scroll: false });
+
+      // Load message history for the active chat
+      await loadMessages(o.id, activeChatId!);
+    } catch (e) { console.error(e); }
+    finally { setHistoryLoading(false); }
+  }
+
+  async function loadMessages(orgId: string, cid: string) {
+    try {
+      const { messages: hist } = await chatApi.getMessages(orgId, cid);
       // Map chat_messages rows (joined with query_executions) → ComboMessage
       const mapped: ComboMessage[] = hist.map((m: any) => {
-        // result_preview is JSON-encoded first-25 rows stored by combo.service
         let rows: any[] | undefined;
         let columns: string[] | undefined;
         if (m.result_preview) {
@@ -413,16 +537,71 @@ export default function ComboChatPage() {
           ui_hint: m.ui_hint,
           rows,
           columns,
+          // Keep execution_id for live-refresh
+          execution_id: m.execution_id,
         };
       });
       setMessages(mapped);
+      // Background refresh for live data
+      refreshComboMessages(orgId, cid, mapped);
     } catch (e) { console.error(e); }
-    finally { setHistoryLoading(false); }
+  }
+
+  /**
+   * Re-execute stored sub-queries for assistant messages in this combo chat.
+   * Updates only in-memory result state — never overwrites stored history.
+   */
+  async function refreshComboMessages(orgId: string, cid: string, msgsData: ComboMessage[]) {
+    const toRefresh = msgsData
+      .filter(m => m.role === 'assistant' && m.execution_id)
+      .map(m => m.execution_id as string);
+    if (!toRefresh.length) return;
+
+    setRefreshing(true);
+    try {
+      const { results } = await chatApi.refreshComboMessages(orgId, cid, toRefresh);
+      if (!results?.length) return;
+
+      const resultMap = new Map(results.map(r => [r.executionId, r]));
+
+      setMessages(prev => prev.map(m => {
+        if (!m.execution_id) return m;
+        const fresh = resultMap.get(m.execution_id);
+        if (!fresh || fresh.status === 'failed') return m;
+        return {
+          ...m,
+          rows: fresh.rows,
+          columns: fresh.columns,
+          totalMs: fresh.execution_time_ms,
+        };
+      }));
+    } catch (e) { console.error('refreshComboMessages failed:', e); }
+    finally { setRefreshing(false); }
+  }
+
+  async function switchChat(cid: string) {
+    setCurrentChatId(cid);
+    setMessages([]);
+    setShowChatList(false);
+    router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=${cid}`, { scroll: false });
+    if (org) await loadMessages(org.id, cid);
+  }
+
+  async function newChat() {
+    if (!org) return;
+    try {
+      const { chat } = await chatApi.create(org.id, { comboId, title: 'New Combo Chat' });
+      setChats(prev => [chat, ...prev]);
+      setCurrentChatId(chat.id);
+      setMessages([]);
+      setShowChatList(false);
+      router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=${chat.id}`, { scroll: false });
+    } catch (e) { console.error(e); }
   }
 
   async function handleSend(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!input.trim() || sending || !org || !chatId) return;
+    if (!input.trim() || sending || !org || !currentChatId) return;
     const prompt = input.trim();
     setInput('');
     setSending(true);
@@ -433,7 +612,7 @@ export default function ComboChatPage() {
 
     try {
       // Pass chatId so the backend persists user + assistant messages
-      const result = await comboApi.query(org.id, comboId, prompt, chatId);
+      const result = await comboApi.query(org.id, comboId, prompt, currentChatId);
       // Replace temp with final user msg + rich AI response (including rows/columns)
       setMessages(ms => {
         const without = ms.filter(m => m.id !== tempId);
@@ -453,9 +632,23 @@ export default function ComboChatPage() {
             totalMs: result.totalExecutionTimeMs,
             mergeStrategy: result.mergeStrategy,
             ui_hint: result.ui_hint,
+            execution_id: result.executionId,
           },
         ];
       });
+
+      // Update chat's message count in sidebar
+      setChats(prev => prev.map(c => c.id === currentChatId
+        ? { ...c, message_count: (c.message_count || 0) + 2 }
+        : c));
+
+      // Auto-title the chat on the first exchange
+      const currentChat = chats.find(c => c.id === currentChatId);
+      if (currentChat && (!currentChat.title || currentChat.title === 'New Combo Chat' || currentChat.title === combo?.name)) {
+        const autoTitle = prompt.slice(0, 50) + (prompt.length > 50 ? '…' : '');
+        await chatApi.updateTitle(org.id, currentChatId, autoTitle).catch(() => {});
+        setChats(prev => prev.map(c => c.id === currentChatId ? { ...c, title: autoTitle } : c));
+      }
     } catch (err: any) {
       setMessages(ms => {
         const without = ms.filter(m => m.id !== tempId);
@@ -474,26 +667,113 @@ export default function ComboChatPage() {
     }
   }
 
+  const currentChat = chats.find(c => c.id === currentChatId);
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* ── Header ───────────────────────────────────────────── */}
-      <header className="shrink-0 border-b border-border px-5 py-3 flex items-center gap-3 bg-card/60" style={{ boxShadow: 'var(--shadow-soft)' }}>
-        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+      <header
+        className="h-12 border-b border-border bg-background/95 backdrop-blur-md px-5 flex items-center gap-3 shrink-0"
+        style={{ boxShadow: 'var(--shadow-soft)' }}
+      >
+        {/* Combo indicator */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
             <GitFork className="w-4 h-4 text-primary" />
           </div>
-          <div className="min-w-0">
-            <span className="text-sm font-semibold text-foreground truncate block">{combo?.name || 'Combo Chat'}</span>
-            <span className="text-[10px] text-muted-foreground">Multi-source · {combo?.connections?.length ?? 0} connections</span>
-          </div>
+          <span className="text-xs text-muted-foreground hidden sm:block">{combo?.name || 'Combo'}</span>
         </div>
 
-        {sending && (
-          <div className="flex items-center gap-2 text-xs text-primary shrink-0">
-            <div className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
-            Planning queries…
+        <div className="w-px h-4 bg-border shrink-0" />
+
+        {/* Chat selector dropdown */}
+        <div className="relative shrink-0" ref={chatListRef}>
+          <button
+            onClick={() => setShowChatList(v => !v)}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-muted/60 transition-colors max-w-xs"
+          >
+            <MessageSquare className="w-3.5 h-3.5 text-primary shrink-0" />
+            <span className="text-sm font-semibold text-foreground truncate">
+              {currentChat?.title || 'New Chat'}
+            </span>
+            {chats.length > 0 && (
+              <ChevronDown className={`w-3.5 h-3.5 text-muted-foreground shrink-0 transition-transform ${showChatList ? 'rotate-180' : ''}`} />
+            )}
+          </button>
+
+          {/* Chat history dropdown */}
+          {showChatList && chats.length > 0 && (
+            <div
+              className="absolute top-full left-0 mt-1 w-72 bg-card border border-border rounded-xl shadow-lg z-20 py-1 animate-fade-in overflow-hidden"
+              style={{ boxShadow: 'var(--shadow-elevated)' }}
+            >
+              <div className="px-3 pt-2 pb-1.5">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Chat History ({chats.length})
+                </p>
+              </div>
+              <div className="max-h-64 overflow-y-auto">
+                {chats.map((c: any) => (
+                  <button
+                    key={c.id}
+                    onClick={() => switchChat(c.id)}
+                    className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
+                      currentChatId === c.id
+                        ? 'bg-primary/10 text-primary'
+                        : 'text-foreground hover:bg-muted/60'
+                    }`}
+                  >
+                    <p className="font-medium truncate">{c.title || 'Untitled'}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{c.message_count || 0} messages</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Navigation Action Buttons */}
+        <div className="flex items-center gap-2 ml-4 shrink-0">
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 shrink-0"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Chat</span>
           </div>
-        )}
+          <Link
+            href={`/orgs/${slug}/combos/${comboId}/dashboard`}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+          >
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span>Dashboard</span>
+          </Link>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Right actions */}
+        <div className="flex items-center gap-2 shrink-0">
+          {sending && (
+            <div className="flex items-center gap-2 text-xs text-primary shrink-0">
+              <div className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
+              Planning queries…
+            </div>
+          )}
+          {refreshing && !sending && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              <span className="hidden sm:block">Refreshing data…</span>
+            </div>
+          )}
+          <button
+            onClick={newChat}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 hover:bg-primary/20 rounded-lg text-xs font-semibold text-primary transition-colors"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New Chat
+          </button>
+        </div>
       </header>
 
       {/* ── Messages ─────────────────────────────────────────── */}
@@ -564,7 +844,7 @@ export default function ComboChatPage() {
             />
             <button
               type="submit"
-              disabled={!input.trim() || sending || !chatId}
+              disabled={!input.trim() || sending || !currentChatId}
               className="w-9 h-9 flex-shrink-0 rounded-xl bg-primary hover:opacity-90 flex items-center justify-center transition-opacity disabled:opacity-30"
             >
               <Send className="w-4 h-4 text-white" />
@@ -578,10 +858,10 @@ export default function ComboChatPage() {
 
       {/* ── Modals ───────────────────────────────────────────── */}
       {addToDashMsg && org && (
-        <AddToDashboardModal orgId={org.id} message={addToDashMsg} onClose={() => setAddToDashMsg(null)} />
+        <AddToDashboardModal orgId={org.id} comboId={comboId} message={addToDashMsg} onClose={() => setAddToDashMsg(null)} />
       )}
       {saveCardMsg && org && (
-        <SaveCardModal orgId={org.id} message={saveCardMsg} onClose={() => setSaveCardMsg(null)} />
+        <SaveCardModal orgId={org.id} comboId={comboId} message={saveCardMsg} onClose={() => setSaveCardMsg(null)} />
       )}
     </div>
   );

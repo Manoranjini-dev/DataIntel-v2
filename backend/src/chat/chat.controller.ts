@@ -134,6 +134,45 @@ Rules:
     return this.chatQueryService.executeDraft(orgId, chatId, user, dto.executionId || '', dto.sql);
   }
 
+  /**
+   * Re-execute stored SQL for a list of execution IDs against the live database.
+   * Returns fresh rows WITHOUT overwriting the stored result_preview snapshots.
+   */
+  @Post(':chatId/refresh-messages')
+  @HttpCode(HttpStatus.OK)
+  async refreshMessages(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('chatId') chatId: string,
+    @Body('executionIds') executionIds: string[],
+  ) {
+    if (!Array.isArray(executionIds) || executionIds.length === 0) {
+      return { results: [] };
+    }
+    const results = await this.chatQueryService.refreshMessages(orgId, chatId, user, executionIds);
+    return { results };
+  }
+
+  /**
+   * Re-execute stored sub-queries for a COMBO chat and return merged live rows.
+   * Does NOT overwrite stored result_preview snapshots.
+   */
+  @Post(':chatId/refresh-combo-messages')
+  @HttpCode(HttpStatus.OK)
+  async refreshComboMessages(
+    @CurrentUser() user: SafeAccount,
+    @Param('orgId') orgId: string,
+    @Param('chatId') chatId: string,
+    @Body('executionIds') executionIds: string[],
+  ) {
+    if (!Array.isArray(executionIds) || executionIds.length === 0) {
+      return { results: [] };
+    }
+    const results = await this.chatQueryService.refreshComboMessages(orgId, chatId, user, executionIds);
+    return { results };
+  }
+
+
   @Patch(':chatId/title')
   async updateTitle(
     @CurrentUser() user: SafeAccount,

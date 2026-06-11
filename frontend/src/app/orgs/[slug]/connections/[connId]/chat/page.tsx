@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { chatApi, orgApi, connectionApi, dashboardApi, cardApi } from '@/lib/api';
 import { usePrefsStore } from '@/lib/prefs-store';
 import dynamic from 'next/dynamic';
@@ -288,6 +289,7 @@ export default function ConnectionChatPage() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [showChatList, setShowChatList] = useState(false);
   const [addToDashMsg, setAddToDashMsg] = useState<Message | null>(null);
   const [saveCardMsg, setSaveCardMsg] = useState<Message | null>(null);
@@ -332,9 +334,46 @@ export default function ConnectionChatPage() {
         // Persisted messages are already executed
         pending_execution: false,
       }));
-      console.log(`[DEBUG TRACE] Frontend State Count (Load): ${msgsData[msgsData.length - 1]?.result_preview?.length || 0}`);
       setMessages(msgsData);
+      // Kick off a background refresh so displayed data always reflects the live DB
+      refreshMessages(orgId, cid, msgsData);
     } catch (e) { console.error(e); }
+  }
+
+  /**
+   * Re-execute stored SQL for all assistant messages that have an execution_id.
+   * Updates only the in-memory result state — never overwrites stored history.
+   */
+  async function refreshMessages(orgId: string, cid: string, msgsData: Message[]) {
+    const toRefresh = msgsData
+      .filter(m => m.role === 'assistant' && m.exec_status && (m as any).execution_id)
+      .map(m => (m as any).execution_id as string);
+    if (!toRefresh.length) return;
+
+    setRefreshing(true);
+    try {
+      const { results } = await chatApi.refreshMessages(orgId, cid, toRefresh);
+      if (!results?.length) return;
+
+      // Build a lookup keyed by executionId for O(1) merge
+      const resultMap = new Map(results.map(r => [r.executionId, r]));
+
+      setMessages(prev => prev.map(m => {
+        const execId = (m as any).execution_id;
+        if (!execId) return m;
+        const fresh = resultMap.get(execId);
+        if (!fresh || fresh.status === 'failed') return m;
+        return {
+          ...m,
+          result_preview: fresh.rows,
+          result_columns: fresh.columns,
+          row_count: fresh.row_count,
+          execution_time_ms: fresh.execution_time_ms,
+          exec_status: fresh.status,
+        };
+      }));
+    } catch (e) { console.error('refreshMessages failed:', e); }
+    finally { setRefreshing(false); }
   }
 
   async function switchChat(cid: string) {
@@ -516,7 +555,7 @@ export default function ConnectionChatPage() {
         )}
 
         {/* Chat selector */}
-        <div className="relative flex-1 min-w-0" ref={chatListRef}>
+        <div className="relative shrink-0" ref={chatListRef}>
           <button
             onClick={() => setShowChatList(v => !v)}
             className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-muted/60 transition-colors max-w-xs"
@@ -561,12 +600,38 @@ export default function ConnectionChatPage() {
           )}
         </div>
 
+        {/* Navigation Action Buttons */}
+        <div className="flex items-center gap-2 ml-4 shrink-0">
+          <div
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 shrink-0"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span>Chat</span>
+          </div>
+          <Link
+            href={`/orgs/${slug}/connections/${connId}/dashboard`}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+          >
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span>Dashboard</span>
+          </Link>
+        </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
         {/* Right actions */}
         <div className="flex items-center gap-2 shrink-0">
           {sending && (
             <div className="flex items-center gap-1.5 text-xs text-primary">
               <div className="w-3 h-3 border border-primary border-t-transparent rounded-full animate-spin" />
               <span className="hidden sm:block">Thinking…</span>
+            </div>
+          )}
+          {refreshing && !sending && (
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="w-3 h-3 border border-muted-foreground/50 border-t-muted-foreground rounded-full animate-spin" />
+              <span className="hidden sm:block">Refreshing data…</span>
             </div>
           )}
           <button
@@ -829,7 +894,7 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
         {!done && (
           <div className="flex gap-2 px-5 pb-5">
             <button onClick={onClose} className="px-4 py-2 border border-border rounded-xl text-sm text-muted-foreground hover:bg-muted transition-colors">Cancel</button>
-            <button onClick={handleAdd} disabled={saving || !selectedDash}
+            <button onClick={handleAdd} disabled={saving || !selectedDash || !title.trim()}
               className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity">
               {saving ? 'Adding…' : 'Add Widget'}
             </button>

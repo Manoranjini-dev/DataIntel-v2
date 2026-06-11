@@ -20,14 +20,28 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<any>();
 
     const structuredError = this.buildStructuredError(exception);
     const httpStatus = this.resolveHttpStatus(exception);
+    const url = request?.url || '';
 
-    this.logger.error(
-      `[${structuredError.type}] ${structuredError.message}`,
-      exception instanceof Error ? exception.stack : undefined,
-    );
+    if (httpStatus === HttpStatus.NOT_FOUND) {
+      if (url.includes('firebase-messaging-sw.js')) {
+        // Suppress developer noise from previous project service workers running on the same localhost port
+        this.logger.log(`Ignoring service worker update request from previous project: ${url}`);
+      } else {
+        this.logger.warn(`[NotFound] Route not found: ${request?.method || 'GET'} ${url}`);
+      }
+    } else if (exception instanceof HttpException) {
+      // Don't log full stack traces for controlled HTTP exceptions (e.g., 400 Bad Request, 401 Unauthorized)
+      this.logger.warn(`[HttpException ${httpStatus}] ${structuredError.message}`);
+    } else {
+      this.logger.error(
+        `[${structuredError.type}] ${structuredError.message}`,
+        exception instanceof Error ? exception.stack : undefined,
+      );
+    }
 
     response.status(httpStatus).json(structuredError);
   }

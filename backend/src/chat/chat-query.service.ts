@@ -311,6 +311,311 @@ export class ChatQueryService {
     return { rows, columns, row_count: rowCount, execution_time_ms: execTimeMs, status };
   }
 
+  /**
+   * Re-execute the stored SQL for a list of execution IDs against the live database.
+   * Returns fresh rows for each execution WITHOUT persisting back to query_executions.
+   * This powers "view always shows current data" without altering chat history.
+   */
+  async refreshMessages(
+    orgId: string,
+    chatId: string,
+    user: SafeAccount,
+    executionIds: string[],
+  ): Promise<Array<{
+    executionId: string;
+    rows: any[];
+    columns: string[];
+    row_count: number;
+    execution_time_ms: number;
+    status: 'success' | 'failed';
+    error?: string;
+  }>> {
+    const chat = await this.chatService.get(orgId, chatId, user.id) as any;
+    if (!chat.connection_id) {
+      // Combo or connectionless chats cannot be refreshed this way
+      return [];
+    }
+
+    const conn = await this.db.queryOne<any>(
+      'SELECT * FROM datasource_connections WHERE id = $1',
+      [chat.connection_id],
+    );
+    if (!conn) return [];
+
+    // Batch-fetch all execution records at once
+    const execRecords = await this.db.queryMany<any>(
+      `SELECT id, generated_query FROM query_executions
+       WHERE id = ANY($1::uuid[]) AND connection_id = $2`,
+      [executionIds, conn.id],
+    );
+
+    if (!execRecords.length) return [];
+
+    const password = decrypt(conn.encrypted_password, this.encKey);
+
+    const results = await Promise.all(
+      execRecords.map(async (rec) => {
+        const sql = rec.generated_query;
+        if (!sql?.trim()) {
+          return {
+            executionId: rec.id,
+            rows: [],
+            columns: [],
+            row_count: 0,
+            execution_time_ms: 0,
+            status: 'failed' as const,
+            error: 'No SQL stored for this execution',
+          };
+        }
+
+        let session: any;
+        try {
+          session = await this.mcpService.createSession({
+            host: conn.host,
+            port: conn.port,
+            username: conn.username,
+            password,
+            database: conn.database_name,
+            connectorType: conn.connector_type as ConnectorType,
+          });
+
+          const start = Date.now();
+          const mcpResult = await this.mcpService.executeReadQuery(session.sessionId, sql);
+          const execTimeMs = Date.now() - start;
+
+          if (!mcpResult.success) {
+            return {
+              executionId: rec.id,
+              rows: [],
+              columns: [],
+              row_count: 0,
+              execution_time_ms: execTimeMs,
+              status: 'failed' as const,
+              error: mcpResult.error || 'Query failed',
+            };
+          }
+
+          const rows = mcpResult.data?.rows || [];
+          const columns = mcpResult.data?.columns || [];
+          return {
+            executionId: rec.id,
+            rows,
+            columns,
+            row_count: rows.length,
+            execution_time_ms: execTimeMs,
+            status: 'success' as const,
+          };
+        } catch (err: any) {
+          return {
+            executionId: rec.id,
+            rows: [],
+            columns: [],
+            row_count: 0,
+            execution_time_ms: 0,
+            status: 'failed' as const,
+            error: err.message,
+          };
+        } finally {
+          if (session) {
+            await this.mcpService.destroySession(session.sessionId).catch(() => {});
+          }
+        }
+      }),
+    );
+
+    return results;
+  }
+
+  /**
+   * Re-execute stored sub-queries for a list of execution IDs for a COMBO chat.
+   * Reads the sub_queries JSON from query_executions, re-runs each per-connection SQL,
+   * then re-merges using the merge strategy from the stored plan (generated_query JSON).
+   * Returns fresh merged rows WITHOUT persisting back.
+   */
+  async refreshComboMessages(
+    orgId: string,
+    chatId: string,
+    user: SafeAccount,
+    executionIds: string[],
+  ): Promise<Array<{
+    executionId: string;
+    rows: any[];
+    columns: string[];
+    row_count: number;
+    execution_time_ms: number;
+    status: 'success' | 'failed';
+    error?: string;
+  }>> {
+    const chat = await this.chatService.get(orgId, chatId, user.id) as any;
+    if (!chat.combo_id) return [];
+
+    const execRecords = await this.db.queryMany<any>(
+      `SELECT id, generated_query, sub_queries FROM query_executions
+       WHERE id = ANY($1::uuid[]) AND combo_id = $2`,
+      [executionIds, chat.combo_id],
+    );
+    if (!execRecords.length) return [];
+
+    // Load all connection credentials for this combo upfront
+    const connRows = await this.db.queryMany<any>(
+      `SELECT dc.*, dcm.alias
+       FROM datasource_connections dc
+       JOIN datasource_combo_members dcm ON dcm.connection_id = dc.id
+       WHERE dcm.combo_id = $1`,
+      [chat.combo_id],
+    );
+    const connMap = new Map<string, any>(connRows.map((c: any) => [c.id, c]));
+
+    const results = await Promise.all(
+      execRecords.map(async (rec) => {
+        const start = Date.now();
+        try {
+          let subQueries: any[] = [];
+          try {
+            subQueries = typeof rec.sub_queries === 'string'
+              ? JSON.parse(rec.sub_queries)
+              : (rec.sub_queries || []);
+          } catch { subQueries = []; }
+
+          let plan: any = { merge: { strategy: 'union' } };
+          try {
+            plan = typeof rec.generated_query === 'string'
+              ? JSON.parse(rec.generated_query)
+              : (rec.generated_query || plan);
+          } catch { /* keep default */ }
+
+          const mergeStrategy: string = plan?.merge?.strategy || 'union';
+          const joinKey: string | undefined = plan?.merge?.joinKey;
+          const outputColumns: string[] | undefined = plan?.merge?.outputColumns;
+
+          const stepResults: Array<{
+            alias: string; rows: any[]; columns: string[]; status: 'success' | 'failed';
+          }> = await Promise.all(
+            subQueries.map(async (sq: any) => {
+              const conn = connMap.get(sq.connectionId);
+              if (!conn || !sq.query?.trim()) {
+                return { alias: sq.alias || '', rows: [], columns: [], status: 'failed' as const };
+              }
+              const password = decrypt(conn.encrypted_password, this.encKey);
+              let session: any;
+              try {
+                session = await this.mcpService.createSession({
+                  host: conn.host, port: conn.port, username: conn.username, password,
+                  database: conn.database_name, connectorType: conn.connector_type as ConnectorType,
+                });
+                const mcpResult = await this.mcpService.executeReadQuery(session.sessionId, sq.query);
+                if (!mcpResult.success) {
+                  return { alias: sq.alias || '', rows: [], columns: [], status: 'failed' as const };
+                }
+                return {
+                  alias: sq.alias || (conn as any).alias || conn.name || '',
+                  rows: mcpResult.data?.rows || [],
+                  columns: mcpResult.data?.columns || [],
+                  status: 'success' as const,
+                };
+              } catch {
+                return { alias: sq.alias || '', rows: [], columns: [], status: 'failed' as const };
+              } finally {
+                if (session) await this.mcpService.destroySession(session.sessionId).catch(() => {});
+              }
+            }),
+          );
+
+          const { rows, columns } = this.mergeStepResults(stepResults, mergeStrategy, joinKey, outputColumns);
+          const execTimeMs = Date.now() - start;
+
+          return {
+            executionId: rec.id,
+            rows,
+            columns,
+            row_count: rows.length,
+            execution_time_ms: execTimeMs,
+            status: (rows.length > 0 ? 'success' : 'failed') as 'success' | 'failed',
+          };
+        } catch (err: any) {
+          return {
+            executionId: rec.id, rows: [], columns: [], row_count: 0,
+            execution_time_ms: Date.now() - start,
+            status: 'failed' as const, error: err.message,
+          };
+        }
+      }),
+    );
+
+    return results;
+  }
+
+  /**
+   * Inline re-implementation of the four merge strategies (avoids circular ChatModule ↔ ComboModule dep).
+   */
+  private mergeStepResults(
+    stepResults: Array<{ alias: string; rows: any[]; columns: string[]; status: string }>,
+    strategy: string,
+    joinKey?: string,
+    outputColumns?: string[],
+  ): { rows: any[]; columns: string[] } {
+    const successes = stepResults.filter(r => r.status === 'success');
+    if (!successes.length) return { rows: [], columns: [] };
+
+    if (strategy === 'join' && joinKey) {
+      const [base, ...rest] = successes;
+      let merged = base.rows.map((r: any) => ({ ...r }));
+      for (const step of rest) {
+        const hashMap = new Map<string, any>();
+        for (const row of step.rows) hashMap.set(String(row[joinKey] ?? ''), row);
+        merged = merged.map((baseRow: any) => {
+          const match = hashMap.get(String(baseRow[joinKey] ?? '')) || {};
+          const prefixed: any = {};
+          for (const [col, val] of Object.entries(match)) {
+            if (col === joinKey) continue;
+            const colName = baseRow[col] !== undefined ? `${step.alias}_${col}` : col;
+            prefixed[colName] = val;
+          }
+          return { ...baseRow, ...prefixed };
+        });
+      }
+      const allCols = merged.length > 0 ? Object.keys(merged[0]) : [];
+      const finalCols = outputColumns?.length ? outputColumns.filter(c => allCols.includes(c)) : allCols;
+      return { rows: merged, columns: finalCols };
+    }
+
+    if (strategy === 'append') {
+      const columns: string[] = [];
+      for (const step of successes) for (const col of step.columns) columns.push(`${step.alias}__${col}`);
+      const maxRows = Math.max(...successes.map(s => s.rows.length));
+      const rows: any[] = [];
+      for (let i = 0; i < maxRows; i++) {
+        const row: any = {};
+        for (const step of successes) {
+          const src = step.rows[i] || {};
+          for (const col of step.columns) row[`${step.alias}__${col}`] = src[col] ?? null;
+        }
+        rows.push(row);
+      }
+      return { rows, columns };
+    }
+
+    if (strategy === 'independent') {
+      const colSet = new Set<string>(['_result_set']);
+      const rows: any[] = [];
+      for (const step of successes) {
+        for (const row of step.rows) {
+          rows.push({ _result_set: step.alias, ...row });
+          Object.keys(row).forEach(c => colSet.add(c));
+        }
+      }
+      return { rows, columns: Array.from(colSet) };
+    }
+
+    // Default: union
+    const rows: any[] = [];
+    for (const step of successes) {
+      for (const row of step.rows) rows.push({ ...row, _source: step.alias });
+    }
+    const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+    return { rows, columns };
+  }
+
   private async buildSchemaContext(connectionId: string): Promise<string> {
     const tables = await this.db.queryMany<any>(
       `SELECT ct.table_name, string_agg(

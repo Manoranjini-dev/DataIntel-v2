@@ -14,6 +14,7 @@ import { LLMService } from '../llm/llm.service';
 import { PromptBuilderService } from '../llm/prompt-builder.service';
 import { ConnectorType } from '../common/types';
 import { decrypt } from '../common/utils/encryption';
+import { ComboService } from '../combo/combo.service';
 
 @Injectable()
 export class WidgetExecutionService {
@@ -29,7 +30,7 @@ export class WidgetExecutionService {
     private readonly llm: LLMService,
     private readonly promptBuilder: PromptBuilderService,
     private readonly config: ConfigService,
-
+    private readonly comboService: ComboService,
   ) {
     this.encKey = this.config.getOrThrow('CREDENTIAL_ENCRYPTION_KEY');
   }
@@ -47,9 +48,9 @@ export class WidgetExecutionService {
       }
     }
 
-    // 2. Fetch widget config
+    // 2. Fetch widget config with dashboard context columns
     const widget = await this.db.queryOne(
-      `SELECT w.*, d.id as dash_id 
+      `SELECT w.*, d.id as dash_id, d.context_type as dash_context_type, d.context_id as dash_context_id
        FROM dashboard_widgets_v2 w
        JOIN dashboard_pages p ON p.id = w.page_id
        JOIN dashboards d ON d.id = p.dashboard_id
@@ -77,43 +78,81 @@ export class WidgetExecutionService {
         [widgetId, orgId, widget.dash_id, forceRefresh ? 'manual' : 'refresh', user.id],
       );
 
-      // 5. Execute actual query via MCP
-      const conn = await this.db.queryOne<any>(
-        'SELECT * FROM datasource_connections WHERE id = $1',
-        [widget.connection_id],
-      );
-      if (!conn) throw new Error('Widget connection not found');
+      // 5. Resolve datasource context (override -> card -> dashboard fallback)
+      let contextType = widget.datasource_context_type;
+      let contextId = widget.datasource_context_id;
 
-      const password = decrypt(conn.encrypted_password, this.encKey);
-      const session = await this.mcp.createSession({
-        host: conn.host,
-        port: conn.port,
-        username: conn.username,
-        password,
-        database: conn.database_name,
-        connectorType: conn.connector_type as ConnectorType,
-      });
+      // Fallback to linked card context if present
+      if (!contextId && widget.card_id) {
+        const card = await this.db.queryOne<any>(
+          'SELECT * FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL',
+          [widget.card_id],
+        );
+        if (card) {
+          contextType = card.datasource_context_type;
+          contextId = card.datasource_context_id;
+        }
+      }
+
+      // Fallback to dashboard context if still empty
+      if (!contextId) {
+        contextType = widget.dash_context_type;
+        contextId = widget.dash_context_id;
+      }
+
+      if (!contextId) {
+        throw new Error('Widget context connection not found');
+      }
 
       const start = Date.now();
       let rows: any[] = [];
       let columns: any[] = [];
 
-      try {
-        const schemaContext = await this.buildSchemaContext(conn.id);
-        const llmContext = this.promptBuilder.assembleContext({
-          compressedSchema: schemaContext,
-          conversationSummary: null,
-          recentMessages: [],
-          userPrompt: widget.prompt || widget.title,
-          connectorFamily: conn.connector_type === 'elasticsearch' ? 'elasticsearch' : conn.connector_type === 'mongodb' ? 'document' : 'sql',
+      if (contextType === 'combo') {
+        // Run combo execution
+        const comboResult = await this.comboService.executeQuery(
+          orgId,
+          contextId,
+          user,
+          widget.prompt || widget.title,
+        );
+        rows = comboResult.rows || [];
+        columns = comboResult.columns || [];
+      } else {
+        // Run single connection execution
+        const conn = await this.db.queryOne<any>(
+          'SELECT * FROM datasource_connections WHERE id = $1',
+          [contextId],
+        );
+        if (!conn) throw new Error('Widget connection not found');
+
+        const password = decrypt(conn.encrypted_password, this.encKey);
+        const session = await this.mcp.createSession({
+          host: conn.host,
+          port: conn.port,
+          username: conn.username,
+          password,
+          database: conn.database_name,
+          connectorType: conn.connector_type as ConnectorType,
         });
-        const llmResponse = await this.llm.generateSQL(llmContext);
-        const mcpResult = await this.mcp.executeReadQuery(session.sessionId, llmResponse.sql);
-        if (!mcpResult.success) throw new Error(mcpResult.error || 'Widget query failed');
-        rows = mcpResult.data?.rows || [];
-        columns = mcpResult.data?.columns || [];
-      } finally {
-        await this.mcp.destroySession(session.sessionId).catch(() => {});
+
+        try {
+          const schemaContext = await this.buildSchemaContext(conn.id);
+          const llmContext = this.promptBuilder.assembleContext({
+            compressedSchema: schemaContext,
+            conversationSummary: null,
+            recentMessages: [],
+            userPrompt: widget.prompt || widget.title,
+            connectorFamily: conn.connector_type === 'elasticsearch' ? 'elasticsearch' : conn.connector_type === 'mongodb' ? 'document' : 'sql',
+          });
+          const llmResponse = await this.llm.generateSQL(llmContext);
+          const mcpResult = await this.mcp.executeReadQuery(session.sessionId, llmResponse.sql);
+          if (!mcpResult.success) throw new Error(mcpResult.error || 'Widget query failed');
+          rows = mcpResult.data?.rows || [];
+          columns = mcpResult.data?.columns || [];
+        } finally {
+          await this.mcp.destroySession(session.sessionId).catch(() => {});
+        }
       }
 
       const execTime = Date.now() - start;

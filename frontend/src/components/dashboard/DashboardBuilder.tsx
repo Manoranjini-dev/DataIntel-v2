@@ -9,7 +9,8 @@ import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
-  MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal
+  MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
+  MessageSquare, LayoutDashboard
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
@@ -1240,6 +1241,16 @@ export function DashboardBuilder({
   const [deletedWidgetIds, setDeletedWidgetIds] = useState<string[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | undefined>();
 
+  let chatUrl = '';
+  if (dashboard?.combo_id) {
+    chatUrl = `/orgs/${orgSlug}/combos/${dashboard.combo_id}/chat`;
+  } else if (dashboard?.connection_id) {
+    chatUrl = `/orgs/${orgSlug}/connections/${dashboard.connection_id}/chat`;
+  }
+  if (chatUrl && activeChatId) {
+    chatUrl += `?chatId=${activeChatId}`;
+  }
+
   const [inspectWidgetId, setInspectWidgetId] = useState<string | null>(null);
   const [editQueryWidgetId, setEditQueryWidgetId] = useState<string | null>(null);
   const [versions, setVersions] = useState<any[]>([]);
@@ -1250,6 +1261,7 @@ export function DashboardBuilder({
   const [showGenerate, setShowGenerate] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [defaultHint, setDefaultHint] = useState('');
+  const [refreshingAll, setRefreshingAll] = useState(false);
 
   // Page rename state
   const [renamingPage, setRenamingPage] = useState<string | null>(null);
@@ -1289,9 +1301,17 @@ export function DashboardBuilder({
       setPages(data.pages || []);
       dashboardApi.listVersions(o.id, dashId).then(res => setVersions(res.versions || [])).catch(console.error);
       const first = data.pages?.[0];
-      if (first) { setActivePage(first.id); buildWidgets(first); }
+      if (first) {
+        setActivePage(first.id);
+        const builtWidgets = buildWidgets(first);
+        // Refresh widget data from live DB immediately after build
+        refreshAllWidgets(o.id, String(first.id), builtWidgets);
+      }
       if (data.dashboard?.connection_id) {
         const { chats } = await chatApi.list(o.id, { connectionId: data.dashboard.connection_id as string });
+        if (chats.length > 0) setActiveChatId(chats[0].id);
+      } else if (data.dashboard?.combo_id) {
+        const { chats } = await chatApi.list(o.id, { comboId: data.dashboard.combo_id as string });
         if (chats.length > 0) setActiveChatId(chats[0].id);
       }
     } catch (e) { console.error(e); }
@@ -1301,8 +1321,54 @@ export function DashboardBuilder({
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  function buildWidgets(page: Record<string, unknown>) {
-    setWidgets(((page?.widgets as Record<string, unknown>[]) || []).map(w => {
+  /**
+   * Re-execute all widget queries for a page against the live database.
+   * Uses the backend's WidgetExecutionService (which handles LLM + MCP + Redis cache).
+   * Runs up to 4 widgets concurrently to avoid connection pool exhaustion.
+   */
+  async function refreshAllWidgets(
+    orgId: string,
+    pageId: string,
+    widgetList: WidgetData[],
+    forceRefresh = false,
+  ) {
+    if (!widgetList.length) return;
+    setRefreshingAll(true);
+
+    // Mark all widgets as loading
+    setWidgets(prev => prev.map(w => ({ ...w, isLoading: true })));
+
+    const CONCURRENCY = 4;
+    let i = 0;
+
+    async function runNext() {
+      while (i < widgetList.length) {
+        const widget = widgetList[i++];
+        try {
+          const result = await dashboardApi.executeWidget(orgId, dashId, pageId, widget.id, forceRefresh);
+          if (result.rows && result.columns) {
+            setWidgets(prev => prev.map(w =>
+              w.id === widget.id
+                ? { ...w, result_rows: result.rows, result_columns: result.columns, isLoading: false }
+                : w
+            ));
+          } else {
+            setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+          }
+        } catch {
+          // Widget execution failed — clear loading state gracefully
+          setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+        }
+      }
+    }
+
+    // Run CONCURRENCY lanes in parallel
+    await Promise.all(Array.from({ length: CONCURRENCY }, runNext));
+    setRefreshingAll(false);
+  }
+
+  function buildWidgets(page: Record<string, unknown>): WidgetData[] {
+    const widgetList = ((page?.widgets as Record<string, unknown>[]) || []).map(w => {
       const qd = w.query_definition as Record<string, unknown> || {};
       // For card-based widgets, fall back to the card's last-execution cached data
       // (card_result_preview is a JSON string of rows; card_result_columns is a string[])
@@ -1333,14 +1399,19 @@ export function DashboardBuilder({
         ui_hint: normalizeWidgetType(String(qd.ui_hint || w.card_chart_type || w.ui_hint || w.widget_type || 'table')),
         sql: String(qd.sql || w.card_raw_query || ''),
       };
-    }));
+    });
+    setWidgets(widgetList);
+    return widgetList;
   }
 
   function switchPage(id: string) {
     setActivePage(id);
     setDeletedWidgetIds([]); // Clear unsaved deletions for the previous page
     const p = pages.find(p => p.id === id);
-    if (p) buildWidgets(p as Record<string, unknown>);
+    if (p) {
+      const builtWidgets = buildWidgets(p as Record<string, unknown>);
+      if (org) refreshAllWidgets(String((org as any).id), id, builtWidgets);
+    }
   }
 
   async function addPage() {
@@ -1802,12 +1873,44 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             <span className="text-[10px] px-2 py-0.5 bg-success/10 border border-success/20 text-success rounded-full font-semibold shrink-0">Published</span>
           )}
 
+          {chatUrl && (
+            <div className="flex items-center gap-2 ml-4 shrink-0">
+              <Link
+                href={chatUrl}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Chat</span>
+              </Link>
+              <div
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 shrink-0"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span>Dashboard</span>
+              </div>
+            </div>
+          )}
+
           <div className="ml-auto flex items-center gap-2">
             {/* AI Generate */}
             <button onClick={() => setShowGenerate(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
               style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
               <Sparkles className="w-3.5 h-3.5" /> Generate
+            </button>
+
+            {/* Refresh All */}
+            <button
+              onClick={() => {
+                if (!org || !activePage) return;
+                refreshAllWidgets(String((org as any).id), activePage, widgets, true);
+              }}
+              disabled={refreshingAll}
+              title="Re-execute all widgets against the live database"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50 transition-all"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshingAll ? 'animate-spin' : ''}`} />
+              {refreshingAll ? 'Refreshing…' : 'Refresh'}
             </button>
 
             {/* History */}

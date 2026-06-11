@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import { orgApi, cardApi, connectionApi, chatApi } from '@/lib/api';
-import { Plus, Pencil, X, Check, ChevronRight, BarChart2, TrendingUp, PieChart, Table2, Hash } from 'lucide-react';
+import { Plus, Pencil, X, Check, ChevronRight, BarChart2, TrendingUp, PieChart, Table2, Hash, RefreshCw } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────
 type ChartType = 'bar_chart' | 'line_chart' | 'pie_chart' | 'table' | 'metric_card' | 'area_chart' | 'donut_chart';
@@ -332,6 +332,157 @@ function NewCardModal({ orgId, connections, onCreated, onClose }: {
   );
 }
 
+// ── Live Card Tile ─────────────────────────────────────────────
+// Lazily re-executes the card's query when it scrolls into view.
+function LiveCardTile({ card, orgId, onEdit }: { card: any; orgId: string; onEdit: () => void }) {
+  const [liveRows, setLiveRows] = useState<any[] | null>(null);
+  const [liveCols, setLiveCols] = useState<string[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  const tileRef = useRef<HTMLDivElement>(null);
+  const executedRef = useRef(false);
+
+  // Parse any cached preview from the card object (last_result_preview from backend JOIN)
+  const cachedRows: any[] = (() => {
+    if (!card.last_result_preview) return [];
+    try { return JSON.parse(card.last_result_preview); } catch { return []; }
+  })();
+  const cachedCols: string[] = Array.isArray(card.last_result_columns) ? card.last_result_columns : [];
+
+  const runRefresh = useCallback(async () => {
+    if (!card.raw_query || !card.connection_id || refreshing) return;
+    setRefreshing(true);
+    try {
+      // Reuse an existing chat for this connection so we don't create orphan chats
+      const { chats } = await chatApi.list(orgId, { connectionId: card.connection_id });
+      let chatId: string;
+      if (chats.length > 0) {
+        chatId = chats[0].id;
+      } else {
+        const { chat } = await chatApi.create(orgId, { connectionId: card.connection_id });
+        chatId = chat.id;
+      }
+      const result = await chatApi.executeDraft(orgId, chatId, '', card.raw_query);
+      const exec = result.execution ?? result;
+      if (exec?.rows?.length > 0) {
+        setLiveRows(exec.rows);
+        setLiveCols(exec.columns || []);
+      }
+    } catch { /* silently fall back to cached data */ }
+    finally { setRefreshing(false); }
+  }, [card.raw_query, card.connection_id, orgId, refreshing]);
+
+  // Trigger once when tile scrolls into view
+  useEffect(() => {
+    if (!card.raw_query || !card.connection_id) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !executedRef.current) {
+          executedRef.current = true;
+          runRefresh();
+        }
+      },
+      { threshold: 0.1 },
+    );
+    if (tileRef.current) observer.observe(tileRef.current);
+    return () => observer.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.id]);
+
+  const displayRows = liveRows ?? cachedRows;
+  const displayCols = liveRows ? liveCols : cachedCols;
+  const hasData = displayRows.length > 0 && displayCols.length > 0;
+
+  return (
+    <div
+      ref={tileRef}
+      className="group bg-card border border-border rounded-2xl overflow-hidden hover:border-[#2B2B2B]/20 hover:shadow-md transition-all"
+    >
+      {/* Header */}
+      <div className="px-4 pt-4 pb-3 flex items-start justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
+            {CHART_ICON_MAP[card.chart_type] ?? <Table2 className="w-4 h-4" />}
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-foreground line-clamp-1">{card.name}</p>
+            <p className="text-[10px] text-muted-foreground capitalize">{card.chart_type?.replace(/_/g, ' ')}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {/* Live refresh indicator / button */}
+          <button
+            onClick={() => { executedRef.current = false; runRefresh(); }}
+            disabled={refreshing}
+            title="Refresh with live data"
+            className="opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-muted text-muted-foreground transition-all"
+          >
+            <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+          </button>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0
+            ${card.status === 'published'
+              ? 'bg-green-50 text-green-700 border-green-200'
+              : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+            {card.status}
+          </span>
+        </div>
+      </div>
+
+      {/* Live data mini-preview or loading state */}
+      {refreshing && !hasData ? (
+        <div className="mx-4 mb-3 bg-muted/40 rounded-lg px-3 py-3 flex items-center gap-2">
+          <div className="w-3 h-3 border-2 border-muted-foreground/40 border-t-muted-foreground rounded-full animate-spin shrink-0" />
+          <span className="text-[10px] text-muted-foreground">Fetching live data…</span>
+        </div>
+      ) : hasData ? (
+        <div className="mx-4 mb-3 overflow-x-auto bg-muted/30 rounded-lg">
+          <table className="text-[10px] w-full">
+            <thead className="bg-muted/50">
+              <tr>
+                {displayCols.map(c => (
+                  <th key={c} className="px-2 py-1 text-left text-muted-foreground font-medium whitespace-nowrap">{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {displayRows.slice(0, 3).map((row, i) => (
+                <tr key={i} className="border-t border-border/30">
+                  {displayCols.map(c => (
+                    <td key={c} className="px-2 py-1 text-foreground truncate max-w-[80px]">{String(row[c] ?? '')}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {displayRows.length > 3 && (
+            <p className="px-2 py-1 text-[9px] text-muted-foreground/60 border-t border-border/30">
+              {displayRows.length} rows · {liveRows ? '🟢 live' : 'cached'}
+            </p>
+          )}
+        </div>
+      ) : card.raw_query ? (
+        <div className="mx-4 mb-3 bg-muted/50 rounded-lg px-3 py-2">
+          <p className="text-[10px] font-mono text-muted-foreground line-clamp-2 leading-relaxed">
+            {card.raw_query}
+          </p>
+        </div>
+      ) : null}
+
+      {/* Footer */}
+      <div className="px-4 pb-4 flex items-center justify-between">
+        <p className="text-[10px] text-muted-foreground">
+          v{card.current_version} · {new Date(card.updated_at).toLocaleDateString()}
+        </p>
+        <button
+          onClick={onEdit}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/60 hover:bg-[#2B2B2B] hover:text-white rounded-lg text-xs font-medium text-muted-foreground transition-all opacity-0 group-hover:opacity-100"
+        >
+          <Pencil className="w-3 h-3" /> Edit
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Cards Page ─────────────────────────────────────────────────
 export default function CardsPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -420,49 +571,12 @@ export default function CardsPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {cards.map((card: any) => (
-              <div key={card.id}
-                className="group bg-card border border-border rounded-2xl overflow-hidden hover:border-[#2B2B2B]/20 hover:shadow-md transition-all">
-                {/* Chart type indicator */}
-                <div className="px-4 pt-4 pb-3 flex items-start justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
-                      {CHART_ICON_MAP[card.chart_type] ?? <Table2 className="w-4 h-4" />}
-                    </div>
-                    <div>
-                      <p className="text-xs font-semibold text-foreground line-clamp-1">{card.name}</p>
-                      <p className="text-[10px] text-muted-foreground capitalize">{card.chart_type?.replace(/_/g, ' ')}</p>
-                    </div>
-                  </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border shrink-0
-                    ${card.status === 'published'
-                      ? 'bg-green-50 text-green-700 border-green-200'
-                      : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
-                    {card.status}
-                  </span>
-                </div>
-
-                {/* Query preview */}
-                {card.raw_query && (
-                  <div className="mx-4 mb-3 bg-muted/50 rounded-lg px-3 py-2">
-                    <p className="text-[10px] font-mono text-muted-foreground line-clamp-2 leading-relaxed">
-                      {card.raw_query}
-                    </p>
-                  </div>
-                )}
-
-                {/* Footer */}
-                <div className="px-4 pb-4 flex items-center justify-between">
-                  <p className="text-[10px] text-muted-foreground">
-                    v{card.current_version} · {new Date(card.updated_at).toLocaleDateString()}
-                  </p>
-                  <button
-                    onClick={() => setEditingCard(card)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 bg-muted/60 hover:bg-[#2B2B2B] hover:text-white rounded-lg text-xs font-medium text-muted-foreground transition-all opacity-0 group-hover:opacity-100"
-                  >
-                    <Pencil className="w-3 h-3" /> Edit
-                  </button>
-                </div>
-              </div>
+              <LiveCardTile
+                key={card.id}
+                card={card}
+                orgId={org.id}
+                onEdit={() => setEditingCard(card)}
+              />
             ))}
           </div>
         )}

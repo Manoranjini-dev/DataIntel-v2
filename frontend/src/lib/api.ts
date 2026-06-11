@@ -280,6 +280,46 @@ export const chatApi = {
     return handleResponse<any>(r);
   },
 
+  /**
+   * Re-execute stored SQL for a list of execution IDs against the live DB.
+   * Returns fresh rows without overwriting the stored result_preview snapshots.
+   */
+  refreshMessages: async (orgId: string, chatId: string, executionIds: string[]) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/refresh-messages`, {
+      method: 'POST',
+      body: JSON.stringify({ executionIds }),
+    });
+    return handleResponse<{ results: Array<{
+      executionId: string;
+      rows: any[];
+      columns: string[];
+      row_count: number;
+      execution_time_ms: number;
+      status: 'success' | 'failed';
+      error?: string;
+    }> }>(r);
+  },
+
+  /**
+   * Re-execute stored sub-queries for a COMBO chat and return merged live rows.
+   * Returns fresh rows without overwriting the stored result_preview snapshots.
+   */
+  refreshComboMessages: async (orgId: string, chatId: string, executionIds: string[]) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/refresh-combo-messages`, {
+      method: 'POST',
+      body: JSON.stringify({ executionIds }),
+    });
+    return handleResponse<{ results: Array<{
+      executionId: string;
+      rows: any[];
+      columns: string[];
+      row_count: number;
+      execution_time_ms: number;
+      status: 'success' | 'failed';
+      error?: string;
+    }> }>(r);
+  },
+
   suggestTitle: async (orgId: string, prompt: string) => {
     const r = await apiFetch(`/orgs/${orgId}/chats/suggest-title`, {
       method: 'POST',
@@ -302,6 +342,14 @@ export const chatApi = {
     const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}`, { method: 'DELETE' });
     return handleResponse<any>(r);
   },
+
+  updateTitle: async (orgId: string, chatId: string, title: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/title`, {
+      method: 'PATCH',
+      body: JSON.stringify({ title }),
+    });
+    return handleResponse<{ chat: any }>(r);
+  },
 };
 
 // ── Dashboard API ─────────────────────────
@@ -312,6 +360,7 @@ export const dashboardApi = {
     const data = await handleResponse<{ dashboards: any[] }>(r);
     data.dashboards.forEach(d => {
       if (d.context_type === 'connection') d.connection_id = d.context_id;
+      if (d.context_type === 'combo') d.combo_id = d.context_id;
     });
     return data;
   },
@@ -333,8 +382,13 @@ export const dashboardApi = {
   get: async (orgId: string, dashId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`);
     const data = await handleResponse<{ dashboard: any; pages: any[] }>(r);
-    if (data.dashboard && data.dashboard.context_type === 'connection') {
-      data.dashboard.connection_id = data.dashboard.context_id;
+    if (data.dashboard) {
+      if (data.dashboard.context_type === 'connection') {
+        data.dashboard.connection_id = data.dashboard.context_id;
+      }
+      if (data.dashboard.context_type === 'combo') {
+        data.dashboard.combo_id = data.dashboard.context_id;
+      }
     }
     return data;
   },
@@ -409,6 +463,18 @@ export const dashboardApi = {
     return handleResponse<{ success: boolean }>(r);
   },
 
+  /**
+   * Re-execute a widget's query against the live database via the backend's
+   * WidgetExecutionService. Pass forceRefresh=true to bypass the Redis cache.
+   */
+  executeWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string, forceRefresh = false) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/execute`, {
+      method: 'POST',
+      body: JSON.stringify({ forceRefresh }),
+    });
+    return handleResponse<{ rows: any[]; columns: string[]; executionTimeMs: number; status: string; isCached?: boolean }>(r);
+  },
+
   updateWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string, data: any) => {
     const payload = {
       title: data.title,
@@ -478,6 +544,11 @@ export const comboApi = {
   list: async (orgId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/combos`);
     return handleResponse<{ combos: any[] }>(r);
+  },
+
+  get: async (orgId: string, comboId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/combos/${comboId}`);
+    return handleResponse<{ combo: any }>(r);
   },
 
   create: async (orgId: string, data: { name: string; description?: string; connectionIds: string[] }) => {
