@@ -182,6 +182,19 @@ export class DashboardController {
     return { page };
   }
 
+  @Put(':dashId/pages/reorder')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reorder pages' })
+  async reorderPages(
+    @OrgId() orgId: string,
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body('order') order: string[],
+  ) {
+    await this.builder.reorderPages(dashId, orgId, user, order);
+    return { success: true };
+  }
+
   @Put(':dashId/pages/:pageId')
   @ApiOperation({ summary: 'Update page details' })
   async updatePage(
@@ -217,19 +230,6 @@ export class DashboardController {
   ) {
     const page = await this.builder.duplicatePage(pageId, dashId, orgId, user);
     return { page };
-  }
-
-  @Put(':dashId/pages/reorder')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Reorder pages' })
-  async reorderPages(
-    @OrgId() orgId: string,
-    @Param('dashId') dashId: string,
-    @CurrentUser() user: SafeAccount,
-    @Body('order') order: string[],
-  ) {
-    await this.builder.reorderPages(dashId, orgId, user, order);
-    return { success: true };
   }
 
   // ── Widgets ───────────────────────────────────
