@@ -488,8 +488,9 @@ export default function ComboChatPage() {
       setCombo(found);
 
       // Load ALL chats for this combo (for history panel)
-      const { chats: chatList } = await chatApi.list(o.id, { comboId });
-      setChats(chatList);
+      const { chats: fetchedChats } = await chatApi.list(o.id, { comboId });
+      const validChats = fetchedChats.filter((c: any) => c.message_count > 0);
+      setChats(validChats);
 
       // Determine active chat: URL param → first in list → auto-create
       const urlChatId = searchParams.get('chatId');
@@ -497,14 +498,12 @@ export default function ComboChatPage() {
 
       if (urlChatId && urlChatId !== 'new') {
         activeChatId = urlChatId;
-      } else if (!activeChatId) {
-        if (chatList.length > 0) {
-          activeChatId = chatList[0].id;
+      } else if (!activeChatId || activeChatId === 'new') {
+        if (validChats.length > 0 && urlChatId !== 'new') {
+          activeChatId = validChats[0].id;
         } else {
-          // No existing chats — create the first one
-          const { chat } = await chatApi.create(o.id, { comboId, title: found?.name || 'Combo Chat' });
-          activeChatId = chat.id;
-          setChats([chat]);
+          // No existing chats or explicit 'new' — use the 'new' placeholder ID
+          activeChatId = 'new';
         }
       }
 
@@ -513,7 +512,11 @@ export default function ComboChatPage() {
       router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=${activeChatId}`, { scroll: false });
 
       // Load message history for the active chat
-      await loadMessages(o.id, activeChatId!);
+      if (activeChatId && activeChatId !== 'new') {
+        await loadMessages(o.id, activeChatId);
+      } else {
+        setMessages([]);
+      }
     } catch (e) { console.error(e); }
     finally { setHistoryLoading(false); }
   }
@@ -589,14 +592,10 @@ export default function ComboChatPage() {
 
   async function newChat() {
     if (!org) return;
-    try {
-      const { chat } = await chatApi.create(org.id, { comboId, title: 'New Combo Chat' });
-      setChats(prev => [chat, ...prev]);
-      setCurrentChatId(chat.id);
-      setMessages([]);
-      setShowChatList(false);
-      router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=${chat.id}`, { scroll: false });
-    } catch (e) { console.error(e); }
+    setCurrentChatId('new');
+    setMessages([]);
+    setShowChatList(false);
+    router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=new`, { scroll: false });
   }
 
   async function handleSend(e?: React.FormEvent) {
@@ -611,8 +610,19 @@ export default function ComboChatPage() {
     setMessages(ms => [...ms, { id: tempId, role: 'user', content: prompt, created_at: new Date().toISOString() }]);
 
     try {
+      let activeCid = currentChatId;
+      if (activeCid === 'new') {
+        // Lazily create the chat session now that the user sent a message
+        const title = prompt.slice(0, 50) + (prompt.length > 50 ? '…' : '');
+        const { chat } = await chatApi.create(org.id, { comboId, title });
+        activeCid = chat.id;
+        setCurrentChatId(activeCid);
+        setChats(prev => [chat, ...prev]);
+        router.replace(`/orgs/${slug}/combos/${comboId}/chat?chatId=${activeCid}`, { scroll: false });
+      }
+
       // Pass chatId so the backend persists user + assistant messages
-      const result = await comboApi.query(org.id, comboId, prompt, currentChatId);
+      const result = await comboApi.query(org.id, comboId, prompt, activeCid);
       // Replace temp with final user msg + rich AI response (including rows/columns)
       setMessages(ms => {
         const without = ms.filter(m => m.id !== tempId);
@@ -638,16 +648,16 @@ export default function ComboChatPage() {
       });
 
       // Update chat's message count in sidebar
-      setChats(prev => prev.map(c => c.id === currentChatId
+      setChats(prev => prev.map(c => c.id === activeCid
         ? { ...c, message_count: (c.message_count || 0) + 2 }
         : c));
 
       // Auto-title the chat on the first exchange
-      const currentChat = chats.find(c => c.id === currentChatId);
+      const currentChat = chats.find(c => c.id === activeCid);
       if (currentChat && (!currentChat.title || currentChat.title === 'New Combo Chat' || currentChat.title === combo?.name)) {
         const autoTitle = prompt.slice(0, 50) + (prompt.length > 50 ? '…' : '');
-        await chatApi.updateTitle(org.id, currentChatId, autoTitle).catch(() => {});
-        setChats(prev => prev.map(c => c.id === currentChatId ? { ...c, title: autoTitle } : c));
+        await chatApi.updateTitle(org.id, activeCid, autoTitle).catch(() => {});
+        setChats(prev => prev.map(c => c.id === activeCid ? { ...c, title: autoTitle } : c));
       }
     } catch (err: any) {
       setMessages(ms => {

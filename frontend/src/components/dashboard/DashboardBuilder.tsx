@@ -486,11 +486,11 @@ function Widget({
     if (!rows.length) return (
       <div
         className={`h-full flex flex-col p-3 transition-colors ${isEditing ? 'cursor-grab' : 'cursor-pointer hover:bg-muted/30'}`}
-        // In edit mode a click only SELECTS the widget (drag/resize/menu handle
-        // everything else) — it must NOT open the query editor. Outside edit
-        // mode, clicking an empty widget opens the editor so users can generate.
-        onClick={() => { if (isEditing) onSelect?.(); else onEditQuery?.(); }}
-        title={isEditing ? 'Click to select · use the ⋯ menu to edit the query' : 'Click to open the widget editor and generate a chart'}
+        onClick={() => {
+          if (isEditing) onSelect?.();
+          onEditQuery?.();
+        }}
+        title="Click to open the widget editor and edit the query"
       >
         {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
@@ -526,7 +526,10 @@ function Widget({
 
   return (
     <div
-      onClick={() => { if (isEditing) onSelect?.(); }}
+      onClick={() => {
+        if (isEditing) onSelect?.();
+        onEditQuery?.();
+      }}
       className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all group ${
         isEditing
           ? isSelected
