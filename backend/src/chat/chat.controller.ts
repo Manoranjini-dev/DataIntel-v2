@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 
 import {
-  Controller, Get, Post, Delete, Body, Param, HttpCode, HttpStatus, Query, Patch,
+  Controller, Get, Post, Delete, Body, Param, HttpCode, HttpStatus, Query, Patch, Logger,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { ChatQueryService } from './chat-query.service';
@@ -35,6 +35,8 @@ class SuggestTitleDto {
 
 @Controller('orgs/:orgId/chats')
 export class ChatController {
+  private readonly logger = new Logger(ChatController.name);
+
   constructor(
     private readonly chatService: ChatService,
     private readonly chatQueryService: ChatQueryService,
@@ -84,11 +86,65 @@ Rules:
 6. Do NOT wrap the title in quotes.
 7. Return ONLY the title text, nothing else.`;
 
-    const title = await this.llmService.generateFreeText(systemPrompt, dto.prompt, 50);
-    if (title.includes('AI service error')) {
-      throw new Error(title);
+    // Use a generous token budget: the model is a reasoning model, so a tiny cap
+    // (the old value was 50) gets consumed by reasoning and yields empty content.
+    let raw = '';
+    try {
+      raw = await this.llmService.generateFreeText(systemPrompt, dto.prompt, 256);
+    } catch (e) {
+      this.logger.warn(`suggest-title LLM call threw: ${e instanceof Error ? e.message : e}`);
     }
-    return { title };
+
+    const aiTitle = this.sanitizeTitle(raw);
+    if (aiTitle) {
+      this.logger.debug(`suggest-title generated: "${aiTitle}"`);
+      return { title: aiTitle };
+    }
+
+    // Recoverable empty/failed AI response — never 500. Derive a deterministic
+    // fallback title from the prompt context (business intent / columns).
+    const fallback = this.fallbackTitle(dto.prompt);
+    this.logger.warn(`suggest-title: AI returned no usable title; using fallback "${fallback}"`);
+    return { title: fallback, fallback: true };
+  }
+
+  /** Clean an AI title: strip quotes/fences, collapse whitespace, clip length. */
+  private sanitizeTitle(raw: string): string {
+    if (!raw) return '';
+    let t = raw.trim()
+      .replace(/^```(?:\w+)?/i, '').replace(/```$/, '')
+      .replace(/^["'`]|["'`]$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Guard against the model echoing an instruction or returning prose.
+    if (!t || /^no\s|cannot|unable|as an ai/i.test(t)) return '';
+    return t.slice(0, 80);
+  }
+
+  /**
+   * Deterministic fallback title derived from the structured prompt the frontend
+   * sends (Visualization Type / Columns / Business Intent / SQL Logic). Ensures
+   * the endpoint always returns a meaningful title even when the AI is empty.
+   */
+  private fallbackTitle(prompt: string): string {
+    const intent = /business intent:\s*(.+)/i.exec(prompt)?.[1]?.trim();
+    if (intent) return this.toTitleCase(intent);
+
+    const cols = /columns:\s*(.+)/i.exec(prompt)?.[1]?.trim();
+    if (cols) {
+      const first = cols.split(',')[0]?.trim();
+      if (first) return `${this.toTitleCase(first)} Overview`;
+    }
+
+    const firstLine = prompt.replace(/\s+/g, ' ').trim().split(/[.\n]/)[0] || '';
+    return this.toTitleCase(firstLine) || 'Insight';
+  }
+
+  private toTitleCase(s: string): string {
+    const clean = s.replace(/["'`]/g, '').replace(/[_-]+/g, ' ').trim();
+    const words = clean.split(/\s+/).filter(Boolean).slice(0, 8)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1));
+    return words.join(' ').slice(0, 80);
   }
 
   @Get(':chatId')

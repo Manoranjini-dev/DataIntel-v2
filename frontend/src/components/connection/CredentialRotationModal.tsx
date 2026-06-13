@@ -1,4 +1,233 @@
-'use client';
+b5ba-a95d4b3ec465
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [WidgetExecutionService] Failed to execute widget d81a51eb-cd9b-47ff-819f-af1fdf825cce
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/02157399-e0a6-449d-b5ba-a95d4b3ec465/execute — 742ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [WidgetExecutionService] Failed to execute widget eb05169a-1b5a-4f6b-ad69-5ecdd7c38172
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/d81a51eb-cd9b-47ff-819f-af1fdf825cce/execute — 780ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [WidgetExecutionService] Failed to execute widget 6743515e-099a-45f3-9253-a49a38c57e20
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/eb05169a-1b5a-4f6b-ad69-5ecdd7c38172/execute — 714ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [WidgetExecutionService] Failed to execute widget 22985653-9d38-4e11-a5b7-363626a43d2c
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm     LOG [HTTP] GET /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/versions — 456ms
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/6743515e-099a-45f3-9253-a49a38c57e20/execute — 685ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/22985653-9d38-4e11-a5b7-363626a43d2c/execute — 679ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:49 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:50 pm   ERROR [WidgetExecutionService] Failed to execute widget 1667ed96-6b02-410d-8c9a-2ce1137f5492
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:50 pm   ERROR [WidgetExecutionService] Failed to execute widget 7ebca2ea-4ce6-4eaa-a395-7fafcafa02db
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:50 pm   ERROR [WidgetExecutionService] Failed to execute widget ef4a1b54-3083-48ed-9682-134dedd71309
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:50 pm     LOG [HTTP] GET /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/chats?connectionId=d31a4365-ff6b-4f83-9184-b5b60a1ae0fa — 507ms
+[Nest] 21756  - 12/06/2026, 12:50:51 pm   ERROR [WidgetExecutionService] Failed to execute widget 96efcfb2-4a57-4235-bce2-16c17ef71d97
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:51 pm     LOG [HTTP] GET /api/orgs/c1x — 230ms
+[Nest] 21756  - 12/06/2026, 12:50:51 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/96efcfb2-4a57-4235-bce2-16c17ef71d97/execute — 681ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:51 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:51 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/1667ed96-6b02-410d-8c9a-2ce1137f5492/execute — 2062ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:51 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:52 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/7ebca2ea-4ce6-4eaa-a395-7fafcafa02db/execute — 2047ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:52 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:52 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/ef4a1b54-3083-48ed-9682-134dedd71309/execute — 2070ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:52 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:52 pm   ERROR [WidgetExecutionService] Failed to execute widget 66fe93e0-df14-4aba-b5e0-2d90fd635926
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:53 pm   ERROR [WidgetExecutionService] Failed to execute widget 3b293931-db69-4879-8de1-cbc9d7ed7d65
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:53 pm   ERROR [WidgetExecutionService] Failed to execute widget ea2f7202-fb3e-4e3b-9f98-913f36ca073d
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:53 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/3b293931-db69-4879-8de1-cbc9d7ed7d65/execute — 692ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:53 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:53 pm   ERROR [WidgetExecutionService] Failed to execute widget e41861d2-a2b3-4dfc-a709-9f890f67bcc9
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/66fe93e0-df14-4aba-b5e0-2d90fd635926/execute — 2160ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:54 pm     LOG [HTTP] GET /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9 — 2199ms
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [WidgetExecutionService] Failed to execute widget eb05169a-1b5a-4f6b-ad69-5ecdd7c38172
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/ea2f7202-fb3e-4e3b-9f98-913f36ca073d/execute — 2097ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/eb05169a-1b5a-4f6b-ad69-5ecdd7c38172/execute — 683ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:54 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:55 pm   ERROR [WidgetExecutionService] Failed to execute widget 892c09e4-ec95-4d74-9827-9c288e2548e5
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:55 pm   ERROR [HTTP] POST /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/pages/6b903b61-6841-4924-b0dc-2dc7da1e622a/widgets/e41861d2-a2b3-4dfc-a709-9f890f67bcc9/execute — 2225ms — null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+[Nest] 21756  - 12/06/2026, 12:50:55 pm   ERROR [GlobalExceptionFilter] [InternalError] null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:55 pm     LOG [HTTP] GET /api/orgs/beaa61ac-d422-4d16-b54e-0f0da1f502e1/dashboards/7bae4f9b-e018-45ee-bb64-1a651c5df1c9/versions — 455ms
+[Nest] 21756  - 12/06/2026, 12:50:55 pm   ERROR [WidgetExecutionService] Failed to execute widget 22985653-9d38-4e11-a5b7-363626a43d2c
+error: null value in column "page_id" of relation "widget_executions_2026_06" violates not-null constraint
+    at C:\C1X\DataIntel-v2\backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async DatabaseService.query (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:34:20)
+    at async DatabaseService.queryOne (C:\C1X\DataIntel-v2\backend\dist\database\database.service.js:43:24)
+    at async WidgetExecutionService.executeSync (C:\C1X\DataIntel-v2\backend\dist\dashboard\widget-execution.service.js:71:32)
+[Nest] 21756  - 12/06/2026, 12:50:55 pm'use client';
 
 import React, { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';

@@ -92,6 +92,12 @@ export class LLMService {
         return parsed;
       } catch (error) {
         lastError = error instanceof Error ? error.message : 'Unknown error';
+        
+        if (lastError.includes('402') || lastError.includes('401') || lastError.includes('Insufficient credits')) {
+          this.logger.error(`LLM API Error (Fast Fail): ${lastError}`);
+          throw new Error(`LLM format violation after ${attempt + 1} attempts: ${lastError}`);
+        }
+
         this.logger.warn(`LLM generation attempt ${attempt + 1} failed: ${lastError}`);
 
         if (attempt === this.maxRetries) {
@@ -204,9 +210,21 @@ Rules — follow every one without exception:
     maxTokens = 512,
   ): Promise<string> {
     let lastError = 'Unknown error';
-    
+
+    // Reasoning models (e.g. openai/gpt-oss-*) spend part of the token budget on
+    // hidden reasoning before emitting any visible content. A tight cap (e.g. 50
+    // tokens for a title) gets fully consumed by reasoning, so `content` comes
+    // back EMPTY. Enforce a floor so the model always has room to emit the answer.
+    const effectiveMaxTokens = Math.max(maxTokens, 256);
+
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       try {
+        this.logger.debug(
+          `generateFreeText attempt ${attempt + 1}: maxTokens=${effectiveMaxTokens} ` +
+          `system="${systemPrompt.slice(0, 100).replace(/\s+/g, ' ')}" ` +
+          `user="${userContent.slice(0, 200).replace(/\s+/g, ' ')}"`,
+        );
+
         const completion = await this.client.chat.completions.create({
           model: this.model,
           messages: [
@@ -214,20 +232,53 @@ Rules — follow every one without exception:
             { role: 'user', content: userContent },
           ],
           temperature: 0.5,
-          max_tokens: maxTokens,
+          max_tokens: effectiveMaxTokens,
         });
-        const text = completion.choices[0]?.message?.content?.trim();
-        if (!text) throw new Error('Empty response');
+
+        const choice = completion.choices?.[0];
+        const message = choice?.message as
+          | { content?: string | null; reasoning?: string | null }
+          | undefined;
+
+        // Primary source is `content`. Some OpenRouter reasoning models return an
+        // empty `content` and place text in a separate `reasoning` field — use it
+        // as a last-resort fallback so we still surface a usable answer.
+        let text = (message?.content ?? '').trim();
+        if (!text && typeof message?.reasoning === 'string') {
+          text = message.reasoning.trim();
+        }
+
+        this.logger.debug(
+          `generateFreeText raw response: finish_reason=${choice?.finish_reason ?? 'n/a'} ` +
+          `contentLen=${(message?.content ?? '').length} ` +
+          `reasoningLen=${(message?.reasoning ?? '').length} ` +
+          `usage=${JSON.stringify(completion.usage ?? {})}`,
+        );
+
+        if (!text) {
+          // Empty response — record why before retrying.
+          this.logger.warn(
+            `generateFreeText empty response on attempt ${attempt + 1} ` +
+            `(finish_reason=${choice?.finish_reason ?? 'unknown'}). ` +
+            `The model returned no content — likely the token budget was exhausted by reasoning.`,
+          );
+          throw new Error(`Empty response (finish_reason=${choice?.finish_reason ?? 'unknown'})`);
+        }
+
+        this.logger.debug(`generateFreeText parsed (${text.length} chars): "${text.slice(0, 120)}"`);
         return text;
       } catch (error) {
         lastError = error instanceof Error ? error.message : 'Unknown error';
         this.logger.warn(`generateFreeText attempt ${attempt + 1} failed: ${lastError}`);
       }
     }
-    
-    // Return a fallback instead of throwing an unhandled error that crashes the endpoint
-    this.logger.error(`AI explanation failed after retries: ${lastError}. Returning fallback.`);
-    return `No explanation could be generated at this time due to an AI service error. Details: ${lastError}`;
+
+    // All attempts failed — return an EMPTY string sentinel. Callers are
+    // responsible for substituting a deterministic fallback. We deliberately do
+    // NOT return a human-readable error string here, because callers used to
+    // mistake it for a valid result.
+    this.logger.error(`generateFreeText failed after ${this.maxRetries + 1} attempts: ${lastError}`);
+    return '';
   }
 
   /** Parse LLM response — strict JSON only */

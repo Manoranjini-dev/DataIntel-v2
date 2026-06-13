@@ -44,13 +44,12 @@ export default function ConnectionDashboardPage() {
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
       {dashId ? (
-        <DashboardBuilder 
-          orgSlug={slug} 
-          dashId={dashId} 
-          backUrl={`/orgs/${slug}/connections/${connId}`} 
-          backLabel="Overview"
+        <DashboardBuilder
+          orgSlug={slug}
+          dashId={dashId}
           titleOverride="Dashboard"
           subtitleOverride={`Insights for ${conn?.name}`}
+          hideContextNav
         />
       ) : (
         <div className="flex-1 flex items-center justify-center bg-background text-muted-foreground">

@@ -17,6 +17,7 @@ import { BarChartCard } from './bar-chart-card';
 import { LineChartCard } from './line-chart-card';
 import { PieChartCard } from './pie-chart-card';
 import { AreaChartCard } from './area-chart-card';
+import { ScatterChartCard } from './scatter-chart-card';
 import { DataTableCard } from './data-table-card';
 import { ListCard } from './list-card';
 
@@ -95,7 +96,10 @@ function resolveComponent(
         if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
         break;
 
+      case 'scatter':
       case 'scatter_plot':
+        // True scatter needs two numeric axes; otherwise fall back to a bar chart.
+        if (numericCols.length >= 2 && rows.length >= 2) return 'scatter';
         if (hasNumeric && rows.length >= 3 && columns.length >= 2) return 'bar_chart';
         break;
 
@@ -197,6 +201,9 @@ export function GenerativeUIRenderer({
       break;
     case 'pie_chart':
       viz = <PieChartCard execution={execution} title={title} compact={compact} />;
+      break;
+    case 'scatter':
+      viz = <ScatterChartCard execution={execution} title={title} compact={compact} />;
       break;
     case 'list':
       viz = <ListCard execution={execution} title={title} compact={compact} />;

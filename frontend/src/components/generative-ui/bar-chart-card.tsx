@@ -169,6 +169,11 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
     ? Math.max(250, xLabelsCount * pxPerCategory + 50)
     : 220 + xAxisHeight - 30;
 
+  // Calculate chart width dynamically for vertical bar charts
+  const calculatedWidth = !isHorizontal 
+    ? Math.max(100, xLabelsCount * 40 + 60)
+    : '100%';
+
   return (
       <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
       {title && (
@@ -176,8 +181,13 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
           {title}
         </p>
       )}
-      <div className={`w-full ${compact ? 'flex-1 min-h-0 overflow-y-auto overflow-x-hidden' : ''}`}>
-        <div style={{ minHeight: compact ? (isHorizontal ? calculatedHeight : undefined) : undefined, height: compact ? '100%' : calculatedHeight, width: '100%' }}>
+      <div className={`w-full ${compact ? 'flex-1 min-h-0 overflow-auto' : ''}`}>
+        <div style={{ 
+          minHeight: compact ? (isHorizontal ? calculatedHeight : undefined) : undefined, 
+          height: compact ? '100%' : calculatedHeight, 
+          minWidth: compact && !isHorizontal ? calculatedWidth : undefined,
+          width: '100%' 
+        }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart 
               data={schema.data} 

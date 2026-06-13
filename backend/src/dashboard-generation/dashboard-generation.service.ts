@@ -153,6 +153,8 @@ export class DashboardGenerationService {
        FROM connection_schemas cs
        JOIN connection_tables ct ON ct.schema_id = cs.id
        WHERE cs.connection_id = $1
+         AND cs.deleted_at IS NULL
+         AND ct.deleted_at IS NULL
        ORDER BY ct.table_name`,
       [connectionId],
     );

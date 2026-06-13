@@ -21,6 +21,7 @@ export type UIHint =
   | 'donut_chart'
   | 'stacked_bar'
   | 'horizontal_bar'
+  | 'scatter'
   | 'scatter_plot'
   | 'radar_chart'
   | 'gauge'

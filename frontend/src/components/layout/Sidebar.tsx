@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { useParams, usePathname } from 'next/navigation';
-import { LayoutDashboard, CreditCard, Database, Layers, Settings } from 'lucide-react';
+import { LayoutDashboard, CreditCard, Database, Layers, Settings, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useOrgStore } from '../../store/org';
 import { useAuthStore } from '@/lib/auth-store';
+import { useUIStore } from '@/lib/ui-store';
 
 // C1X logo — from image file
 function C1XLogo({ size = 32 }: { size?: number }) {
@@ -30,20 +31,81 @@ export function Sidebar() {
   const { slug } = useParams<{ slug?: string }>();
   const { currentOrgId } = useOrgStore();
   const { user } = useAuthStore();
+  const { sidebarCollapsed, toggleSidebar } = useUIStore();
 
   const activeSlug = slug || currentOrgId;
   if (!activeSlug) return null;
 
+  // ── Collapsed: thin icon-only rail with an expand button ──────────
+  if (sidebarCollapsed) {
+    return (
+      <aside
+        className="flex flex-col items-center shrink-0 h-full bg-card border-r border-border py-4 gap-1"
+        style={{ width: 56 }}
+      >
+        {/* Expand toggle */}
+        <button
+          onClick={toggleSidebar}
+          title="Expand sidebar"
+          className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-all mb-2"
+        >
+          <PanelLeftOpen className="w-[18px] h-[18px]" />
+        </button>
+
+        <div className="w-7 h-px bg-border mb-2" />
+
+        {/* Icon-only nav */}
+        <nav className="flex-1 flex flex-col items-center gap-1">
+          {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+            const fullHref = `/orgs/${activeSlug}/${href}`;
+            const active = pathname.startsWith(fullHref);
+            return (
+              <Link
+                key={href}
+                href={fullHref}
+                title={label}
+                className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+                  active
+                    ? 'bg-[#2B2B2B] text-white shadow-sm'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                <Icon className={`w-[18px] h-[18px] shrink-0 ${active ? 'text-[#F5A623]' : ''}`} />
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* User avatar */}
+        <div
+          className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white"
+          style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}
+          title={user?.displayName ?? 'User'}
+        >
+          {user?.displayName?.[0]?.toUpperCase() ?? 'U'}
+        </div>
+      </aside>
+    );
+  }
+
+  // ── Expanded: full sidebar ───────────────────────────────────────
   return (
     <aside
       className="flex flex-col shrink-0 h-full bg-card border-r border-border"
       style={{ width: 220 }}
     >
-      {/* Brand */}
-      <div className="px-5 pt-6 pb-5">
+      {/* Brand + collapse button */}
+      <div className="px-5 pt-6 pb-5 flex items-center justify-between">
         <Link href={`/orgs/${activeSlug}/dashboards`}>
           <C1XLogo size={32} />
         </Link>
+        <button
+          onClick={toggleSidebar}
+          title="Collapse sidebar"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
+        >
+          <PanelLeftClose className="w-[18px] h-[18px]" />
+        </button>
       </div>
 
       <div className="mx-4 h-px bg-border mb-3" />

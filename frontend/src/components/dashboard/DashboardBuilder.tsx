@@ -10,13 +10,41 @@ import 'react-resizable/css/styles.css';
 import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
   MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
-  MessageSquare, LayoutDashboard
+  MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
-  useDraggable, useSensor, useSensors, DragEndEvent, DragStartEvent
+  useDraggable, useSensor, useSensors, DragEndEvent, DragStartEvent,
+  pointerWithin, rectIntersection, CollisionDetection, MeasuringStrategy,
+  closestCenter,
 } from '@dnd-kit/core';
+import {
+  SortableContext, horizontalListSortingStrategy, useSortable, arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { GenerativeUIRenderer } from '../generative-ui';
+import { useUIStore } from '@/lib/ui-store';
+
+// ── Grid geometry — MUST stay in sync with the ResponsiveGridLayout props
+// below (cols=12, rowHeight=80, margin=[12,12], containerPadding=[0,0]).
+const GRID_COLS = 12;
+const GRID_ROW_H = 80;
+const GRID_MARGIN = 12;
+
+// Deterministic drop-target resolution for the grid: an existing card always
+// wins (so it gets pushed forward), then an empty grid cell, then the canvas
+// drop-zone. Uses pointer-within first, falling back to rect intersection.
+const gridCollisionDetection: CollisionDetection = (args) => {
+  const hits = (() => {
+    const within = pointerWithin(args);
+    return within.length ? within : rectIntersection(args);
+  })();
+  const widget = hits.find((h) => String(h.id).startsWith('drop-widget-'));
+  if (widget) return [widget];
+  const cell = hits.find((h) => String(h.id).startsWith('cell-'));
+  if (cell) return [cell];
+  return hits;
+};
 
 // ── Types ──────────────────────────────────────────────────────
 interface WidgetData {
@@ -83,6 +111,110 @@ const WIDGET_TEMPLATES = [
 ];
 
 const CHART_COLORS = ['#D97A1E', '#F5A623', '#50A0B4', '#6ECA97', '#E97B7B', '#9B8EF5'];
+
+// ── Single source of truth for widget dimensions ───────────────
+// ALL widget creation paths (auto-generated, Add to Dashboard,
+// drag-and-drop, card click, GenerateDialog) MUST use these constants.
+const WIDGET_W = 6;  // half of the 12-column grid = 2 columns
+const WIDGET_H = 4;  // rows in react-grid-layout units
+const GRID_COLS_COUNT = 2; // number of columns in the 2-col layout
+
+/**
+ * Finds the next available grid slot by scanning the 2-column grid
+ * left-to-right, top-to-bottom. Skips occupied positions so new
+ * widgets fill gaps instead of always appending to the bottom.
+ */
+function findNextSlot(currentWidgets: WidgetData[]): { x: number; y: number } {
+  // Build a set of all occupied (x, y) top-left corners
+  const occupied = new Set(
+    currentWidgets.map(w => `${w.position_x ?? 0},${w.position_y ?? 0}`)
+  );
+  // Scan rows until we find a free slot
+  for (let row = 0; row < 1000; row++) {
+    for (let col = 0; col < GRID_COLS_COUNT; col++) {
+      const x = col * WIDGET_W;
+      const y = row * WIDGET_H;
+      if (!occupied.has(`${x},${y}`)) {
+        return { x, y };
+      }
+    }
+  }
+  // Absolute fallback (unreachable in practice)
+  return { x: 0, y: currentWidgets.length * WIDGET_H };
+}
+
+/**
+ * Inserts a new widget at the target grid position (targetX, targetY),
+ * shifting every existing widget that occupies that slot or a later slot
+ * forward by one position in the 2-column reading order.
+ *
+ * This produces the "push-forward" reflow behaviour:
+ *   Before: [A] [B] [C] [D]
+ *   Drop onto B’s slot:
+ *   After:  [A] [NEW] [B] [C] [D]
+ */
+function insertAtSlot(
+  currentWidgets: WidgetData[],
+  targetX: number,
+  targetY: number,
+): { slotX: number; slotY: number; shiftedWidgets: WidgetData[] } {
+  // Snap targetX/targetY to nearest valid slot boundary
+  const col = Math.round(targetX / WIDGET_W);
+  const row = Math.round(targetY / WIDGET_H);
+  const snappedX = col * WIDGET_W;
+  const snappedY = row * WIDGET_H;
+  const targetIdx = row * GRID_COLS_COUNT + col;
+
+  // Convert each widget to a linear slot index and shift those at or after target
+  const shifted = currentWidgets.map(w => {
+    const wCol = Math.round((w.position_x ?? 0) / WIDGET_W);
+    const wRow = Math.round((w.position_y ?? 0) / WIDGET_H);
+    const wIdx = wRow * GRID_COLS_COUNT + wCol;
+    if (wIdx < targetIdx) return w; // before target — unchanged
+    // Shift forward by one slot
+    const newIdx = wIdx + 1;
+    const newCol = newIdx % GRID_COLS_COUNT;
+    const newRow = Math.floor(newIdx / GRID_COLS_COUNT);
+    return { ...w, position_x: newCol * WIDGET_W, position_y: newRow * WIDGET_H };
+  });
+
+  return { slotX: snappedX, slotY: snappedY, shiftedWidgets: shifted };
+}
+
+/**
+ * A widget is "executable" only if it already carries a real query — a saved
+ * SQL statement or a user/AI-authored prompt. Empty drag-and-drop widgets have
+ * neither, so they must NEVER be auto-executed on load, refresh, move, resize
+ * or dashboard reopen (which would otherwise fabricate a chart from the title).
+ * Charts for such widgets are only ever produced when the user explicitly
+ * clicks Generate inside the widget editor.
+ */
+function widgetHasQuery(w: WidgetData): boolean {
+  return Boolean((w.query_prompt && w.query_prompt.trim()) || (w.sql && w.sql.trim()));
+}
+
+/**
+ * Highest "Page N" number among the given pages. Used to generate the next
+ * sequential page name without duplicates (e.g. after deletions, refresh,
+ * save, or reload). Non-matching custom names are ignored.
+ */
+function highestPageNumber(pages: { name?: unknown }[]): number {
+  let max = 0;
+  for (const p of pages) {
+    const m = /^page\s+(\d+)$/i.exec(String(p?.name ?? '').trim());
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return max;
+}
+
+/**
+ * Make a string safe to use as a download filename while PRESERVING spaces
+ * (the export naming spec uses names verbatim, e.g. "Sales Dashboard_Revenue
+ * Analysis.png"). Only characters illegal in filenames are stripped.
+ */
+function safeFilePart(s: string): string {
+  return String(s || '').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim() || 'Untitled';
+}
 
 // ── Mini widget renderers ──────────────────────────────────────
 function BarWidget({ title, rows, columns }: { title: string; rows: Record<string, unknown>[]; columns: string[] }) {
@@ -305,10 +437,12 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
 
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
-  widget, isEditing, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage,
+  widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage,
 }: {
   widget: WidgetData;
   isEditing: boolean;
+  isSelected?: boolean;
+  onSelect?: () => void;
   onRemove?: () => void;
   onInspect?: () => void;
   onRename?: (newTitle: string) => void;
@@ -351,13 +485,30 @@ function Widget({
     );
     if (!rows.length) return (
       <div
-        className={`h-full flex flex-col p-3 ${isEditing ? 'cursor-pointer hover:bg-muted/30 transition-colors' : ''}`}
-        onClick={() => isEditing && onEditQuery?.()}
+        className={`h-full flex flex-col p-3 transition-colors ${isEditing ? 'cursor-grab' : 'cursor-pointer hover:bg-muted/30'}`}
+        // In edit mode a click only SELECTS the widget (drag/resize/menu handle
+        // everything else) — it must NOT open the query editor. Outside edit
+        // mode, clicking an empty widget opens the editor so users can generate.
+        onClick={() => { if (isEditing) onSelect?.(); else onEditQuery?.(); }}
+        title={isEditing ? 'Click to select · use the ⋯ menu to edit the query' : 'Click to open the widget editor and generate a chart'}
       >
         {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
-          <span>{isEditing ? 'Click to configure query' : 'No data'}</span>
+          {widget.query_prompt
+            ? (
+              <div className="flex flex-col items-center gap-1.5">
+                <span className="text-muted-foreground/50">Query returned no data</span>
+                <span className="text-[10px] text-muted-foreground/30 text-center max-w-[160px] leading-relaxed">{widget.query_prompt.slice(0, 80)}</span>
+              </div>
+            )
+            : (
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-muted-foreground/60 font-medium">Empty widget</span>
+                <span className="text-[10px] text-primary/70">{isEditing ? 'Open the ⋯ menu → Edit query' : 'Click to add a chart'}</span>
+              </div>
+            )
+          }
         </div>
       </div>
     );
@@ -374,8 +525,17 @@ function Widget({
   };
 
   return (
-    <div className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all group ${isEditing ? 'border-primary/30 cursor-grab active:cursor-grabbing ring-1 ring-primary/10' : 'border-border hover:border-border'
-      }`} style={{ boxShadow: 'var(--shadow-soft)' }}>
+    <div
+      onClick={() => { if (isEditing) onSelect?.(); }}
+      className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all group ${
+        isEditing
+          ? isSelected
+            ? 'border-primary cursor-grab active:cursor-grabbing ring-2 ring-primary/50'
+            : 'border-primary/30 cursor-grab active:cursor-grabbing ring-1 ring-primary/10'
+          : 'border-border hover:border-border'
+      }`}
+      style={{ boxShadow: 'var(--shadow-soft)' }}
+    >
 
       {/* Drag handle */}
       {isEditing && (
@@ -469,6 +629,95 @@ function DashboardWidgetDroppable({ widget, children }: { widget: WidgetData, ch
         <div className="absolute inset-0 bg-primary/20 z-50 border-2 border-primary border-dashed rounded-xl pointer-events-none" />
       )}
       {children}
+    </div>
+  );
+}
+
+// ── Grid overlay: visible grid + droppable / clickable empty slots ──
+// Renders a light dashed grid over the canvas in edit mode, aligned to the
+// 2-column slot system (each slot is WIDGET_W×WIDGET_H). Each EMPTY slot is
+// both a dnd-kit droppable (a dragged widget snaps directly into it) and
+// clickable (opens the Add Widget dialog seeded to that slot). Occupied
+// slots are skipped so cells never overlap a widget — keeping drop-target
+// resolution unambiguous. Dropping onto an existing CARD still pushes that
+// card forward (handled separately in handleDragEnd via insertAtSlot).
+function GridCell({
+  gridX, gridY, left, top, width, height, onClickCell,
+}: {
+  gridX: number; gridY: number; left: number; top: number; width: number; height: number;
+  onClickCell: (x: number, y: number) => void;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `cell-${gridX}-${gridY}`,
+    data: { type: 'grid-cell', x: gridX, y: gridY },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      onClick={() => onClickCell(gridX, gridY)}
+      title="Drop or click to add a widget here"
+      className={`absolute rounded-xl border-2 border-dashed transition-colors pointer-events-auto cursor-pointer flex items-center justify-center group/cell ${
+        isOver
+          ? 'border-primary bg-primary/15'
+          : 'border-border/40 hover:border-primary/50 hover:bg-primary/5'
+      }`}
+      style={{ left, top, width, height }}
+    >
+      <Plus className={`w-5 h-5 transition-opacity ${isOver ? 'text-primary opacity-100' : 'text-muted-foreground/30 opacity-0 group-hover/cell:opacity-100'}`} />
+    </div>
+  );
+}
+
+function GridOverlay({
+  containerWidth, widgets, onClickCell,
+}: {
+  containerWidth: number;
+  widgets: WidgetData[];
+  onClickCell: (x: number, y: number) => void;
+}) {
+  // Pixel width of one 12-col unit (must match RGL geometry).
+  const colUnit = (containerWidth - GRID_MARGIN * (GRID_COLS - 1)) / GRID_COLS;
+  if (!(colUnit > 0)) return null;
+
+  // Pixel size of a single slot (WIDGET_W cols × WIDGET_H rows).
+  const slotW = WIDGET_W * colUnit + (WIDGET_W - 1) * GRID_MARGIN;
+  const slotH = WIDGET_H * GRID_ROW_H + (WIDGET_H - 1) * GRID_MARGIN;
+
+  // Occupied slots keyed by their top-left grid position "x,y".
+  const occupied = new Set(widgets.map(w => `${w.position_x ?? 0},${w.position_y ?? 0}`));
+
+  // Show enough rows to cover existing widgets plus one empty row to drop into.
+  let maxRow = 0;
+  for (const w of widgets) maxRow = Math.max(maxRow, Math.round((w.position_y ?? 0) / WIDGET_H) + 1);
+  const rows = Math.max(maxRow + 1, 2);
+
+  const cells: React.ReactNode[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < GRID_COLS_COUNT; c++) {
+      const gx = c * WIDGET_W;
+      const gy = r * WIDGET_H;
+      if (occupied.has(`${gx},${gy}`)) continue;
+      cells.push(
+        <GridCell
+          key={`${gx}-${gy}`}
+          gridX={gx}
+          gridY={gy}
+          left={gx * (colUnit + GRID_MARGIN)}
+          top={gy * (GRID_ROW_H + GRID_MARGIN)}
+          width={slotW}
+          height={slotH}
+          onClickCell={onClickCell}
+        />,
+      );
+    }
+  }
+
+  return (
+    <div
+      className="absolute inset-x-0 top-0 pointer-events-none z-0"
+      style={{ height: rows * slotH + (rows - 1) * GRID_MARGIN }}
+    >
+      {cells}
     </div>
   );
 }
@@ -597,6 +846,11 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
       const llmHint = (preview as any).assistantMessage?.ui_hint || exec?.ui_hint;
       const rawHint = defaultHint || llmHint || 'table';
       const widgetType = normalizeWidgetType(rawHint as string);
+      // defaultPosition is ALWAYS set before this dialog opens (callers use findNextSlot).
+      // Use it for both the backend and the frontend state so positions are consistent
+      // across add, save, and reload cycles.
+      const posX = defaultPosition?.x ?? 0;
+      const posY = defaultPosition?.y ?? 0;
       const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
         title: title || prompt,
         widget_type: widgetType,
@@ -606,19 +860,21 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
         resultRows: (exec?.rows as Record<string, unknown>[]) || [],
         resultColumns: (exec?.columns as string[]) || [],
         uiHint: widgetType,
-        gridX: defaultPosition?.x, gridY: defaultPosition?.y,
-        gridW: defaultPosition?.w, gridH: defaultPosition?.h,
+        gridX: posX, gridY: posY,
+        gridW: WIDGET_W, gridH: WIDGET_H,
       });
       onAdd({
         id: widget.widget.id, title: widget.widget.title, widget_type: widget.widget.widget_type,
         query_prompt: widget.widget.query_prompt,
-        position_x: defaultPosition?.x || 0, position_y: defaultPosition?.y || 0,
-        width: defaultPosition?.w || widget.widget.width || 4,
-        height: defaultPosition?.h || widget.widget.height || 3,
+        position_x: posX, position_y: posY,
+        width: WIDGET_W,
+        height: WIDGET_H,
         result_rows: (exec?.rows as Record<string, unknown>[]) || [],
         result_columns: exec?.columns as string[] || [],
         ui_hint: widgetType,
-        is_dropped: !!defaultPosition,
+        // Always true — defaultPosition is pre-computed before the dialog opens,
+        // so handleWidgetAdded should use it directly without calling findNextSlot again.
+        is_dropped: true,
       });
       onClose();
     } catch (e) { console.error(e); }
@@ -741,6 +997,10 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
     }
     if (!activeChatId) { setGenerating(false); return; }
 
+    // Track grid positions claimed in this generation pass so findNextSlot
+    // can account for widgets added earlier in the same loop
+    const existingWidgetPositions: { x: number; y: number }[] = [];
+
     for (let i = 0; i < prompts.length; i++) {
       const prompt = prompts[i];
       const fallbackHint = fallbackHints[i % fallbackHints.length];
@@ -768,6 +1028,15 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
       // Always add the widget — even if the query failed, the user can re-execute it
       // from the dashboard. Empty result_rows will show "No data" with an Execute button.
       try {
+        // Compute the next available slot given widgets already added in this batch
+        // We track a running list of positions added so far in this generation pass
+        const existingPositions = existingWidgetPositions.map((pos, idx) => ({
+          position_x: pos.x, position_y: pos.y, width: WIDGET_W, height: WIDGET_H,
+          id: `gen-${idx}`, title: '', widget_type: '', query_prompt: '',
+        } as WidgetData));
+        const slot = findNextSlot(existingPositions);
+        existingWidgetPositions.push(slot);
+
         const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
           title: prompt.slice(0, 60),
           widget_type: resolvedHint,
@@ -776,16 +1045,16 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
           resultRows: rows,
           resultColumns: columns,
           uiHint: resolvedHint,
-          gridX: (i % 3) * 4,
-          gridY: Math.floor(i / 3) * 4,
-          gridW: 4, gridH: 4,
+          gridX: slot.x,
+          gridY: slot.y,
+          gridW: WIDGET_W, gridH: WIDGET_H,
         });
         onWidgetAdded({
           id: widget.widget.id, title: widget.widget.title,
           widget_type: resolvedHint,
           query_prompt: prompt,
-          position_x: (i % 3) * 4, position_y: Math.floor(i / 3) * 4,
-          width: 4, height: 4,
+          position_x: slot.x, position_y: slot.y,
+          width: WIDGET_W, height: WIDGET_H,
           result_rows: rows,
           result_columns: columns,
           ui_hint: resolvedHint,
@@ -958,6 +1227,11 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
   const [lastRanVia, setLastRanVia] = useState<'prompt' | 'sql' | null>(null);
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
+  // AI-assist state: rephrasing/suggesting in progress, and whether the prompt
+  // was just auto-suggested (so we ask the user to review before generating).
+  const [assisting, setAssisting] = useState(false);
+  const [justSuggested, setJustSuggested] = useState(false);
+  const [assistNote, setAssistNote] = useState('');
   const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; fullRows: Record<string, unknown>[]; columns: string[]; ui_hint: string; llm_suggested_hint?: string } | null>(null);
   const [error, setError] = useState('');
 
@@ -990,22 +1264,24 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     return null;
   }
 
-  async function handleRunPrompt() {
-    if (!prompt.trim()) return;
+  // Run a natural-language prompt → generate SQL → execute → preview.
+  async function runPromptGeneration(p: string) {
+    const finalPrompt = (p || '').trim();
+    if (!finalPrompt) return;
     setRunning(true); setError(''); setPreview(null);
     try {
       const cid = await getChat();
       if (!cid) { setError('No connection available to run this query.'); return; }
-      const result = await chatApi.ask(orgId, cid, prompt, true);
+      const result = await chatApi.ask(orgId, cid, finalPrompt, true);
       const exec = (result as any).execution;
-      
+
       if (exec?.generated_query) {
         setSql(exec.generated_query); // always update SQL pane so user can see it
       }
-      
+
       const rows: Record<string, unknown>[] = exec?.rows || [];
       const llmHint: string = (result as any).assistantMessage?.ui_hint || exec?.ui_hint;
-      
+
       if (exec?.status === 'failed') {
         setError(exec.error_message || 'Query failed to execute. Check the generated SQL.');
       } else {
@@ -1014,6 +1290,57 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
       }
     } catch (e: any) { setError(e?.message || 'Query failed.'); }
     finally { setRunning(false); }
+  }
+
+  /**
+   * Primary AI-assisted action.
+   *  • Empty prompt → suggest a relevant analytics question for this widget &
+   *    datasource, populate the field, and let the user review before a second
+   *    click generates the chart.
+   *  • Non-empty prompt → first rephrase it into a clearer analytical request,
+   *    show the improved text, then generate the chart from it.
+   */
+  async function handleGenerate() {
+    if (running || saving || assisting || noConnection) return;
+    setError('');
+
+    // Scenario 2 — empty prompt: suggest a question and stop for review.
+    if (!prompt.trim()) {
+      setAssisting(true);
+      try {
+        const { question } = await dashboardApi.suggestQuestion(orgId, dashId, pageId, widget.id);
+        if (question && question.trim()) {
+          setPrompt(question.trim());
+          setJustSuggested(true);
+          setAssistNote('AI suggested a question — review or edit it, then click Generate.');
+        } else {
+          setError('Could not suggest a question. Please type one and click Generate.');
+        }
+      } catch {
+        setError('Could not suggest a question. Please type one and click Generate.');
+      } finally { setAssisting(false); }
+      return;
+    }
+
+    // Scenario 1 — prompt has text: rephrase, then generate from the improved text.
+    setAssisting(true);
+    let finalPrompt = prompt.trim();
+    try {
+      const { prompt: improved } = await dashboardApi.improvePrompt(orgId, dashId, pageId, widget.id, finalPrompt);
+      if (improved && improved.trim() && improved.trim() !== finalPrompt) {
+        finalPrompt = improved.trim();
+        setPrompt(finalPrompt);
+        setAssistNote('Refined your question for clearer analysis.');
+      } else {
+        setAssistNote('');
+      }
+    } catch {
+      // If rephrasing fails, fall back to the user's original prompt.
+      setAssistNote('');
+    } finally { setAssisting(false); }
+
+    setJustSuggested(false);
+    await runPromptGeneration(finalPrompt);
   }
 
   async function handleRunSQL() {
@@ -1096,25 +1423,52 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-foreground">Data prompt</label>
-              <span className="text-[10px] text-muted-foreground">Natural language — AI writes the SQL</span>
+              <span className="text-[10px] text-muted-foreground">Natural language — AI refines it & writes the SQL</span>
             </div>
             <textarea
               value={prompt}
-              onChange={e => { setPrompt(e.target.value); setPreview(null); }}
+              onChange={e => { setPrompt(e.target.value); setPreview(null); setJustSuggested(false); setAssistNote(''); }}
               rows={2}
-              disabled={running || saving}
-              placeholder="e.g. Show top 10 customers by total revenue"
+              disabled={running || saving || assisting}
+              placeholder="Describe what you want to see — or leave empty and click Generate for an AI suggestion"
               className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
             />
-            <button
-              onClick={handleRunPrompt}
-              disabled={running || saving || !prompt.trim() || noConnection}
-              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 border border-border rounded-lg text-xs font-medium text-foreground disabled:opacity-40 transition-colors"
-            >
-              {running && lastRanVia !== 'sql'
-                ? <><span className="w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Running…</>
-                : <><Play className="w-3 h-3 text-primary" />Run with prompt</>}
-            </button>
+
+            {/* AI assist note (suggested / refined) */}
+            {assistNote && (
+              <p className="mt-1.5 text-[11px] text-primary flex items-center gap-1.5">
+                <Sparkles className="w-3 h-3" /> {assistNote}
+              </p>
+            )}
+
+            <div className="mt-2 flex items-center gap-2">
+              {/* Primary AI-assisted Generate */}
+              <button
+                onClick={handleGenerate}
+                disabled={running || saving || assisting || noConnection}
+                title={prompt.trim()
+                  ? 'Refine the question and generate the chart'
+                  : 'Suggest a relevant question for this widget'}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white disabled:opacity-40 transition-opacity hover:opacity-90"
+                style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+              >
+                {assisting
+                  ? <><span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />{prompt.trim() ? 'Refining…' : 'Suggesting…'}</>
+                  : running && lastRanVia !== 'sql'
+                    ? <><span className="w-3 h-3 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating…</>
+                    : <><Sparkles className="w-3.5 h-3.5" />{justSuggested ? 'Generate from suggestion' : 'Generate'}</>}
+              </button>
+
+              {/* Run the typed prompt verbatim (no rephrasing) */}
+              <button
+                onClick={() => runPromptGeneration(prompt)}
+                disabled={running || saving || assisting || !prompt.trim() || noConnection}
+                title="Run your prompt exactly as written (skip AI rephrasing)"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted hover:bg-muted/80 border border-border rounded-lg text-xs font-medium text-foreground disabled:opacity-40 transition-colors"
+              >
+                <Play className="w-3 h-3 text-primary" />Run as-is
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -1224,11 +1578,243 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     </div>
   );
 }
+
+// ── Sortable page tab ───────────────────────────────────────────
+// A single dashboard page tab that can be dragged to reorder (dnd-kit
+// sortable), clicked to switch, double-clicked to rename, exported as a PNG,
+// or deleted. Dragging is enabled only in edit mode.
+function SortablePageTab({
+  page, active, isEditing, canDelete, renaming, draftName, confirmDelete, exporting,
+  onSwitch, onStartRename, onDraftChange, onCommitRename, onCancelRename,
+  onRequestDelete, onConfirmDelete, onCancelDelete, onExportPng,
+}: {
+  page: { id: string; name: string };
+  active: boolean;
+  isEditing: boolean;
+  canDelete: boolean;
+  renaming: boolean;
+  draftName: string;
+  confirmDelete: boolean;
+  exporting: boolean;
+  onSwitch: () => void;
+  onStartRename: () => void;
+  onDraftChange: (v: string) => void;
+  onCommitRename: (v: string) => void;
+  onCancelRename: () => void;
+  onRequestDelete: (e: React.MouseEvent) => void;
+  onConfirmDelete: (e: React.MouseEvent) => void;
+  onCancelDelete: (e: React.MouseEvent) => void;
+  onExportPng: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: page.id,
+    disabled: !isEditing || renaming,
+  });
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.85 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative group/tab flex items-center">
+      {renaming ? (
+        <div className="flex items-center px-3 py-2.5 border-b-2 border-primary">
+          <input
+            value={draftName}
+            onChange={e => onDraftChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') onCommitRename(draftName);
+              if (e.key === 'Escape') onCancelRename();
+            }}
+            onBlur={() => onCommitRename(draftName)}
+            autoFocus
+            className="text-xs font-medium bg-transparent text-foreground outline-none w-28"
+          />
+        </div>
+      ) : (
+        <div
+          {...(isEditing ? { ...attributes, ...listeners } : {})}
+          className={`flex items-center border-b-2 transition-colors ${
+            isEditing ? 'cursor-grab active:cursor-grabbing' : ''
+          } ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+        >
+          {isEditing && (
+            <div className="pl-2 pr-1 opacity-40 hover:opacity-100 flex items-center justify-center shrink-0">
+              <GripVertical className="w-3.5 h-3.5" />
+            </div>
+          )}
+          <button
+            onClick={onSwitch}
+            onDoubleClick={() => { if (isEditing) onStartRename(); }}
+            title={isEditing ? 'Drag to reorder · double-click to rename' : page.name}
+            className={`py-2.5 text-xs font-medium whitespace-nowrap ${isEditing ? 'pr-2 pl-1' : 'px-3.5'}`}
+          >
+            {page.name}
+          </button>
+          {isEditing && (
+            <button
+              onPointerDown={e => e.stopPropagation()}
+              onClick={onStartRename}
+              className="opacity-0 group-hover/tab:opacity-100 mr-2 w-4 h-4 rounded text-muted-foreground hover:text-primary hover:bg-muted flex items-center justify-center transition-all"
+              title="Rename page"
+            >
+              <Edit3 className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Per-page PNG export */}
+      {!renaming && (
+        <button
+          onPointerDown={e => e.stopPropagation()}
+          onClick={onExportPng}
+          disabled={exporting}
+          title="Export this page as PNG"
+          className="opacity-0 group-hover/tab:opacity-100 ml-0.5 w-5 h-5 rounded text-muted-foreground hover:text-primary hover:bg-muted flex items-center justify-center transition-all disabled:opacity-40"
+        >
+          <ImageDown className="w-3.5 h-3.5" />
+        </button>
+      )}
+
+      {/* Delete */}
+      {isEditing && canDelete && !renaming && (
+        confirmDelete ? (
+          <div className="flex items-center gap-1 px-1.5 py-1">
+            <span className="text-[10px] text-destructive font-medium">Delete?</span>
+            <button
+              onPointerDown={e => e.stopPropagation()}
+              onClick={onConfirmDelete}
+              className="w-4 h-4 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity"
+              title="Confirm delete"
+            >
+              <Check className="w-2.5 h-2.5" />
+            </button>
+            <button
+              onPointerDown={e => e.stopPropagation()}
+              onClick={onCancelDelete}
+              className="w-4 h-4 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors"
+              title="Cancel"
+            >
+              <X className="w-2.5 h-2.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={onRequestDelete}
+            className="opacity-0 group-hover/tab:opacity-100 ml-0.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all"
+            title="Delete page"
+          >
+            <X className="w-2.5 h-2.5" />
+          </button>
+        )
+      )}
+    </div>
+  );
+}
+
+// ── Export-to-PDF page selection modal ──────────────────────────
+function ExportPdfModal({
+  pages, dashName, exporting, onExport, onClose,
+}: {
+  pages: { id: string; name: string }[];
+  dashName: string;
+  exporting: boolean;
+  onExport: (orderedSelectedIds: string[]) => void;
+  onClose: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(
+    () => new Set(pages.map(p => String(p.id))),
+  );
+  const allSelected = selected.size === pages.length && pages.length > 0;
+
+  const toggle = (id: string) =>
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected(allSelected ? new Set() : new Set(pages.map(p => String(p.id))));
+
+  const handleExport = () => {
+    // Preserve current dashboard order, include only selected pages.
+    const ordered = pages.filter(p => selected.has(String(p.id))).map(p => String(p.id));
+    if (ordered.length) onExport(ordered);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={exporting ? undefined : onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()} style={{ boxShadow: 'var(--shadow-elevated)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-xl bg-primary/10 flex items-center justify-center">
+              <FileText className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Export dashboard as PDF</h2>
+              <p className="text-xs text-muted-foreground">{dashName}.pdf</p>
+            </div>
+          </div>
+          {!exporting && (
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><X className="w-4 h-4" /></button>
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-b border-border shrink-0 flex items-center justify-between">
+          <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} disabled={exporting} className="accent-primary w-3.5 h-3.5" />
+            Select all
+          </label>
+          <span className="text-[11px] text-muted-foreground">{selected.size} of {pages.length} selected</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2">
+          {pages.map((p, i) => {
+            const id = String(p.id);
+            const checked = selected.has(id);
+            return (
+              <label
+                key={id}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors ${checked ? 'bg-primary/5' : 'hover:bg-muted/50'}`}
+              >
+                <input type="checkbox" checked={checked} onChange={() => toggle(id)} disabled={exporting} className="accent-primary w-4 h-4 shrink-0" />
+                <span className="w-5 h-5 rounded-md bg-muted text-[10px] text-muted-foreground flex items-center justify-center shrink-0">{i + 1}</span>
+                <span className="text-sm text-foreground truncate flex-1">{p.name}</span>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="flex gap-2 px-5 py-4 border-t border-border shrink-0">
+          <button onClick={onClose} disabled={exporting} className="px-4 py-2 border border-border text-muted-foreground rounded-xl text-sm hover:bg-muted transition-colors disabled:opacity-40">Cancel</button>
+          <button
+            onClick={handleExport}
+            disabled={exporting || selected.size === 0}
+            className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          >
+            {exporting
+              ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating PDF…</>
+              : <><FileText className="w-3.5 h-3.5" />Export {selected.size} page{selected.size !== 1 ? 's' : ''}</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardBuilder({
-  orgSlug, dashId, backUrl, backLabel, titleOverride, subtitleOverride,
+  orgSlug, dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav,
 }: {
   orgSlug: string; dashId: string; backUrl?: string; backLabel?: string;
   titleOverride?: string; subtitleOverride?: string;
+  // When true, hides the in-header back link + Chat/Dashboard buttons because
+  // the surrounding layout already provides that navigation (single data source).
+  hideContextNav?: boolean;
 }) {
   const [org, setOrg] = useState<Record<string, unknown> | null>(null);
   const [dashboard, setDashboard] = useState<Record<string, unknown> | null>(null);
@@ -1236,8 +1822,11 @@ export function DashboardBuilder({
   const [activePage, setActivePage] = useState<string | null>(null);
   const [widgets, setWidgets] = useState<WidgetData[]>([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Monotonic page-number reservation so rapid +Page clicks never collide.
+  const pageSeqRef = useRef(0);
   const [deletedWidgetIds, setDeletedWidgetIds] = useState<string[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | undefined>();
 
@@ -1263,13 +1852,61 @@ export function DashboardBuilder({
   const [defaultHint, setDefaultHint] = useState('');
   const [refreshingAll, setRefreshingAll] = useState(false);
 
+  // Export state — a single in-flight flag prevents duplicate export requests.
+  const [exporting, setExporting] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportNote, setExportNote] = useState<{ kind: 'success' | 'error' | 'info'; msg: string } | null>(null);
+  const [pageNote, setPageNote] = useState<{ kind: 'success' | 'error' | 'info'; msg: string } | null>(null);
+
+  // Global left-nav sidebar control — collapse it while editing to give the canvas room.
+  const { setSidebarCollapsed } = useUIStore();
+
   // Page rename state
   const [renamingPage, setRenamingPage] = useState<string | null>(null);
   const [pageNameDraft, setPageNameDraft] = useState('');
   const [confirmDeletePageId, setConfirmDeletePageId] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const captureRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(1200);
+
+  // Live refs so async export/reorder routines read current pages/active page
+  // across awaits (state closures would be stale).
+  const pagesRef = useRef(pages);
+  const activePageRef = useRef(activePage);
+  useEffect(() => { pagesRef.current = pages; }, [pages]);
+  useEffect(() => { activePageRef.current = activePage; }, [activePage]);
+
+  // Auto-dismiss export notifications.
+  useEffect(() => {
+    if (!exportNote) return;
+    const t = setTimeout(() => setExportNote(null), 4000);
+    return () => clearTimeout(t);
+  }, [exportNote]);
+
+  // Auto-dismiss page notifications.
+  useEffect(() => {
+    if (!pageNote) return;
+    const t = setTimeout(() => setPageNote(null), 4000);
+    return () => clearTimeout(t);
+  }, [pageNote]);
+
+  // Sensors for the page-tab reorder drag (separate from the widget DndContext).
+  const pageSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+
+  // Auto-collapse the global sidebar in edit mode; restore it when leaving.
+  // Also clear any widget selection when leaving edit mode.
+  useEffect(() => {
+    setSidebarCollapsed(isEditing);
+    if (!isEditing) setSelectedWidgetId(null);
+  }, [isEditing, setSidebarCollapsed]);
+
+  // Make sure the sidebar is restored if the builder unmounts while editing.
+  useEffect(() => {
+    return () => setSidebarCollapsed(false);
+  }, [setSidebarCollapsed]);
 
   const [activeDragItem, setActiveDragItem] = useState<{ type: string; data: any } | null>(null);
 
@@ -1304,8 +1941,16 @@ export function DashboardBuilder({
       if (first) {
         setActivePage(first.id);
         const builtWidgets = buildWidgets(first);
-        // Refresh widget data from live DB immediately after build
-        refreshAllWidgets(o.id, String(first.id), builtWidgets);
+        // Smart conditional refresh:
+        // - Widgets that already have pre-seeded result_rows show data IMMEDIATELY
+        // - Only widgets with no pre-loaded data are refreshed against the live DB
+        // This eliminates the race condition where refreshAllWidgets tramples pre-loaded data.
+        const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
+        if (emptyWidgets.length > 0) {
+          // Refresh only the empty widgets; pre-seeded widgets keep showing their data
+          refreshWidgets(o.id, String(first.id), emptyWidgets);
+        }
+        // If ALL widgets have data, no refresh needed — dashboard is immediately ready
       }
       if (data.dashboard?.connection_id) {
         const { chats } = await chatApi.list(o.id, { connectionId: data.dashboard.connection_id as string });
@@ -1322,21 +1967,26 @@ export function DashboardBuilder({
   useEffect(() => { loadData(); }, [loadData]);
 
   /**
-   * Re-execute all widget queries for a page against the live database.
-   * Uses the backend's WidgetExecutionService (which handles LLM + MCP + Redis cache).
-   * Runs up to 4 widgets concurrently to avoid connection pool exhaustion.
+   * Refresh ONLY a specific subset of widgets against the live database.
+   * Pre-seeded widgets that already have data are NOT touched — they show
+   * their data immediately without a loading flash.
+   * Used on initial load so that auto-generated dashboards appear fully
+   * populated the moment they open.
    */
-  async function refreshAllWidgets(
+  async function refreshWidgets(
     orgId: string,
     pageId: string,
     widgetList: WidgetData[],
     forceRefresh = false,
   ) {
+    // Never execute query-less (empty drag-and-drop) widgets — they must stay
+    // empty until the user explicitly generates a chart in the editor.
+    widgetList = widgetList.filter(widgetHasQuery);
     if (!widgetList.length) return;
-    setRefreshingAll(true);
 
-    // Mark all widgets as loading
-    setWidgets(prev => prev.map(w => ({ ...w, isLoading: true })));
+    // Mark ONLY the empty widgets as loading — pre-seeded widgets keep their data
+    const emptyIds = new Set(widgetList.map(w => w.id));
+    setWidgets(prev => prev.map(w => emptyIds.has(w.id) ? { ...w, isLoading: true } : w));
 
     const CONCURRENCY = 4;
     let i = 0;
@@ -1344,20 +1994,86 @@ export function DashboardBuilder({
     async function runNext() {
       while (i < widgetList.length) {
         const widget = widgetList[i++];
-        try {
-          const result = await dashboardApi.executeWidget(orgId, dashId, pageId, widget.id, forceRefresh);
-          if (result.rows && result.columns) {
-            setWidgets(prev => prev.map(w =>
-              w.id === widget.id
-                ? { ...w, result_rows: result.rows, result_columns: result.columns, isLoading: false }
-                : w
-            ));
-          } else {
-            setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+        let succeeded = false;
+        for (let attempt = 0; attempt < 2 && !succeeded; attempt++) {
+          try {
+            const result = await dashboardApi.executeWidget(orgId, dashId, pageId, widget.id, attempt > 0 || forceRefresh);
+            if (result.rows?.length > 0 && result.columns) {
+              setWidgets(prev => prev.map(w =>
+                w.id === widget.id
+                  ? { ...w, result_rows: result.rows, result_columns: result.columns, isLoading: false }
+                  : w
+              ));
+              succeeded = true;
+            } else if (attempt === 1) {
+              setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+              succeeded = true;
+            }
+          } catch {
+            if (attempt === 1) {
+              setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+              succeeded = true;
+            }
           }
-        } catch {
-          // Widget execution failed — clear loading state gracefully
-          setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: CONCURRENCY }, runNext));
+  }
+
+  /**
+   * Re-execute ALL widget queries for a page against the live database.
+   * Uses the backend's WidgetExecutionService (which handles LLM + MCP + Redis cache).
+   * Runs up to 4 widgets concurrently to avoid connection pool exhaustion.
+   * Used by the manual Refresh button (forceRefresh=true) and page switching.
+   */
+  async function refreshAllWidgets(
+    orgId: string,
+    pageId: string,
+    widgetList: WidgetData[],
+    forceRefresh = false,
+  ) {
+    // Only re-run widgets that already have a query — empty drag-and-drop
+    // widgets carry no prompt/SQL and must never auto-generate a chart, even
+    // when the user hits "Refresh all".
+    widgetList = widgetList.filter(widgetHasQuery);
+    if (!widgetList.length) { setRefreshingAll(false); return; }
+    setRefreshingAll(true);
+
+    // Mark the executable widgets as loading
+    const execIds = new Set(widgetList.map(w => w.id));
+    setWidgets(prev => prev.map(w => execIds.has(w.id) ? { ...w, isLoading: true } : w));
+
+    const CONCURRENCY = 4;
+    let i = 0;
+
+    async function runNext() {
+      while (i < widgetList.length) {
+        const widget = widgetList[i++];
+        let succeeded = false;
+        for (let attempt = 0; attempt < 2 && !succeeded; attempt++) {
+          try {
+            const result = await dashboardApi.executeWidget(orgId, dashId, pageId, widget.id, attempt > 0 || forceRefresh);
+            if (result.rows?.length > 0 && result.columns) {
+              setWidgets(prev => prev.map(w =>
+                w.id === widget.id
+                  ? { ...w, result_rows: result.rows, result_columns: result.columns, isLoading: false }
+                  : w
+              ));
+              succeeded = true;
+            } else if (attempt === 1) {
+              // Second attempt still no data — clear loading
+              setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+              succeeded = true;
+            }
+          } catch {
+            if (attempt === 1) {
+              // Both attempts failed — clear loading state gracefully
+              setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
+              succeeded = true;
+            }
+          }
         }
       }
     }
@@ -1392,8 +2108,8 @@ export function DashboardBuilder({
         query_prompt: String(qd.prompt || w.query_prompt || ''),
         position_x: Number(w.grid_x ?? w.position_x) || 0,
         position_y: Number(w.grid_y ?? w.position_y) || 0,
-        width: Number(w.grid_w ?? w.width) || 4,
-        height: Number(w.grid_h ?? w.height) || 3,
+        width: Number(w.grid_w ?? w.width) || 6,
+        height: Number(w.grid_h ?? w.height) || 4,
         result_rows: resultRows,
         result_columns: resultCols,
         ui_hint: normalizeWidgetType(String(qd.ui_hint || w.card_chart_type || w.ui_hint || w.widget_type || 'table')),
@@ -1406,20 +2122,40 @@ export function DashboardBuilder({
 
   function switchPage(id: string) {
     setActivePage(id);
+    setSelectedWidgetId(null); // Clear widget selection when changing pages
     setDeletedWidgetIds([]); // Clear unsaved deletions for the previous page
     const p = pages.find(p => p.id === id);
     if (p) {
       const builtWidgets = buildWidgets(p as Record<string, unknown>);
-      if (org) refreshAllWidgets(String((org as any).id), id, builtWidgets);
+      if (org) {
+        const orgId = String((org as any).id);
+        const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
+        if (emptyWidgets.length === 0) {
+          // All widgets have data — nothing to refresh
+          return;
+        }
+        if (emptyWidgets.length === builtWidgets.length) {
+          // All widgets are empty — full refresh with spinner
+          refreshAllWidgets(orgId, id, builtWidgets);
+        } else {
+          // Some widgets are empty — targeted refresh preserves seeded data
+          refreshWidgets(orgId, id, emptyWidgets);
+        }
+      }
     }
   }
 
   async function addPage() {
     if (!org) return;
+    // Sequential, duplicate-free naming: take the highest existing "Page N"
+    // and the highest number reserved by in-flight clicks, then +1. The ref
+    // guarantees rapid successive clicks each get a unique increasing number.
+    const next = Math.max(highestPageNumber(pages), pageSeqRef.current) + 1;
+    pageSeqRef.current = next;
     try {
-      const { page } = await dashboardApi.addPage(String(org.id), dashId, `Page ${pages.length + 1}`);
+      const { page } = await dashboardApi.addPage(String(org.id), dashId, `Page ${next}`);
       setPages(ps => [...ps, { ...page, widgets: [] }]);
-      setActivePage(page.id); setWidgets([]);
+      setActivePage(page.id); setWidgets([]); setSelectedWidgetId(null);
     } catch (e) { console.error(e); }
   }
 
@@ -1436,6 +2172,62 @@ export function DashboardBuilder({
     } catch (e) { console.error(e); }
     finally { setConfirmDeletePageId(null); }
   }
+
+  // Rename a page with validation (non-empty + unique within the dashboard).
+  // Optimistically updates locally, then persists; reverts on server error.
+  async function commitPageRename(pageId: string, rawName: string) {
+    const name = (rawName || '').trim();
+    const current = pages.find(p => String(p.id) === String(pageId));
+    if (!name) {
+      setPageNote({ kind: 'error', msg: 'Page name cannot be empty' });
+      return; // keep editing
+    }
+    if (current && String(current.name).trim() === name) {
+      setRenamingPage(null);
+      return; // no change
+    }
+    const dupe = pages.some(p =>
+      String(p.id) !== String(pageId) &&
+      String(p.name).trim().toLowerCase() === name.toLowerCase(),
+    );
+    if (dupe) {
+      setPageNote({ kind: 'error', msg: `A page named “${name}” already exists` });
+      return; // keep editing so the user can fix it
+    }
+
+    setPages(prev => prev.map(p => String(p.id) === String(pageId) ? { ...p, name } : p));
+    setRenamingPage(null);
+    if (!org) return;
+    try {
+      await dashboardApi.updatePage(String(org.id), dashId, pageId, { name });
+    } catch (err: any) {
+      setPageNote({ kind: 'error', msg: err?.message || 'Failed to rename page' });
+      // Reload authoritative pages to revert the optimistic change.
+      try {
+        const data = await dashboardApi.get(String(org.id), dashId);
+        setPages(data.pages || []);
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Persist a new page order after a drag-reorder.
+  const handlePageReorder = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id || !org) return;
+    setPages(prev => {
+      const oldIdx = prev.findIndex(p => String(p.id) === String(active.id));
+      const newIdx = prev.findIndex(p => String(p.id) === String(over.id));
+      if (oldIdx < 0 || newIdx < 0) return prev;
+      const next = arrayMove(prev, oldIdx, newIdx);
+      dashboardApi
+        .reorderPages(String((org as any).id), dashId, next.map(p => String(p.id)))
+        .catch(err => {
+          console.error('reorderPages failed:', err);
+          setExportNote({ kind: 'error', msg: 'Failed to save page order' });
+        });
+      return next;
+    });
+  }, [org, dashId]);
 
   async function handleSave() {
     if (!org) return;
@@ -1469,8 +2261,8 @@ export function DashboardBuilder({
       query_prompt: String(qd.prompt || raw.query_prompt || ''),
       position_x: Number(raw.grid_x ?? raw.position_x) || 0,
       position_y: Number(raw.grid_y ?? raw.position_y) || 0,
-      width: Number(raw.grid_w ?? raw.width) || 4,
-      height: Number(raw.grid_h ?? raw.height) || 3,
+      width: WIDGET_W,
+      height: WIDGET_H,
       result_rows: ((qd.result_rows || raw.result_rows || []) as Record<string, unknown>[]),
       result_columns: (qd.result_columns || raw.result_columns || []) as string[],
       ui_hint: String(qd.ui_hint || raw.ui_hint || raw.widget_type || 'table'),
@@ -1482,11 +2274,13 @@ export function DashboardBuilder({
       return;
     }
 
-    if (raw.is_dropped) setWidgets(ws => [...ws, w]);
-    else {
+    if (raw.is_dropped) {
+      setWidgets(ws => [...ws, w]);
+    } else {
+      // Place widget in the next available 2-col grid slot
       setWidgets(ws => {
-        const maxY = ws.reduce((m, ww) => Math.max(m, (ww.position_y || 0) + (ww.height || 3)), 0);
-        return [...ws, { ...w, position_y: maxY }];
+        const slot = findNextSlot(ws);
+        return [...ws, { ...w, position_x: slot.x, position_y: slot.y }];
       });
     }
   }
@@ -1509,7 +2303,7 @@ export function DashboardBuilder({
         queryPrompt: widget.query_prompt, sql: widget.sql,
         resultRows: widget.result_rows || [], resultColumns: widget.result_columns || [],
         uiHint: widget.ui_hint || widget.widget_type,
-        gridX: 0, gridY: 0, gridW: widget.width || 4, gridH: widget.height || 3,
+        gridX: 0, gridY: 0, gridW: widget.width || 6, gridH: widget.height || 4,
         datasourceScopeType: 'connection',
       });
       const newWidget = res.widget;
@@ -1551,10 +2345,16 @@ Columns: ${cols}${intent}${sqlContext}
 Based on the above data context, suggest a highly relevant dashboard card title.`;
       
       const result = await chatApi.suggestTitle(String(org.id), prompt);
-      const title = result.title?.trim() || widget.title;
-      const cleanTitle = title.replace(/^["']|["']$/g, '');
+      const title = (result.title || '').trim().replace(/^["']|["']$/g, '');
+      // The backend always returns a usable title (AI or a deterministic
+      // fallback), so we only keep the existing title if it came back blank.
+      const cleanTitle = title || widget.title;
+      if (result.fallback) {
+        // Recoverable AI miss — applied a derived title, no error popup.
+        console.warn('AI title unavailable; applied a suggested fallback title.');
+      }
       renameWidget(widgetId, cleanTitle);
-      
+
       // Persist the generated title to the backend so it survives refresh
       if (activePage) {
         await dashboardApi.updateWidget(String(org.id), dashId, activePage, widgetId, {
@@ -1563,8 +2363,9 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         });
       }
     } catch (e: any) {
-      console.error('Suggest title failed:', e);
-      alert('Failed to generate AI title: ' + (e.message || 'Unknown error'));
+      // Network/unexpected failure only — keep the current title, no blocking
+      // popup (recoverable AI failures are handled server-side via fallback).
+      console.warn('Suggest title request failed; keeping current title.', e?.message || e);
     } finally {
       setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: false } : w));
     }
@@ -1627,7 +2428,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
   async function handleCardClick(card: any) {
     if (!org || !activePage) return;
-    const maxY = widgets.reduce((m, w) => Math.max(m, (w.position_y || 0) + (w.height || 3)), 0);
+    const slot = findNextSlot(widgets);
     try {
       const cardQd = typeof card.query_definition === 'string'
         ? JSON.parse(card.query_definition) : (card.query_definition || {});
@@ -1647,7 +2448,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         title: card.name,
         widget_type: widgetType,
         cardId: card.id,
-        gridX: 0, gridY: maxY, gridW: 4, gridH: 3,
+        gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
         datasourceScopeType: contextType,
         datasourceContextId: card.datasource_context_id,
         sql: cardSql,
@@ -1666,7 +2467,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         title: String(rw.title || ''),
         widget_type: widgetType,
         query_prompt: card.name,
-        position_x: 0, position_y: maxY, width: 4, height: 3,
+        position_x: slot.x, position_y: slot.y, width: WIDGET_W, height: WIDGET_H,
         result_rows: initRows,
         result_columns: initCols,
         ui_hint: widgetType,
@@ -1686,10 +2487,130 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
   function handleTemplateClick(type: string) {
     if (!activePage) return;
-    const maxY = widgets.reduce((m, w) => Math.max(m, (w.position_y || 0) + (w.height || 3)), 0);
-    setDefaultPosition({ x: 0, y: maxY, w: 4, h: 3 });
+    const slot = findNextSlot(widgets);
+    setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
     setDefaultHint(type);
     setShowAddWidget(true);
+  }
+
+  // Click an empty grid cell → open Add Widget seeded to that exact slot.
+  function handleCellClick(x: number, y: number) {
+    if (!activePage || !isEditing) return;
+    setDefaultPosition({ x, y, w: WIDGET_W, h: WIDGET_H });
+    setDefaultHint('');
+    setShowAddWidget(true);
+  }
+
+  // Download the dashboard grid (only the pages — no sidebars/header) as a PNG.
+  // ── Export engine ─────────────────────────────────────────────
+  // Capture a single page's grid as a PNG data URL. If the page isn't the
+  // active one, it is briefly made active and given time to paint before the
+  // snapshot is taken. Captures only the grid wrapper (captureRef) so no
+  // sidebars/header/chrome are included.
+  const dashName = () => safeFilePart(String(dashboard?.name || titleOverride || 'Dashboard'));
+
+  function triggerDownload(filename: string, dataUrl: string) {
+    const a = document.createElement('a');
+    a.download = filename;
+    a.href = dataUrl;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function showPageForCapture(pageId: string): boolean {
+    const p = pagesRef.current.find(pp => String(pp.id) === String(pageId));
+    if (!p) return false;
+    setActivePage(String(pageId));
+    buildWidgets(p as Record<string, unknown>);
+    return true;
+  }
+
+  async function capturePage(pageId: string): Promise<{ dataUrl: string; width: number; height: number } | null> {
+    // Make the target page active and let the grid + charts paint.
+    if (String(activePageRef.current) !== String(pageId)) {
+      if (!showPageForCapture(pageId)) return null;
+      activePageRef.current = String(pageId);
+      await new Promise(r => setTimeout(r, 1100));
+    } else {
+      await new Promise(r => setTimeout(r, 350));
+    }
+
+    const el = captureRef.current;
+    if (!el) return null; // page has no widgets → nothing to capture
+
+    const { toPng } = await import('html-to-image');
+    const dataUrl = await toPng(el, {
+      backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
+      pixelRatio: 2,
+      width: el.offsetWidth,
+      height: el.scrollHeight,
+      style: { overflow: 'visible', height: `${el.scrollHeight}px` },
+      filter: (node: HTMLElement) =>
+        !(node.classList && (
+          node.classList.contains('widget-drag-handle') ||
+          node.classList.contains('react-resizable-handle')
+        )),
+    });
+    return { dataUrl, width: el.offsetWidth, height: el.scrollHeight };
+  }
+
+  // Export a single page as `DashboardName_PageName.png`.
+  async function exportPagePng(pageId: string) {
+    if (exporting) return;
+    setExporting(true);
+    setExportNote(null);
+    const orig = activePageRef.current;
+    const page = pagesRef.current.find(p => String(p.id) === String(pageId));
+    const pageName = safeFilePart(String(page?.name || 'Page'));
+    try {
+      const cap = await capturePage(pageId);
+      if (!cap) throw new Error('This page has no content to export');
+      triggerDownload(`${dashName()}_${pageName}.png`, cap.dataUrl);
+      setExportNote({ kind: 'success', msg: `Exported “${page?.name || 'page'}” as PNG` });
+    } catch (e: any) {
+      setExportNote({ kind: 'error', msg: e?.message || 'Failed to export page' });
+    } finally {
+      if (orig && String(activePageRef.current) !== String(orig)) switchPage(String(orig));
+      setExporting(false);
+    }
+  }
+
+  // Export selected pages (in dashboard order) as a single `DashboardName.pdf`.
+  async function exportDashboardPdf(orderedSelectedIds: string[]) {
+    if (exporting) return;
+    setExporting(true);
+    setExportNote(null);
+    const orig = activePageRef.current;
+    const ordered = pagesRef.current
+      .filter(p => orderedSelectedIds.includes(String(p.id)));
+    try {
+      if (!ordered.length) throw new Error('No pages selected');
+      const { jsPDF } = await import('jspdf');
+      let pdf: any = null;
+      let added = 0;
+      for (const p of ordered) {
+        const cap = await capturePage(String(p.id));
+        if (!cap) continue; // skip empty pages rather than fail the whole export
+        const orientation = cap.width >= cap.height ? 'landscape' : 'portrait';
+        if (!pdf) {
+          pdf = new jsPDF({ orientation, unit: 'px', format: [cap.width, cap.height], compress: true });
+        } else {
+          pdf.addPage([cap.width, cap.height], orientation);
+        }
+        pdf.addImage(cap.dataUrl, 'PNG', 0, 0, cap.width, cap.height, undefined, 'FAST');
+        added++;
+      }
+      if (!pdf || added === 0) throw new Error('No page content could be captured');
+      pdf.save(`${dashName()}.pdf`);
+      setExportNote({ kind: 'success', msg: `Exported ${added} page${added !== 1 ? 's' : ''} to PDF` });
+    } catch (e: any) {
+      setExportNote({ kind: 'error', msg: e?.message || 'Failed to export PDF' });
+    } finally {
+      setShowExportModal(false);
+      if (orig && String(activePageRef.current) !== String(orig)) switchPage(String(orig));
+      setExporting(false);
+    }
   }
 
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
@@ -1700,34 +2621,50 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
     const isZone = over.id === 'dashboard-drop-zone';
     const isWidget = over.data?.current?.type === 'widget-drop';
+    const isCell = over.data?.current?.type === 'grid-cell';
 
-    if (isZone || isWidget) {
+    if (isZone || isWidget || isCell) {
       const activeData = active.data?.current;
       if (!activeData || !org || !activePage) return;
 
-      let targetX = 0;
-      let targetY = widgets.reduce((m, w) => Math.max(m, (w.position_y || 0) + (w.height || 3)), 0);
+      let slot: { x: number; y: number };
 
       if (isWidget) {
-        const overWidget = over?.data?.current?.widget as WidgetData;
-        targetX = overWidget.position_x;
-        targetY = overWidget.position_y;
+        // DROP ONTO EXISTING WIDGET — insert at that slot and shift others forward
+        const overWidget = over.data?.current?.widget as WidgetData;
+        const { slotX, slotY, shiftedWidgets } = insertAtSlot(
+          widgets,
+          overWidget.position_x ?? 0,
+          overWidget.position_y ?? 0,
+        );
+        slot = { x: slotX, y: slotY };
+        // Apply the reflow immediately so existing widgets shift before the new one appears
+        setWidgets(shiftedWidgets);
+      } else if (isCell) {
+        // DROP ONTO AN EMPTY GRID CELL — place directly at that slot, no reflow
+        slot = { x: Number(over.data?.current?.x) || 0, y: Number(over.data?.current?.y) || 0 };
+      } else {
+        // DROP INTO EMPTY SPACE — append to next available slot
+        slot = findNextSlot(widgets);
       }
 
       if (activeData.type === 'template') {
         const newWidgetId = 'temp-' + Date.now();
         const newWidget: WidgetData = {
           id: newWidgetId, title: activeData.template.name, widget_type: activeData.template.type,
-          query_prompt: '', position_x: targetX, position_y: targetY,
-          width: 4, height: 3, isLoading: true,
+          query_prompt: '', position_x: slot.x, position_y: slot.y,
+          width: WIDGET_W, height: WIDGET_H, isLoading: true,
         };
 
-        setWidgets(prev => [newWidget, ...prev]);
+        setWidgets(prev => [
+          ...prev.filter(w => w.id !== newWidgetId), // avoid duplicate on re-render
+          newWidget,
+        ]);
 
         try {
           const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
             title: activeData.template.name, widget_type: activeData.template.type,
-            gridX: targetX, gridY: targetY, gridW: 4, gridH: 3,
+            gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
             datasourceScopeType: 'connection',
             sql: '', queryPrompt: '', resultRows: [], resultColumns: [], uiHint: activeData.template.type,
           });
@@ -1744,17 +2681,20 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         const newWidgetId = 'card-' + Date.now();
         const newWidget: WidgetData = {
           id: newWidgetId, title: card.name, widget_type: widgetType,
-          query_prompt: card.name, position_x: targetX, position_y: targetY, width: 4, height: 3,
+          query_prompt: card.name, position_x: slot.x, position_y: slot.y, width: WIDGET_W, height: WIDGET_H,
           result_rows: [], result_columns: [], ui_hint: widgetType,
           sql: cardSql, isLoading: true,
         };
 
-        setWidgets(prev => [newWidget, ...prev]);
+        setWidgets(prev => [
+          ...prev.filter(w => w.id !== newWidgetId),
+          newWidget,
+        ]);
 
         try {
           const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
             title: card.name, widget_type: widgetType, cardId: card.id,
-            gridX: targetX, gridY: targetY, gridW: 4, gridH: 3,
+            gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
             datasourceScopeType: contextType, datasourceContextId: card.datasource_context_id || undefined,
             sql: cardSql, queryPrompt: card.name, resultRows: [], resultColumns: [], uiHint: widgetType,
           });
@@ -1769,7 +2709,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     }
   }, [activePage, widgets, org, dashId]);
 
-  const layout = widgets.map(w => ({ i: w.id, x: w.position_x || 0, y: w.position_y || 0, w: Math.max(1, w.width || 4), h: Math.max(1, w.height || 3), minW: 2, minH: 2 }));
+  const layout = widgets.map(w => ({ i: w.id, x: w.position_x || 0, y: w.position_y || 0, w: Math.max(1, w.width || 6), h: Math.max(1, w.height || 4), minW: 2, minH: 2 }));
 
   const { isOver, setNodeRef } = useDroppable({ id: 'dashboard-drop-zone' });
   const mergedRef = useCallback(
@@ -1789,7 +2729,15 @@ Based on the above data context, suggest a highly relevant dashboard card title.
   );
 
   return (
-    <DndContext sensors={dndSensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={dndSensors}
+      collisionDetection={gridCollisionDetection}
+      // Re-measure droppables continuously so the grid-cell drop targets, which
+      // only mount once a drag starts, are picked up during the drag.
+      measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       <div className="h-full bg-background text-foreground flex flex-col min-h-0 w-full">
         <style dangerouslySetInnerHTML={{
           __html: `
@@ -1851,7 +2799,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
         {/* ── Top bar ──────────────────────────────────────────── */}
         <header className="border-b border-border bg-background/95 backdrop-blur-md px-4 py-2.5 flex items-center gap-3 shrink-0" style={{ boxShadow: 'var(--shadow-soft)' }}>
-          {backUrl ? (
+          {!hideContextNav && (backUrl ? (
             <Link href={backUrl} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-xs mr-1">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
               {backLabel || 'Back'}
@@ -1860,9 +2808,9 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             <Link href={`/orgs/${orgSlug}/dashboards`} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
             </Link>
-          )}
+          ))}
 
-          <div className="w-px h-4 bg-border shrink-0" />
+          {!hideContextNav && <div className="w-px h-4 bg-border shrink-0" />}
 
           <LayoutGrid className="w-4 h-4 text-primary shrink-0" />
           <div className="min-w-0">
@@ -1873,7 +2821,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             <span className="text-[10px] px-2 py-0.5 bg-success/10 border border-success/20 text-success rounded-full font-semibold shrink-0">Published</span>
           )}
 
-          {chatUrl && (
+          {chatUrl && !hideContextNav && (
             <div className="flex items-center gap-2 ml-4 shrink-0">
               <Link
                 href={chatUrl}
@@ -1913,6 +2861,17 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               {refreshingAll ? 'Refreshing…' : 'Refresh'}
             </button>
 
+            {/* Export the whole dashboard as a PDF (page-selection modal first) */}
+            <button
+              onClick={() => setShowExportModal(true)}
+              disabled={exporting || pages.length === 0}
+              title="Export dashboard as PDF"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50 transition-all"
+            >
+              <FileText className={`w-3.5 h-3.5 ${exporting ? 'animate-pulse' : ''}`} />
+              {exporting ? 'Exporting…' : 'Export PDF'}
+            </button>
+
             {/* History */}
             <button onClick={() => setShowVersions(v => !v)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${showVersions ? 'bg-muted border-border text-foreground' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
@@ -1935,71 +2894,40 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           </div>
         </header>
 
-        {/* ── Page tabs ──────────────────────────────────────── */}
-        <div className="border-b border-border px-4 flex items-center gap-0.5 bg-background shrink-0">
-          {pages.map(page => {
-            const id = String(page.id);
-            const active = activePage === id;
-            return (
-              <div key={id} className="relative group/tab flex items-center">
-                {renamingPage === id ? (
-                  <div className="flex items-center px-3 py-2.5 border-b-2 border-primary">
-                    <input
-                      value={pageNameDraft}
-                      onChange={e => setPageNameDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') { setRenamingPage(null); /* TODO: save page name */ }
-                        if (e.key === 'Escape') setRenamingPage(null);
-                      }}
-                      onBlur={() => setRenamingPage(null)}
-                      autoFocus
-                      className="text-xs font-medium bg-transparent text-foreground outline-none w-20"
-                    />
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => switchPage(id)}
-                    onDoubleClick={() => isEditing && (setRenamingPage(id), setPageNameDraft(String(page.name)))}
-                    className={`px-3.5 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${active ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-                  >
-                    {String(page.name)}
-                  </button>
-                )}
-                {isEditing && pages.length > 1 && (
-                  confirmDeletePageId === id ? (
-                    <div className="flex items-center gap-1 px-1.5 py-1">
-                      <span className="text-[10px] text-destructive font-medium">Delete?</span>
-                      <button
-                        onClick={e => deletePage(id, e)}
-                        className="w-4 h-4 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity"
-                        title="Confirm delete"
-                      >
-                        <Check className="w-2.5 h-2.5" />
-                      </button>
-                      <button
-                        onClick={e => { e.stopPropagation(); setConfirmDeletePageId(null); }}
-                        className="w-4 h-4 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors"
-                        title="Cancel"
-                      >
-                        <X className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={e => deletePage(id, e)}
-                      className="opacity-0 group-hover/tab:opacity-100 absolute -top-0.5 -right-1.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all text-[10px]"
-                      title="Delete page"
-                    >
-                      <X className="w-2.5 h-2.5" />
-                    </button>
-                  )
-                )}
-              </div>
-            );
-          })}
+        {/* ── Page tabs (drag to reorder in edit mode) ─────────── */}
+        <div className="border-b border-border px-4 flex items-center gap-0.5 bg-background shrink-0 overflow-x-auto">
+          <DndContext sensors={pageSensors} collisionDetection={closestCenter} onDragEnd={handlePageReorder}>
+            <SortableContext items={pages.map(p => String(p.id))} strategy={horizontalListSortingStrategy}>
+              {pages.map(page => {
+                const id = String(page.id);
+                return (
+                  <SortablePageTab
+                    key={id}
+                    page={{ id, name: String(page.name) }}
+                    active={activePage === id}
+                    isEditing={isEditing}
+                    canDelete={pages.length > 1}
+                    renaming={renamingPage === id}
+                    draftName={pageNameDraft}
+                    confirmDelete={confirmDeletePageId === id}
+                    exporting={exporting}
+                    onSwitch={() => switchPage(id)}
+                    onStartRename={() => { setRenamingPage(id); setPageNameDraft(String(page.name)); }}
+                    onDraftChange={setPageNameDraft}
+                    onCommitRename={(v) => commitPageRename(id, v)}
+                    onCancelRename={() => setRenamingPage(null)}
+                    onRequestDelete={(e) => deletePage(id, e)}
+                    onConfirmDelete={(e) => deletePage(id, e)}
+                    onCancelDelete={(e) => { e.stopPropagation(); setConfirmDeletePageId(null); }}
+                    onExportPng={() => exportPagePng(id)}
+                  />
+                );
+              })}
+            </SortableContext>
+          </DndContext>
           {isEditing && (
             <button onClick={addPage}
-              className="flex items-center gap-1 px-3 py-2.5 text-xs text-muted-foreground/60 hover:text-primary transition-colors border-b-2 border-transparent">
+              className="flex items-center gap-1 px-3 py-2.5 text-xs text-muted-foreground/60 hover:text-primary transition-colors border-b-2 border-transparent shrink-0">
               <Plus className="w-3.5 h-3.5" /> Page
             </button>
           )}
@@ -2010,7 +2938,13 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           <div className="bg-primary/8 border-b border-primary/20 px-4 py-2 flex items-center gap-3 shrink-0">
             <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             <p className="text-xs text-primary/80 font-medium">Edit mode · Drag to reposition · Resize from corners</p>
-            <button onClick={() => setShowAddWidget(true)}
+            <button onClick={() => {
+                // Compute the next grid slot NOW so the dialog — and the backend —
+                // both receive the correct position. Never open with defaultPosition=null.
+                const slot = findNextSlot(widgets);
+                setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
+                setShowAddWidget(true);
+              }}
               className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-xs text-primary font-semibold transition-colors">
               <Plus className="w-3.5 h-3.5" /> Add Widget
             </button>
@@ -2056,46 +2990,65 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                 )}
               </div>
             ) : (
-              <ResponsiveGridLayout
-                className="layout"
-                width={containerWidth}
-                style={{ minHeight: 'calc(100vh - 220px)' }}
-                layouts={{ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }}
-                breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
-                cols={{ lg: 12, md: 10, sm: 6, xs: 4, xxs: 2 }}
-                rowHeight={80}
-                margin={[12, 12]}
-                containerPadding={[0, 0]}
-                draggableHandle=".widget-drag-handle"
-                isDraggable={isEditing}
-                isResizable={isEditing}
-                resizeHandles={['s', 'e', 'se']}
-                onLayoutChange={(newLayout: any) => {
-                  if (isDroppingRef.current) return;
-                  setWidgets(ws => ws.map(w => {
-                    const item = newLayout.find((l: any) => l.i === w.id);
-                    return item ? { ...w, position_x: item.x, position_y: item.y, width: item.w, height: item.h } : w;
-                  }));
-                }}
-              >
-                {widgets.map(widget => (
-                  <div key={widget.id} className="relative h-full">
-                    <DashboardWidgetDroppable widget={widget}>
-                      <Widget
-                        widget={widget}
-                        isEditing={isEditing}
-                        onRemove={() => removeWidget(widget.id)}
-                        onInspect={() => setInspectWidgetId(widget.id)}
-                        onRename={title => renameWidget(widget.id, title)}
-                        onSuggestTitle={() => suggestWidgetTitle(widget.id)}
-                        onEditQuery={() => setEditQueryWidgetId(widget.id)}
-                        otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
-                        onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
-                      />
-                    </DashboardWidgetDroppable>
-                  </div>
-                ))}
-              </ResponsiveGridLayout>
+              <div ref={captureRef} className="relative">
+                <ResponsiveGridLayout
+                  className="layout"
+                  width={containerWidth}
+                  style={{ minHeight: 'calc(100vh - 220px)' }}
+                  layouts={{ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }}
+                  breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
+                  cols={{ lg: GRID_COLS, md: GRID_COLS, sm: 6, xs: 4, xxs: 2 }}
+                  rowHeight={GRID_ROW_H}
+                  margin={[GRID_MARGIN, GRID_MARGIN]}
+                  containerPadding={[0, 0]}
+                  compactType="vertical"
+                  preventCollision={false}
+                  draggableHandle=".widget-drag-handle"
+                  isDraggable={isEditing}
+                  isResizable={isEditing}
+                  resizeHandles={['s', 'e', 'se']}
+                  onLayoutChange={(newLayout: any) => {
+                    if (isDroppingRef.current) return;
+                    setWidgets(ws => ws.map(w => {
+                      const item = newLayout.find((l: any) => l.i === w.id);
+                      return item ? { ...w, position_x: item.x, position_y: item.y, width: item.w, height: item.h } : w;
+                    }));
+                  }}
+                >
+                  {widgets.map(widget => (
+                    <div key={widget.id} className="relative h-full">
+                      <DashboardWidgetDroppable widget={widget}>
+                        <Widget
+                          widget={widget}
+                          isEditing={isEditing}
+                          isSelected={selectedWidgetId === widget.id}
+                          onSelect={() => setSelectedWidgetId(widget.id)}
+                          onRemove={() => removeWidget(widget.id)}
+                          onInspect={() => setInspectWidgetId(widget.id)}
+                          onRename={title => renameWidget(widget.id, title)}
+                          onSuggestTitle={() => suggestWidgetTitle(widget.id)}
+                          onEditQuery={() => setEditQueryWidgetId(widget.id)}
+                          otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
+                          onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
+                        />
+                      </DashboardWidgetDroppable>
+                    </div>
+                  ))}
+                </ResponsiveGridLayout>
+
+                {/* Visible grid drop target — shown ONLY while a widget/card is
+                    actively being dragged (dnd-kit). It is hidden during normal
+                    viewing, while repositioning existing widgets, and while
+                    resizing (those use react-grid-layout, not dnd-kit), and
+                    disappears immediately once the drop completes. */}
+                {isEditing && activeDragItem && (
+                  <GridOverlay
+                    containerWidth={containerWidth}
+                    widgets={widgets}
+                    onClickCell={handleCellClick}
+                  />
+                )}
+              </div>
             )}
           </div>
 
@@ -2211,6 +3164,75 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             </div>
           ) : null}
         </DragOverlay>
+
+        {/* ── Export PDF page-selection modal ─────────────────── */}
+        {showExportModal && (
+          <ExportPdfModal
+            pages={pages.map(p => ({ id: String(p.id), name: String(p.name) }))}
+            dashName={String(dashboard?.name || titleOverride || 'Dashboard')}
+            exporting={exporting}
+            onExport={(ids) => exportDashboardPdf(ids)}
+            onClose={() => setShowExportModal(false)}
+          />
+        )}
+
+        {/* ── Export progress overlay (masks page-switch flicker) ── */}
+        {exporting && (
+          <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+            <div className="bg-card border border-border rounded-2xl px-6 py-5 shadow-2xl flex items-center gap-3">
+              <span className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm font-medium text-foreground">Generating export…</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── Export notification toast ───────────────────────── */}
+        {exportNote && (
+          <div
+            className={`fixed bottom-5 right-5 z-[70] flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-2xl border text-sm font-medium animate-fade-in ${
+              exportNote.kind === 'success'
+                ? 'bg-success/10 border-success/30 text-success'
+                : exportNote.kind === 'error'
+                  ? 'bg-destructive/10 border-destructive/30 text-destructive'
+                  : 'bg-card border-border text-foreground'
+            }`}
+            role="status"
+          >
+            {exportNote.kind === 'success'
+              ? <Check className="w-4 h-4 shrink-0" />
+              : exportNote.kind === 'error'
+                ? <X className="w-4 h-4 shrink-0" />
+                : <FileText className="w-4 h-4 shrink-0" />}
+            <span>{exportNote.msg}</span>
+            <button onClick={() => setExportNote(null)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* ── Page notification toast ───────────────────────── */}
+        {pageNote && (
+          <div
+            className={`fixed bottom-20 right-5 z-[70] flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-2xl border text-sm font-medium animate-fade-in ${
+              pageNote.kind === 'success'
+                ? 'bg-success/10 border-success/30 text-success'
+                : pageNote.kind === 'error'
+                  ? 'bg-destructive/10 border-destructive/30 text-destructive'
+                  : 'bg-card border-border text-foreground'
+            }`}
+            role="status"
+          >
+            {pageNote.kind === 'success'
+              ? <Check className="w-4 h-4 shrink-0" />
+              : pageNote.kind === 'error'
+                ? <X className="w-4 h-4 shrink-0" />
+                : <Type className="w-4 h-4 shrink-0" />}
+            <span>{pageNote.msg}</span>
+            <button onClick={() => setPageNote(null)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </DndContext>
   );

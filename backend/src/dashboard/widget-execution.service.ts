@@ -72,10 +72,10 @@ export class WidgetExecutionService {
       // 4. Log execution start
       const execRecord = await this.db.queryOne(
         `INSERT INTO widget_executions
-           (widget_id, org_id, dashboard_id, triggered_by, account_id, status)
-         VALUES ($1, $2, $3, $4, $5, 'running')
+           (widget_id, org_id, dashboard_id, page_id, triggered_by, account_id, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'running')
          RETURNING id`,
-        [widgetId, orgId, widget.dash_id, forceRefresh ? 'manual' : 'refresh', user.id],
+        [widgetId, orgId, widget.dash_id, widget.page_id, forceRefresh ? 'manual' : 'refresh', user.id],
       );
 
       // 5. Resolve datasource context (override -> card -> dashboard fallback)
@@ -104,6 +104,15 @@ export class WidgetExecutionService {
         throw new Error('Widget context connection not found');
       }
 
+      // Resolve the natural-language prompt: the analytical question stored in
+      // query_definition.prompt. Empty drag-and-drop widgets have no prompt and
+      // must NOT be auto-executed — bail out instead of fabricating a chart.
+      const queryPrompt = this.resolveWidgetPrompt(widget);
+      if (!queryPrompt) {
+        // No query to run — the outer catch marks this execution failed.
+        throw new Error('Widget has no query to execute — generate one in the widget editor first.');
+      }
+
       const start = Date.now();
       let rows: any[] = [];
       let columns: any[] = [];
@@ -114,7 +123,7 @@ export class WidgetExecutionService {
           orgId,
           contextId,
           user,
-          widget.prompt || widget.title,
+          queryPrompt,
         );
         rows = comboResult.rows || [];
         columns = comboResult.columns || [];
@@ -138,16 +147,34 @@ export class WidgetExecutionService {
 
         try {
           const schemaContext = await this.buildSchemaContext(conn.id);
-          const llmContext = this.promptBuilder.assembleContext({
-            compressedSchema: schemaContext,
-            conversationSummary: null,
-            recentMessages: [],
-            userPrompt: widget.prompt || widget.title,
-            connectorFamily: conn.connector_type === 'elasticsearch' ? 'elasticsearch' : conn.connector_type === 'mongodb' ? 'document' : 'sql',
-          });
-          const llmResponse = await this.llm.generateSQL(llmContext);
-          const mcpResult = await this.mcp.executeReadQuery(session.sessionId, llmResponse.sql);
-          if (!mcpResult.success) throw new Error(mcpResult.error || 'Widget query failed');
+          let validationFeedback: string | undefined = undefined;
+          let mcpResult: any;
+          let llmResponse: any;
+
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            const llmContext = this.promptBuilder.assembleContext({
+              compressedSchema: schemaContext,
+              conversationSummary: null,
+              recentMessages: [],
+              userPrompt: queryPrompt,
+              connectorFamily: conn.connector_type === 'elasticsearch' ? 'elasticsearch' : conn.connector_type === 'mongodb' ? 'document' : 'sql',
+            });
+            if (validationFeedback) {
+              llmContext.validationFeedback = validationFeedback;
+            }
+
+            llmResponse = await this.llm.generateSQL(llmContext);
+            mcpResult = await this.mcp.executeReadQuery(session.sessionId, llmResponse.sql);
+
+            if (mcpResult.success) {
+              break;
+            }
+
+            this.logger.warn(`Widget query attempt ${attempt} failed: ${mcpResult.error}`);
+            validationFeedback = mcpResult.error || 'Query failed';
+          }
+
+          if (!mcpResult.success) throw new Error(mcpResult.error || 'Widget query failed after retries');
           rows = mcpResult.data?.rows || [];
           columns = mcpResult.data?.columns || [];
         } finally {
@@ -163,7 +190,7 @@ export class WidgetExecutionService {
 
       // 7. Update execution log
       await this.db.query(
-        `UPDATE widget_executions SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+        `UPDATE widget_executions SET status = 'success', completed_at = NOW() WHERE id = $1`,
         [execRecord!.id],
       );
 
@@ -197,6 +224,157 @@ export class WidgetExecutionService {
     return { status: 'queued' };
   }
 
+  /**
+   * AI assist — rephrase a user's analytics question into a clearer, more
+   * specific analytical request that a text-to-SQL engine can answer well.
+   * Pure LLM rewrite: does NOT execute anything. Returns the original prompt
+   * unchanged if the LLM is unavailable.
+   */
+  async improvePrompt(rawPrompt: string): Promise<string> {
+    const cleaned = (rawPrompt || '').trim();
+    if (!cleaned) return cleaned;
+
+    const system = `You are a senior BI analyst. Rewrite the user's data question into ONE clear, specific, self-contained analytical request suitable for a text-to-SQL engine.
+Rules:
+- Keep it to a single sentence.
+- Make the metric, dimension, grouping and time range explicit when implied.
+- Do NOT answer the question, do NOT write SQL, do NOT add commentary.
+- Return ONLY the rephrased question text, with no surrounding quotes.`;
+
+    try {
+      const improved = await this.llm.generateFreeText(system, cleaned, 120);
+      const out = (improved || '').trim().replace(/^["']|["']$/g, '').trim();
+      if (!out || out.toLowerCase().includes('ai service error')) return cleaned;
+      return out;
+    } catch {
+      return cleaned;
+    }
+  }
+
+  /**
+   * AI assist — suggest a single high-value analytics question for a widget
+   * based on its chart type and the connected datasource's schema. Used when
+   * the user clicks Generate with an empty prompt field. Does NOT execute
+   * anything; just returns a question string for the user to review.
+   */
+  async suggestQuestion(widgetId: string, orgId: string): Promise<string> {
+    const widget = await this.db.queryOne<any>(
+      `SELECT w.*, d.context_type as dash_context_type, d.context_id as dash_context_id
+       FROM dashboard_widgets_v2 w
+       JOIN dashboard_pages p ON p.id = w.page_id
+       JOIN dashboards d ON d.id = p.dashboard_id
+       WHERE w.id = $1 AND w.deleted_at IS NULL AND d.org_id = $2`,
+      [widgetId, orgId],
+    );
+    if (!widget) throw new NotFoundException('Widget not found');
+
+    const connId = await this.resolveWidgetConnectionId(widget);
+    const schema = connId ? await this.buildSchemaContext(connId) : '-- No schema available';
+
+    const widgetType = String(widget.widget_type || 'table');
+    const guidance = this.chartTypeGuidance(widgetType);
+
+    const system = `You are a senior BI analyst proposing the single most useful analytics question for one dashboard card.
+You are given a database schema and the card's chart type.
+Rules:
+- Propose EXACTLY ONE concise, business-relevant question (one sentence).
+- The question MUST fit the given chart type: ${guidance}
+- Reference REAL table/column names from the schema so a text-to-SQL engine can answer it.
+- Prefer high-value insights (revenue, counts, trends, rankings, distributions) over trivial lookups.
+- Return ONLY the question text, with no surrounding quotes and no commentary.`;
+
+    const userContent = `Chart type: ${widgetType}\n\nDatabase schema:\n${schema}\n\nReturn the single best question now.`;
+
+    try {
+      const q = await this.llm.generateFreeText(system, userContent, 120);
+      const out = (q || '').trim().replace(/^["']|["']$/g, '').trim();
+      if (!out || out.toLowerCase().includes('ai service error')) {
+        return 'Show the total number of records grouped by the most relevant category.';
+      }
+      return out;
+    } catch {
+      return 'Show the total number of records grouped by the most relevant category.';
+    }
+  }
+
+  /** Map a widget chart type to a short instruction describing the question shape. */
+  private chartTypeGuidance(widgetType: string): string {
+    switch (widgetType) {
+      case 'metric_card':
+        return 'a single key number (a total, count, sum, or average).';
+      case 'line_chart':
+      case 'area_chart':
+        return 'a trend over time, grouping a measure by a date/period column.';
+      case 'bar_chart':
+      case 'funnel':
+        return 'a ranking or comparison of a measure across a categorical column (top N).';
+      case 'pie_chart':
+      case 'donut_chart':
+        return 'a distribution or share of a total broken down by a categorical column.';
+      case 'scatter':
+        return 'a correlation between two numeric columns from the same table.';
+      case 'table':
+      case 'pivot':
+        return 'a set of detailed records or a multi-dimensional breakdown.';
+      default:
+        return 'a clear, high-value analytical question matching the data.';
+    }
+  }
+
+  /**
+   * Resolve the direct connection id backing a widget for schema lookups
+   * (widget override → linked card → dashboard context; combos use their
+   * first member connection).
+   */
+  private async resolveWidgetConnectionId(widget: any): Promise<string | null> {
+    let contextType = widget.datasource_context_type;
+    let contextId = widget.datasource_context_id;
+
+    if (!contextId && widget.card_id) {
+      const card = await this.db.queryOne<any>(
+        'SELECT datasource_context_type, datasource_context_id FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL',
+        [widget.card_id],
+      );
+      if (card) {
+        contextType = card.datasource_context_type;
+        contextId = card.datasource_context_id;
+      }
+    }
+    if (!contextId) {
+      contextType = widget.dash_context_type;
+      contextId = widget.dash_context_id;
+    }
+    if (!contextId) return null;
+
+    if (contextType === 'combo') {
+      const rows = await this.db.queryMany<{ connection_id: string }>(
+        `SELECT connection_id FROM datasource_combo_members WHERE combo_id = $1 LIMIT 1`,
+        [contextId],
+      );
+      return rows[0]?.connection_id ?? null;
+    }
+    return contextId;
+  }
+
+  /**
+   * Resolve the NL prompt used to (re)generate a widget's query. Uses the
+   * analytical question persisted in query_definition.prompt (set when the
+   * widget is created/edited or auto-seeded), or an explicit widget.prompt.
+   *
+   * IMPORTANT: we deliberately do NOT fall back to the widget TITLE here.
+   * Empty drag-and-drop widgets only have a placeholder title (e.g. "Bar
+   * Chart"); falling back to it caused the system to fabricate a chart from
+   * the title on refresh. A widget with no real prompt has nothing to execute.
+   */
+  private resolveWidgetPrompt(widget: any): string {
+    let qd = widget.query_definition;
+    if (typeof qd === 'string') {
+      try { qd = JSON.parse(qd); } catch { qd = {}; }
+    }
+    const prompt = qd && typeof qd === 'object' ? (qd.prompt as string | undefined) : undefined;
+    return ((prompt && prompt.trim()) || (widget.prompt && String(widget.prompt).trim()) || '').trim();
+  }
+
   private async buildSchemaContext(connectionId: string): Promise<string> {
     const tables = await this.db.queryMany<any>(
       `SELECT ct.table_name, string_agg(
@@ -209,6 +387,9 @@ export class WidgetExecutionService {
        JOIN connection_tables ct ON ct.schema_id = cs.id
        JOIN connection_columns cc ON cc.table_id = ct.id
        WHERE cs.connection_id = $1
+         AND cs.deleted_at IS NULL
+         AND ct.deleted_at IS NULL
+         AND cc.deleted_at IS NULL
        GROUP BY ct.table_name
        ORDER BY ct.table_name`,
       [connectionId],

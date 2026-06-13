@@ -325,7 +325,7 @@ export const chatApi = {
       method: 'POST',
       body: JSON.stringify({ prompt }),
     });
-    return handleResponse<{ title: string }>(r);
+    return handleResponse<{ title: string; fallback?: boolean }>(r);
   },
 
   archive: async (orgId: string, chatId: string) => {
@@ -432,6 +432,25 @@ export const dashboardApi = {
     return handleResponse<{ success: boolean }>(r);
   },
 
+  // Rename a page (or set default). Backend validates non-empty + uniqueness.
+  updatePage: async (orgId: string, dashId: string, pageId: string, data: { name?: string; isDefault?: boolean }) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ page: any }>(r);
+  },
+
+  // Persist a new page order. `order` is the full array of page IDs in the
+  // desired sequence.
+  reorderPages: async (orgId: string, dashId: string, order: string[]) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({ order }),
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
   addWidget: async (orgId: string, dashId: string, pageId: string, data: any) => {
     const payload = {
       widgetType: data.widget_type || 'table',
@@ -497,6 +516,24 @@ export const dashboardApi = {
   inspect: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
     const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/inspect`);
     return handleResponse<{ execution: any }>(r);
+  },
+
+  // AI assist — suggest an analytics question for an empty widget prompt.
+  suggestQuestion: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/suggest-question`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return handleResponse<{ question: string }>(r);
+  },
+
+  // AI assist — rephrase a user prompt into a clearer analytical request.
+  improvePrompt: async (orgId: string, dashId: string, pageId: string, widgetId: string, prompt: string) => {
+    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/improve-prompt`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
+    });
+    return handleResponse<{ prompt: string }>(r);
   },
 
   listFilters: async (orgId: string, dashId: string) => {

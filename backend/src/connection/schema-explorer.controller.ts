@@ -39,8 +39,10 @@ export class SchemaExplorerController {
                     SUM(CASE WHEN cc.is_foreign_key = true THEN 1 ELSE 0 END) AS fk_count
              FROM connection_schemas cs
              JOIN connection_tables ct ON ct.schema_id = cs.id
-             LEFT JOIN connection_columns cc ON cc.table_id = ct.id
+             LEFT JOIN connection_columns cc ON cc.table_id = ct.id AND cc.deleted_at IS NULL
              WHERE cs.connection_id = $1
+               AND cs.deleted_at IS NULL
+               AND ct.deleted_at IS NULL
                AND (ct.table_name ILIKE $2 OR cs.schema_name ILIKE $2)
              GROUP BY cs.schema_name, ct.table_name, ct.row_count_estimate
              ORDER BY ct.table_name
@@ -52,8 +54,10 @@ export class SchemaExplorerController {
                     SUM(CASE WHEN cc.is_foreign_key = true THEN 1 ELSE 0 END) AS fk_count
              FROM connection_schemas cs
              JOIN connection_tables ct ON ct.schema_id = cs.id
-             LEFT JOIN connection_columns cc ON cc.table_id = ct.id
+             LEFT JOIN connection_columns cc ON cc.table_id = ct.id AND cc.deleted_at IS NULL
              WHERE cs.connection_id = $1
+               AND cs.deleted_at IS NULL
+               AND ct.deleted_at IS NULL
              GROUP BY cs.schema_name, ct.table_name, ct.row_count_estimate
              ORDER BY cs.schema_name, ct.table_name`;
       params = [connId];
@@ -81,6 +85,9 @@ export class SchemaExplorerController {
        JOIN connection_tables ct ON ct.id = cc.table_id
        JOIN connection_schemas cs ON cs.id = ct.schema_id
        WHERE cs.connection_id = $1 AND ct.table_name = $2
+         AND cs.deleted_at IS NULL
+         AND ct.deleted_at IS NULL
+         AND cc.deleted_at IS NULL
        ORDER BY cc.ordinal_position`,
       [connId, tableName],
     );
@@ -90,7 +97,10 @@ export class SchemaExplorerController {
        FROM connection_columns cc
        JOIN connection_tables ct ON ct.id = cc.table_id
        JOIN connection_schemas cs ON cs.id = ct.schema_id
-       WHERE cs.connection_id = $1 AND cc.fk_ref_table = $2`,
+       WHERE cs.connection_id = $1 AND cc.fk_ref_table = $2
+         AND cs.deleted_at IS NULL
+         AND ct.deleted_at IS NULL
+         AND cc.deleted_at IS NULL`,
       [connId, tableName]
     );
 
@@ -114,6 +124,9 @@ export class SchemaExplorerController {
        JOIN connection_tables ct ON ct.id = cc.table_id
        JOIN connection_schemas cs ON cs.id = ct.schema_id
        WHERE cs.connection_id = $1
+         AND cs.deleted_at IS NULL
+         AND ct.deleted_at IS NULL
+         AND cc.deleted_at IS NULL
          AND (cc.column_name ILIKE $2 OR ct.table_name ILIKE $2)
        ORDER BY ct.table_name, cc.ordinal_position
        LIMIT 50`,

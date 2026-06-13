@@ -161,6 +161,8 @@ export class MySQLConnector extends BaseMCPConnector {
       try {
         // Enforce read-only at the session level
         await connection.query('SET SESSION TRANSACTION READ ONLY');
+        // Disable ONLY_FULL_GROUP_BY to accommodate imperfect LLM-generated SQL
+        await connection.query("SET SESSION sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''))");
 
         const [rows, fields] = await Promise.race([
           connection.query(sql) as Promise<[mysql.RowDataPacket[], mysql.FieldPacket[]]>,

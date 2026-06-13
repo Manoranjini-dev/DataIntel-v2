@@ -13,6 +13,7 @@ import { DashboardBuilderService } from './dashboard-builder.service';
 import { DashboardCacheService } from './dashboard-cache.service';
 import { DashboardPermissionsService } from './dashboard-permissions.service';
 import { WidgetExecutionService } from './widget-execution.service';
+import { DefaultCardsService } from './default-cards.service';
 
 
 
@@ -32,12 +33,14 @@ import { WidgetExecutionService } from './widget-execution.service';
     DashboardCacheService,
     DashboardPermissionsService,
     WidgetExecutionService,
+    DefaultCardsService,
   ],
   exports: [
     DashboardBuilderService,
     DashboardCacheService,
     DashboardPermissionsService,
     WidgetExecutionService,
+    DefaultCardsService,
   ],
 })
 export class DashboardModule {}

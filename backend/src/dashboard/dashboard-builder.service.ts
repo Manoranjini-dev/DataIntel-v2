@@ -4,6 +4,7 @@
 // ──────────────────────────────────────────────
 
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -260,6 +261,25 @@ export class DashboardBuilderService {
     updater: SafeAccount, data: { name?: string; isDefault?: boolean },
   ) {
     await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+
+    // Validate the new name: non-empty and unique within the dashboard.
+    if (data.name !== undefined) {
+      const trimmed = data.name.trim();
+      if (!trimmed) {
+        throw new BadRequestException('Page name cannot be empty');
+      }
+      const dupe = await this.db.queryOne<{ id: string }>(
+        `SELECT id FROM dashboard_pages
+         WHERE dashboard_id = $1 AND id <> $2 AND deleted_at IS NULL
+           AND LOWER(name) = LOWER($3)
+         LIMIT 1`,
+        [dashId, pageId, trimmed],
+      );
+      if (dupe) {
+        throw new BadRequestException(`A page named "${trimmed}" already exists in this dashboard`);
+      }
+      data = { ...data, name: trimmed };
+    }
 
     if (data.isDefault) {
       // Unset any existing default page

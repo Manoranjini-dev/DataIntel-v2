@@ -118,6 +118,8 @@ export function AreaChartCard({ execution, title, compact }: AreaChartCardProps)
   const xAxisHeight = rotationAngle === -90 ? 100 : (rotationAngle === -45 ? 70 : 30);
   const safeInterval = xLabelsCount > 20 ? 'preserveEnd' : 0;
 
+  const calculatedWidth = Math.max(100, xLabelsCount * 40 + 60);
+
   return (
     <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
       {title && (
@@ -125,9 +127,10 @@ export function AreaChartCard({ execution, title, compact }: AreaChartCardProps)
           {title}
         </p>
       )}
-      <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
-        <ResponsiveContainer width="100%" height={compact ? "100%" : 220 + xAxisHeight - 30}>
-          <AreaChart data={schema.data} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+      <div className={`w-full ${compact ? 'flex-1 min-h-0 overflow-auto' : ''}`}>
+        <div style={{ minWidth: compact ? calculatedWidth : undefined, height: compact ? "100%" : 220 + xAxisHeight - 30, width: '100%' }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={schema.data} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
             <XAxis 
               dataKey="_label" 
@@ -154,6 +157,7 @@ export function AreaChartCard({ execution, title, compact }: AreaChartCardProps)
             ))}
           </AreaChart>
         </ResponsiveContainer>
+        </div>
       </div>
     </div>
   );

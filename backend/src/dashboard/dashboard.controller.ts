@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DashboardBuilderService, CreateDashboardDto, CreateWidgetDto, LayoutItem } from './dashboard-builder.service';
 import { WidgetExecutionService } from './widget-execution.service';
+import { DefaultCardsService } from './default-cards.service';
 import { CurrentUser, OrgId } from '../common/decorators';
 import { SafeAccount } from '../auth/auth.service';
 import { OrgMemberGuard } from '../common/guards/org-member.guard';
@@ -20,7 +21,8 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 export class DashboardController {
   constructor(
     private readonly builder: DashboardBuilderService,
-    private readonly executionService: WidgetExecutionService
+    private readonly executionService: WidgetExecutionService,
+    private readonly defaultCards: DefaultCardsService,
   ) {}
 
   // ── Dashboards ────────────────────────────────
@@ -46,6 +48,48 @@ export class DashboardController {
     @Body() dto: CreateDashboardDto,
   ) {
     const dashboard = await this.builder.createDashboard(orgId, user, dto);
+
+    // Fully-automated dashboard scaffolding: seed Page 1 with 5 intelligent
+    // default analytical cards (KPI, trend, comparison, distribution,
+    // correlation) based on the connected datasource. Each widget is validated
+    // with a live query before creation — no widget is created unless it returns
+    // real data. Layout is saved automatically. Best-effort: failure here never
+    // blocks dashboard creation.
+    if ((dto.contextType === 'connection' || dto.contextType === 'combo') && dto.contextId) {
+      const pages = await this.builder.listPages(dashboard.id, orgId, user.id);
+      const pageId = pages[0]?.id;
+      if (pageId) {
+        const seeded = await this.defaultCards.seedDefaultCards(
+          orgId, user, dashboard.id, pageId, dto.contextType, dto.contextId,
+        );
+
+        if (seeded.length > 0) {
+          // Save the layout so positions are persisted
+          const layoutItems = (seeded as any[]).map((w: any) => ({
+            widgetId: w.id,
+            gridX: w.grid_x ?? 0,
+            gridY: w.grid_y ?? 0,
+            gridW: w.grid_w ?? 6,
+            gridH: w.grid_h ?? 4,
+          }));
+          await this.builder.updateLayout(dashboard.id, orgId, user, layoutItems).catch(() => undefined);
+
+          // Save an initial version so the dashboard is ready without any user action
+          await this.builder
+            .saveVersion(dashboard.id, orgId, user, 'Initial auto-generated dashboard')
+            .catch(() => undefined);
+
+          // Fire async re-execution for any widget that may still have no pre-loaded data
+          // (best-effort background refresh — does not block the API response)
+          for (const w of seeded as any[]) {
+            this.executionService
+              .executeSync(w.id, orgId, user, false)
+              .catch(() => undefined);
+          }
+        }
+      }
+    }
+
     return { dashboard };
   }
 
@@ -258,6 +302,31 @@ export class DashboardController {
     @CurrentUser() user: SafeAccount,
   ) {
     return this.builder.inspectWidget(widgetId, orgId, user);
+  }
+
+  @Post(':dashId/pages/:pageId/widgets/:widgetId/suggest-question')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'AI-suggest an analytics question for an empty widget prompt' })
+  async suggestWidgetQuestion(
+    @OrgId() orgId: string,
+    @Param('widgetId') widgetId: string,
+    @CurrentUser() _user: SafeAccount,
+  ) {
+    const question = await this.executionService.suggestQuestion(widgetId, orgId);
+    return { question };
+  }
+
+  @Post(':dashId/pages/:pageId/widgets/:widgetId/improve-prompt')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'AI-rephrase a user prompt into a clearer analytical request' })
+  async improveWidgetPrompt(
+    @OrgId() _orgId: string,
+    @Param('widgetId') _widgetId: string,
+    @CurrentUser() _user: SafeAccount,
+    @Body('prompt') prompt: string,
+  ) {
+    const improved = await this.executionService.improvePrompt(prompt || '');
+    return { prompt: improved };
   }
 
   // ── Filters ───────────────────────────────────

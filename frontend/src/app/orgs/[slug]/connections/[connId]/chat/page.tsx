@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { chatApi, orgApi, connectionApi, dashboardApi, cardApi } from '@/lib/api';
 import { usePrefsStore } from '@/lib/prefs-store';
 import dynamic from 'next/dynamic';
@@ -600,24 +599,7 @@ export default function ConnectionChatPage() {
           )}
         </div>
 
-        {/* Navigation Action Buttons */}
-        <div className="flex items-center gap-2 ml-4 shrink-0">
-          <div
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 shrink-0"
-          >
-            <MessageSquare className="w-3.5 h-3.5" />
-            <span>Chat</span>
-          </div>
-          <Link
-            href={`/orgs/${slug}/connections/${connId}/dashboard`}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors bg-muted/60 text-muted-foreground hover:text-foreground hover:bg-muted"
-          >
-            <LayoutDashboard className="w-3.5 h-3.5" />
-            <span>Dashboard</span>
-          </Link>
-        </div>
-
-        {/* Spacer */}
+        {/* Spacer — Chat/Dashboard nav lives in the connection top-nav, no need to duplicate here */}
         <div className="flex-1" />
 
         {/* Right actions */}
@@ -771,6 +753,34 @@ function normalizeWidgetType(hint?: string): string {
   return VALID.has(normalized) ? normalized : 'table';
 }
 
+// ── 2-column dashboard grid geometry (must match DashboardBuilder) ──
+const DASH_WIDGET_W = 6;   // half of the 12-column grid
+const DASH_WIDGET_H = 4;
+const DASH_GRID_COLS = 2;  // number of columns in the layout
+
+/**
+ * Next free slot in the strict 2-column grid, scanning left→right then
+ * top→bottom so widgets fill Row1Col1, Row1Col2, Row2Col1, … and never
+ * stack in a single column or land in random spots.
+ */
+function nextGridSlot(widgets: any[]): { x: number; y: number } {
+  const occupied = new Set(
+    (widgets || []).map((w) => {
+      const x = Number(w.grid_x ?? w.position_x) || 0;
+      const y = Number(w.grid_y ?? w.position_y) || 0;
+      return `${x},${y}`;
+    }),
+  );
+  for (let row = 0; row < 1000; row++) {
+    for (let col = 0; col < DASH_GRID_COLS; col++) {
+      const x = col * DASH_WIDGET_W;
+      const y = row * DASH_WIDGET_H;
+      if (!occupied.has(`${x},${y}`)) return { x, y };
+    }
+  }
+  return { x: 0, y: (widgets?.length || 0) * DASH_WIDGET_H };
+}
+
 // ── Add to Dashboard Modal ─────────────────────────────────────
 function AddToDashboardModal({ orgId, connId, message, onClose }: {
   orgId: string; orgSlug?: string; connId: string; message: Message; onClose: () => void;
@@ -822,6 +832,11 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
       const resolvedHint = resolveComponent({ rows: parsedRows, columns: parsedCols } as any, message.ui_hint as any);
       const widgetType = normalizeWidgetType(resolvedHint);
 
+      // Place the new widget in the next free slot of the strict 2-column grid
+      // (left→right, top→bottom) so Chat-added widgets line up like the rest.
+      const pageWidgets = (pages.find(p => String(p.id) === String(selectedPage))?.widgets) || [];
+      const slot = nextGridSlot(pageWidgets);
+
       await dashboardApi.addWidget(orgId, selectedDash, selectedPage, {
         title: title || 'Untitled Widget',
         widget_type: widgetType,
@@ -830,7 +845,7 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
         resultRows: parsedRows,
         resultColumns: parsedCols,
         uiHint: resolvedHint,
-        gridX: 0, gridY: 999, gridW: 4, gridH: 3,
+        gridX: slot.x, gridY: slot.y, gridW: DASH_WIDGET_W, gridH: DASH_WIDGET_H,
         datasourceScopeType: 'connection',
         datasourceContextId: connId,
       });
