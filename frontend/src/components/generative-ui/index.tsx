@@ -216,34 +216,38 @@ export function GenerativeUIRenderer({
     <div className={`flex flex-col w-full ${compact ? 'h-full' : 'space-y-2'}`}>
       {/* Toggle tabs */}
       <div 
-        className={`relative z-30 flex gap-1 rounded-lg bg-white border border-zinc-200 p-1 w-fit shadow-sm pointer-events-auto ${compact ? 'mb-2 shrink-0' : ''}`}
+        className={`relative z-30 flex gap-4 w-fit pointer-events-auto border-b border-border/50 ${compact ? 'mb-3 shrink-0' : 'mb-4'}`}
         onMouseDown={e => e.stopPropagation()}
         onClick={e => e.stopPropagation()}
       >
         <button
           onClick={() => setView('chart')}
           title="Chart view"
-          className={`rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-all ${view === 'chart'
-            ? 'bg-white text-zinc-800 shadow-sm border border-zinc-200'
-            : 'bg-white text-zinc-500 hover:text-zinc-700 border border-transparent'
-            }`}
+          className={`relative pb-2 px-1 text-[11px] uppercase tracking-wider transition-colors duration-200 ${
+            view === 'chart'
+              ? 'text-primary font-bold'
+              : 'text-muted-foreground font-semibold hover:text-foreground'
+          }`}
         >
           Chart
+          <div className={`absolute bottom-[-1px] left-0 w-full h-[2px] rounded-t-full transition-all duration-300 ${view === 'chart' ? 'bg-primary scale-x-100 opacity-100' : 'bg-transparent scale-x-75 opacity-0'}`} />
         </button>
         <button
           onClick={() => setView('table')}
           title="Table view"
-          className={`rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-all ${view === 'table'
-            ? 'bg-white text-zinc-800 shadow-sm border border-zinc-200'
-            : 'bg-white text-zinc-500 hover:text-zinc-700 border border-transparent'
-            }`}
+          className={`relative pb-2 px-1 text-[11px] uppercase tracking-wider transition-colors duration-200 ${
+            view === 'table'
+              ? 'text-primary font-bold'
+              : 'text-muted-foreground font-semibold hover:text-foreground'
+          }`}
         >
           Table
+          <div className={`absolute bottom-[-1px] left-0 w-full h-[2px] rounded-t-full transition-all duration-300 ${view === 'table' ? 'bg-primary scale-x-100 opacity-100' : 'bg-transparent scale-x-75 opacity-0'}`} />
         </button>
       </div>
 
       {/* Content */}
-      <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
+      <div key={view} className={`w-full animate-in fade-in slide-in-from-bottom-1 duration-300 ${compact ? 'flex-1 min-h-0' : ''}`}>
         {view === 'chart' ? viz : <DataTableCard execution={execution} compact={compact} />}
       </div>
     </div>

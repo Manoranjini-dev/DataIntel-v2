@@ -486,27 +486,33 @@ function Widget({
     );
     if (!rows.length) return (
       <div
-        className={`h-full flex flex-col p-3 transition-colors ${isEditing ? 'cursor-grab' : 'cursor-pointer hover:bg-muted/30'}`}
+        className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
         onClick={() => {
           if (isEditing) onSelect?.();
           if (!isGeneral) onEditQuery?.();
         }}
-        title={!isGeneral ? "Click to open the widget editor and edit the query" : ""}
+        title={!isGeneral ? "Click to configure widget data" : ""}
       >
         {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
-        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/50 text-xs gap-3">
+          <div className="w-10 h-10 rounded-full bg-muted/40 border border-border/50 flex items-center justify-center text-muted-foreground transition-transform duration-300 group-hover/card:scale-105 group-hover/card:bg-primary/5 group-hover/card:text-primary/70 group-hover/card:border-primary/20">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" /></svg>
+          </div>
           {widget.query_prompt
             ? (
               <div className="flex flex-col items-center gap-1.5">
-                <span className="text-muted-foreground/50">Query returned no data</span>
-                <span className="text-[10px] text-muted-foreground/30 text-center max-w-[160px] leading-relaxed">{widget.query_prompt.slice(0, 80)}</span>
+                <span className="font-medium text-foreground/70">No Data Returned</span>
+                <span className="text-[10px] text-muted-foreground/60 text-center max-w-[180px] leading-relaxed line-clamp-2">{widget.query_prompt}</span>
+                <span className="mt-1 text-[10px] px-2 py-1 bg-primary/10 text-primary rounded-md font-medium opacity-0 group-hover/card:opacity-100 transition-opacity">Edit Query</span>
               </div>
             )
             : (
               <div className="flex flex-col items-center gap-1">
-                <span className="text-muted-foreground/60 font-medium">Empty widget</span>
-                <span className="text-[10px] text-primary/70">{isEditing ? (isGeneral ? 'General dashboard widget' : 'Open the ⋯ menu → Edit query') : 'Click to add a chart'}</span>
+                <span className="font-medium text-foreground/70">{isEditing ? 'Empty Widget' : 'Add Widget'}</span>
+                <span className="text-[10px] text-muted-foreground/60 max-w-[160px] text-center">
+                  {isEditing ? (isGeneral ? 'General dashboard widget' : 'Click to configure chart data') : 'Click to add a chart'}
+                </span>
+                {!isGeneral && <span className="mt-1 text-[10px] px-2 py-1 bg-primary/10 text-primary rounded-md font-medium opacity-0 group-hover/card:opacity-100 transition-opacity duration-300">Configure</span>}
               </div>
             )
           }
@@ -534,20 +540,20 @@ function Widget({
         // handler in renderContent's no-data branch opens it.
         if (isEditing) onSelect?.();
       }}
-      className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all group ${
+      className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all duration-300 group/card ${
         isEditing
           ? isSelected
-            ? 'border-primary cursor-grab active:cursor-grabbing ring-2 ring-primary/50'
-            : 'border-primary/30 cursor-grab active:cursor-grabbing ring-1 ring-primary/10'
+            ? 'border-primary ring-1 ring-primary/30 shadow-md shadow-primary/5'
+            : 'border-primary/20 hover:border-primary/40 hover:shadow-md cursor-pointer'
           : 'border-border hover:border-border'
       }`}
-      style={{ boxShadow: 'var(--shadow-soft)' }}
+      style={!isEditing || !isSelected ? { boxShadow: 'var(--shadow-soft)' } : undefined}
     >
 
       {/* Drag handle */}
       {isEditing && (
-        <div className="widget-drag-handle absolute top-0 left-1/2 -translate-x-1/2 w-48 h-8 z-20 flex items-center justify-center cursor-grab opacity-0 group-hover:opacity-100 transition-opacity">
-          <div className="w-10 h-1.5 bg-primary/30 rounded-full" />
+        <div className="widget-drag-handle absolute top-0 left-0 right-0 h-8 z-20 flex items-center justify-center cursor-grab active:cursor-grabbing opacity-0 group-hover/card:opacity-100 transition-all duration-200 hover:bg-primary/15 rounded-t-xl group/handle">
+          <div className="w-12 h-1.5 bg-primary/40 rounded-full transition-all duration-200 group-hover/handle:bg-primary/80 group-hover/handle:w-16" />
         </div>
       )}
 
@@ -575,7 +581,7 @@ function Widget({
             <button
               onMouseDown={e => e.stopPropagation()}
               onClick={() => setMenuOpen(v => !v)}
-              className="w-7 h-7 rounded-lg bg-card/80 border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100 pointer-events-auto shrink-0"
+              className="w-7 h-7 rounded-lg bg-card/80 border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center transition-colors opacity-0 group-hover/card:opacity-100 pointer-events-auto shrink-0"
             >
               <MoreHorizontal className="w-3.5 h-3.5" />
             </button>
@@ -624,7 +630,7 @@ function Widget({
 
 
 
-      <div className="relative z-10 h-full">{renderContent()}</div>
+      <div className="h-full">{renderContent()}</div>
     </div>
   );
 }
