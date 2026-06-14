@@ -528,8 +528,11 @@ function Widget({
   return (
     <div
       onClick={() => {
+        // Existing widgets are select-only on click (so they stay highlightable
+        // for drag/resize). The Edit Query dialog must NOT open for a populated
+        // widget — it is reserved for empty placeholders, whose own click
+        // handler in renderContent's no-data branch opens it.
         if (isEditing) onSelect?.();
-        onEditQuery?.();
       }}
       className={`relative h-full flex flex-col bg-card border rounded-xl overflow-hidden transition-all group ${
         isEditing
