@@ -366,11 +366,22 @@ export const dashboardApi = {
   },
 
   create: async (orgId: string, data: any) => {
+    let contextType = 'org_overview';
+    let contextId = null;
+    
+    if (data.comboId) {
+      contextType = 'combo';
+      contextId = data.comboId;
+    } else if (data.connectionId) {
+      contextType = 'connection';
+      contextId = data.connectionId;
+    }
+
     const payload = {
       name: data.name,
       description: data.description,
-      contextType: data.comboId ? 'combo' : 'connection',
-      contextId: data.comboId || data.connectionId
+      contextType,
+      contextId
     };
     const r = await apiFetch(`/orgs/${orgId}/dashboards`, {
       method: 'POST',

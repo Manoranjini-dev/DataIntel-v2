@@ -21,7 +21,7 @@ export interface CreateDashboardDto {
   name: string;
   description?: string;
   contextType: 'org_overview' | 'connection' | 'combo';
-  contextId: string;
+  contextId?: string | null;
 }
 
 export interface CreateWidgetDto {

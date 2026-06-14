@@ -137,10 +137,10 @@ export default function DashboardsPage() {
                     placeholder="Optional description" className={inputCls} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data source</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data source (Optional)</label>
                   <select value={form.connectionId} onChange={e => setForm(f => ({ ...f, connectionId: e.target.value }))}
                     className={inputCls}>
-                    <option value="">Select a data source…</option>
+                    <option value="">None (General Dashboard)</option>
                     {connections.map((c: any) => (
                       <option key={c.id} value={c.id}>{c.name} ({c.connector_type})</option>
                     ))}

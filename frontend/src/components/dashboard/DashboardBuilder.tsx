@@ -437,7 +437,7 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
 
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
-  widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage,
+  widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage, isGeneral,
 }: {
   widget: WidgetData;
   isEditing: boolean;
@@ -450,6 +450,7 @@ function Widget({
   onEditQuery?: () => void;
   otherPages?: { id: string; name: string }[];
   onMoveToPage?: (pageId: string) => void;
+  isGeneral?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -488,9 +489,9 @@ function Widget({
         className={`h-full flex flex-col p-3 transition-colors ${isEditing ? 'cursor-grab' : 'cursor-pointer hover:bg-muted/30'}`}
         onClick={() => {
           if (isEditing) onSelect?.();
-          onEditQuery?.();
+          if (!isGeneral) onEditQuery?.();
         }}
-        title="Click to open the widget editor and edit the query"
+        title={!isGeneral ? "Click to open the widget editor and edit the query" : ""}
       >
         {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
         <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/40 text-xs gap-2">
@@ -505,7 +506,7 @@ function Widget({
             : (
               <div className="flex flex-col items-center gap-1">
                 <span className="text-muted-foreground/60 font-medium">Empty widget</span>
-                <span className="text-[10px] text-primary/70">{isEditing ? 'Open the ⋯ menu → Edit query' : 'Click to add a chart'}</span>
+                <span className="text-[10px] text-primary/70">{isEditing ? (isGeneral ? 'General dashboard widget' : 'Open the ⋯ menu → Edit query') : 'Click to add a chart'}</span>
               </div>
             )
           }
@@ -583,14 +584,18 @@ function Widget({
                 className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
                 <Type className="w-3.5 h-3.5 text-muted-foreground" /> Rename
               </button>
-              <button onClick={() => { setMenuOpen(false); onSuggestTitle?.(); }}
-                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
-                <Sparkles className="w-3.5 h-3.5 text-primary" /> AI suggest title
-              </button>
-              <button onClick={() => { setMenuOpen(false); onEditQuery?.(); }}
-                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
-                <Play className="w-3.5 h-3.5 text-primary" /> Edit query
-              </button>
+              {!isGeneral && (
+                <>
+                  <button onClick={() => { setMenuOpen(false); onSuggestTitle?.(); }}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                    <Sparkles className="w-3.5 h-3.5 text-primary" /> AI suggest title
+                  </button>
+                  <button onClick={() => { setMenuOpen(false); onEditQuery?.(); }}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                    <Play className="w-3.5 h-3.5 text-primary" /> Edit query
+                  </button>
+                </>
+              )}
               {otherPages && otherPages.length > 0 && (
                 <>
                   <div className="mx-3 my-1 h-px bg-border shrink-0" />
@@ -811,11 +816,12 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
 }
 
 // ── Add Widget Dialog ──────────────────────────────────────────
-function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCreated, onAdd, onClose, defaultHint, defaultPosition }: {
+function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCreated, onAdd, onClose, defaultHint, defaultPosition, isGeneral }: {
   orgId: string; dashId: string; pageId: string; chatId?: string; connectionId?: string;
   onChatCreated?: (id: string) => void;
   onAdd: (widget: Record<string, unknown>) => void; onClose: () => void;
   defaultHint?: string; defaultPosition?: { x: number; y: number; w: number; h: number };
+  isGeneral?: boolean;
 }) {
   const [prompt, setPrompt] = useState('');
   const [title, setTitle] = useState('');
@@ -841,12 +847,11 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
   }
 
   async function handleAdd() {
-    if (!preview) return;
+    if (!isGeneral && !preview) return;
     setLoading(true);
     try {
-      const exec = (preview as any).execution as Record<string, unknown>;
-      // ui_hint is on the assistantMessage, NOT on execution
-      const llmHint = (preview as any).assistantMessage?.ui_hint || exec?.ui_hint;
+      const exec = preview ? (preview as any).execution as Record<string, unknown> : null;
+      const llmHint = preview ? ((preview as any).assistantMessage?.ui_hint || exec?.ui_hint) : null;
       const rawHint = defaultHint || llmHint || 'table';
       const widgetType = normalizeWidgetType(rawHint as string);
       // defaultPosition is ALWAYS set before this dialog opens (callers use findNextSlot).
@@ -904,23 +909,28 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
             <label className="block text-xs font-medium text-muted-foreground mb-1.5">Widget Title</label>
             <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g., Monthly Revenue" className={inputCls} />
           </div>
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data Query</label>
-            <textarea value={prompt} onChange={e => setPrompt(e.target.value)}
-              placeholder="e.g., Show total revenue by month for the last 12 months"
-              rows={3} className={`${inputCls} resize-none`} />
-          </div>
+          
+          {!isGeneral && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data Query</label>
+                <textarea value={prompt} onChange={e => setPrompt(e.target.value)}
+                  placeholder="e.g., Show total revenue by month for the last 12 months"
+                  rows={3} className={`${inputCls} resize-none`} />
+              </div>
 
-          {!chatId && !connectionId && (
-            <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2">
-              No linked chat. Connect a data source to this dashboard first.
-            </div>
+              {!chatId && !connectionId && (
+                <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2">
+                  No linked chat. Connect a data source to this dashboard first.
+                </div>
+              )}
+
+              <button onClick={handleGenerate} disabled={!prompt.trim() || loading || (!chatId && !connectionId)}
+                className="w-full py-2.5 bg-primary/10 border border-primary/20 hover:bg-primary/20 rounded-xl text-sm text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold">
+                {loading ? <span className="flex items-center justify-center gap-2"><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Generating…</span> : 'Preview Data'}
+              </button>
+            </>
           )}
-
-          <button onClick={handleGenerate} disabled={!prompt.trim() || loading || (!chatId && !connectionId)}
-            className="w-full py-2.5 bg-primary/10 border border-primary/20 hover:bg-primary/20 rounded-xl text-sm text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold">
-            {loading ? <span className="flex items-center justify-center gap-2"><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Generating…</span> : 'Preview Data'}
-          </button>
 
           {exec && (
             exec.status === 'failed'
@@ -957,7 +967,7 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
         </div>
 
         <div className="flex gap-2 px-5 pb-5">
-          <button onClick={handleAdd} disabled={!preview || loading}
+          <button onClick={handleAdd} disabled={(!isGeneral && !preview) || loading}
             className="flex-1 py-2.5 bg-primary text-white hover:opacity-90 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
             Add to Dashboard
           </button>
@@ -1212,7 +1222,7 @@ function QueryInspectorModal({ widgetId, orgId, dashId, pageId, onClose }: {
 // ── Edit Query Dialog ──────────────────────────────────────────
 // Shows BOTH the natural-language prompt and the generated SQL so
 // the user can edit either and re-run. Apply persists to the DB.
-function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, onUpdate, onClose }: {
+function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, onUpdate, onClose, isGeneral }: {
   widget: WidgetData;
   orgId: string;
   dashId: string;
@@ -1221,6 +1231,7 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
   connectionId?: string;
   onUpdate: (patch: Partial<WidgetData>) => void;
   onClose: () => void;
+  isGeneral?: boolean;
 }) {
   const [prompt, setPrompt] = useState(widget.query_prompt || '');
   // Seed from widget.sql immediately (set during addWidget / previous handleApply)
@@ -1849,6 +1860,8 @@ export function DashboardBuilder({
   const [showVersions, setShowVersions] = useState(false);
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
   const isDroppingRef = useRef(false);
+  
+  const isGeneral = dashboard?.context_type === 'org_overview' || (!dashboard?.connection_id && !dashboard?.combo_id);
   const [showAddWidget, setShowAddWidget] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -2352,11 +2365,14 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       // The backend always returns a usable title (AI or a deterministic
       // fallback), so we only keep the existing title if it came back blank.
       const cleanTitle = title || widget.title;
-      if (result.fallback) {
-        // Recoverable AI miss — applied a derived title, no error popup.
-        console.warn('AI title unavailable; applied a suggested fallback title.');
-      }
       renameWidget(widgetId, cleanTitle);
+      if (result.fallback) {
+        // Recoverable AI miss — a derived title was applied. Surface a gentle,
+        // non-blocking notice instead of an error popup.
+        setPageNote({ kind: 'info', msg: 'AI was busy — applied a suggested title you can edit.' });
+      } else {
+        setPageNote({ kind: 'success', msg: 'AI title applied' });
+      }
 
       // Persist the generated title to the backend so it survives refresh
       if (activePage) {
@@ -2369,6 +2385,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       // Network/unexpected failure only — keep the current title, no blocking
       // popup (recoverable AI failures are handled server-side via fallback).
       console.warn('Suggest title request failed; keeping current title.', e?.message || e);
+      setPageNote({ kind: 'info', msg: "Couldn't reach the AI title service — kept the current title." });
     } finally {
       setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: false } : w));
     }
@@ -2740,6 +2757,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      // Clear the active drag the moment a drag is cancelled (e.g. Escape key or
+      // a dropped-on-nothing cancel) so the grid overlay disappears immediately
+      // instead of lingering until the next interaction.
+      onDragCancel={() => setActiveDragItem(null)}
     >
       <div className="h-full bg-background text-foreground flex flex-col min-h-0 w-full">
         <style dangerouslySetInnerHTML={{
@@ -2844,11 +2865,13 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
           <div className="ml-auto flex items-center gap-2">
             {/* AI Generate */}
-            <button onClick={() => setShowGenerate(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
-              <Sparkles className="w-3.5 h-3.5" /> Generate
-            </button>
+            {!isGeneral && (
+              <button onClick={() => setShowGenerate(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
+                <Sparkles className="w-3.5 h-3.5" /> Generate
+              </button>
+            )}
 
             {/* Refresh All */}
             <button
@@ -2966,6 +2989,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               </div>
             )}
             {widgets.length === 0 ? (
+              <div className="relative" style={{ minHeight: 'calc(100vh - 220px)' }}>
               <div className="flex flex-col items-center justify-center h-full gap-5 text-center min-h-[400px]">
                 <div className="w-16 h-16 rounded-2xl bg-muted/50 border border-border flex items-center justify-center">
                   <LayoutGrid className="w-7 h-7 text-muted-foreground/40" />
@@ -2984,13 +3008,26 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                       className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-semibold hover:opacity-90 transition-opacity">
                       Start editing
                     </button>
-                    <button onClick={() => setShowGenerate(true)}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white hover:opacity-90 transition-opacity"
-                      style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}>
-                      <Sparkles className="w-4 h-4" /> Generate with AI
-                    </button>
+                    {!isGeneral && (
+                      <button onClick={() => setShowGenerate(true)}
+                        className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+                        style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}>
+                        <Sparkles className="w-4 h-4" /> Generate with AI
+                      </button>
+                    )}
                   </div>
                 )}
+              </div>
+              {/* Drop-target grid for an empty page — appears while dragging a
+                  widget/card from the sidebar so there is a visible slot to drop
+                  onto, matching the behaviour of pages that already have cards. */}
+              {isEditing && activeDragItem && (
+                <GridOverlay
+                  containerWidth={containerWidth}
+                  widgets={widgets}
+                  onClickCell={handleCellClick}
+                />
+              )}
               </div>
             ) : (
               <div ref={captureRef} className="relative">
@@ -3033,6 +3070,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                           onEditQuery={() => setEditQueryWidgetId(widget.id)}
                           otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
                           onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
+                          isGeneral={isGeneral}
                         />
                       </DashboardWidgetDroppable>
                     </div>
@@ -3114,6 +3152,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
             onChatCreated={setActiveChatId}
             defaultHint={defaultHint} defaultPosition={defaultPosition || undefined}
+            isGeneral={isGeneral}
             onAdd={handleWidgetAdded} onClose={() => {
               if ((defaultPosition as any)?.tempId) {
                 const tid = (defaultPosition as any).tempId;
@@ -3152,6 +3191,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               pageId={activePage!}
               chatId={activeChatId}
               connectionId={dashboard?.connection_id as string | undefined}
+              isGeneral={isGeneral}
               onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
               onClose={() => setEditQueryWidgetId(null)}
             />

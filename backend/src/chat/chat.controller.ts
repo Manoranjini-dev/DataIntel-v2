@@ -86,14 +86,21 @@ Rules:
 6. Do NOT wrap the title in quotes.
 7. Return ONLY the title text, nothing else.`;
 
-    // Use a generous token budget: the model is a reasoning model, so a tiny cap
-    // (the old value was 50) gets consumed by reasoning and yields empty content.
+    // Use a generous token budget AND constrain reasoning: the model is a
+    // reasoning model, so a tiny cap (the old value was 50) — or unconstrained
+    // reasoning — gets the whole budget consumed by hidden reasoning and yields
+    // empty content. A 256-token budget with 'low' reasoning effort leaves room
+    // for the model to emit the title itself on the first attempt.
+    this.logger.debug(`suggest-title prompt: "${dto.prompt.replace(/\s+/g, ' ').slice(0, 300)}"`);
     let raw = '';
     try {
-      raw = await this.llmService.generateFreeText(systemPrompt, dto.prompt, 256);
+      raw = await this.llmService.generateFreeText(systemPrompt, dto.prompt, 256, {
+        reasoningEffort: 'low',
+      });
     } catch (e) {
       this.logger.warn(`suggest-title LLM call threw: ${e instanceof Error ? e.message : e}`);
     }
+    this.logger.debug(`suggest-title raw model response: "${(raw || '').replace(/\s+/g, ' ').slice(0, 300)}"`);
 
     const aiTitle = this.sanitizeTitle(raw);
     if (aiTitle) {

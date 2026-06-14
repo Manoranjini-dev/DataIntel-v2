@@ -208,6 +208,7 @@ Rules — follow every one without exception:
     systemPrompt: string,
     userContent: string,
     maxTokens = 512,
+    options: { reasoningEffort?: 'low' | 'medium' | 'high' } = {},
   ): Promise<string> {
     let lastError = 'Unknown error';
 
@@ -221,19 +222,31 @@ Rules — follow every one without exception:
       try {
         this.logger.debug(
           `generateFreeText attempt ${attempt + 1}: maxTokens=${effectiveMaxTokens} ` +
+          `reasoningEffort=${options.reasoningEffort ?? 'default'} ` +
           `system="${systemPrompt.slice(0, 100).replace(/\s+/g, ' ')}" ` +
           `user="${userContent.slice(0, 200).replace(/\s+/g, ' ')}"`,
         );
 
-        const completion = await this.client.chat.completions.create({
+        // Build the request explicitly so we can attach OpenRouter's unified
+        // `reasoning` control. Reasoning models (e.g. openai/gpt-oss-*) otherwise
+        // spend the whole token budget on hidden reasoning and return EMPTY
+        // visible content. Constraining the reasoning effort leaves room for the
+        // model to emit the actual answer on the FIRST attempt. Models that don't
+        // support the field simply ignore it.
+        const request = {
           model: this.model,
           messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
+            { role: 'system' as const, content: systemPrompt },
+            { role: 'user' as const, content: userContent },
           ],
           temperature: 0.5,
           max_tokens: effectiveMaxTokens,
-        });
+          ...(options.reasoningEffort
+            ? { reasoning: { effort: options.reasoningEffort } }
+            : {}),
+        } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
+
+        const completion = await this.client.chat.completions.create(request);
 
         const choice = completion.choices?.[0];
         const message = choice?.message as
