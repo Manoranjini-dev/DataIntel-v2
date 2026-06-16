@@ -355,8 +355,13 @@ export const chatApi = {
 // ── Dashboard API ─────────────────────────
 
 export const dashboardApi = {
-  list: async (orgId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards`);
+  list: async (orgId: string, params: { origin?: 'manual' | 'datasource'; contextType?: string; contextId?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.origin) qs.set('origin', params.origin);
+    if (params.contextType) qs.set('contextType', params.contextType);
+    if (params.contextId) qs.set('contextId', params.contextId);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    const r = await apiFetch(`/orgs/${orgId}/dashboards${suffix}`);
     const data = await handleResponse<{ dashboards: any[] }>(r);
     data.dashboards.forEach(d => {
       if (d.context_type === 'connection') d.connection_id = d.context_id;
@@ -368,7 +373,7 @@ export const dashboardApi = {
   create: async (orgId: string, data: any) => {
     let contextType = 'org_overview';
     let contextId = null;
-    
+
     if (data.comboId) {
       contextType = 'combo';
       contextId = data.comboId;
@@ -381,7 +386,9 @@ export const dashboardApi = {
       name: data.name,
       description: data.description,
       contextType,
-      contextId
+      contextId,
+      // 'manual' = Dashboards module; 'datasource' = data source / combo workflow.
+      origin: data.origin || 'manual',
     };
     const r = await apiFetch(`/orgs/${orgId}/dashboards`, {
       method: 'POST',

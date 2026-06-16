@@ -138,7 +138,7 @@ export function LineChartCard({ execution, title, compact }: LineChartCardProps)
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0 overflow-auto' : ''}`}>
         <div style={{ minWidth: compact ? calculatedWidth : undefined, height: compact ? "100%" : 220 + xAxisHeight - 30, width: '100%' }}>
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="99%" height="100%">
             <LineChart data={schema.data} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
             <XAxis 

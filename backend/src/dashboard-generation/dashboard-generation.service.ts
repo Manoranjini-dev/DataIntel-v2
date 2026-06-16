@@ -81,7 +81,10 @@ export class DashboardGenerationService {
       const dash = await this.builder.createDashboard(orgId, { id: userId } as SafeAccount, {
         name: `Generated: ${intent.substring(0, 30)}...`,
         contextType,
-        contextId
+        contextId,
+        // AI generation always scaffolds a dashboard bound to a specific data
+        // source context, so it belongs to the data source workflow.
+        origin: 'datasource',
       });
 
       // 5. Get default page created by builder

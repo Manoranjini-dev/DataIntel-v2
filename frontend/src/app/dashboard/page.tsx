@@ -14,7 +14,9 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { ResponsiveGridLayout, type LayoutItem } from 'react-grid-layout';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ResponsiveGridLayout = require('react-grid-layout').Responsive as React.ComponentType<any>;
+import { type Layout as LayoutItem } from 'react-grid-layout';
 import {
   Zap,
   MessageSquare,
@@ -607,7 +609,7 @@ function DashboardDropZone({
             width={containerWidth}
             dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
             resizeConfig={{ enabled: true, handles: ['se', 'sw'] }}
-            onLayoutChange={(currentLayout) => onLayoutChange(currentLayout as unknown as LayoutItem[])}
+            onLayoutChange={(currentLayout: LayoutItem[]) => onLayoutChange(currentLayout)}
             margin={[10, 10]}
           >
             {widgetResults.map((widget) => (

@@ -237,12 +237,13 @@ function AddToDashboardModal({ orgId, comboId, message, onClose }: {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    dashboardApi.list(orgId).then(res => {
+    // Within the combo workflow, only offer this combo's data-source dashboards.
+    dashboardApi.list(orgId, { origin: 'datasource', contextType: 'combo', contextId: comboId }).then(res => {
       const list = res.dashboards || [];
       setDashboards(list);
       if (list.length > 0) setSelectedDash(list[0].id);
     }).catch(console.error);
-  }, [orgId]);
+  }, [orgId, comboId]);
 
   useEffect(() => {
     if (!selectedDash) return;

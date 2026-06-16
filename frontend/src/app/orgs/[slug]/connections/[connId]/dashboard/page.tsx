@@ -26,11 +26,13 @@ export default function ConnectionDashboardPage() {
       const { connection: c } = await connectionApi.get(o.id, connId);
       setConn(c);
 
-      // Find or create a dashboard for this connection
-      const { dashboards } = await dashboardApi.list(o.id);
+      // Find or create the data-source dashboard owned by this connection.
+      // Scoped to origin='datasource' so it is fully independent of any manual
+      // dashboard that merely connects to the same data source.
+      const { dashboards } = await dashboardApi.list(o.id, { origin: 'datasource', contextType: 'connection', contextId: connId });
       let dash = dashboards.find((d: any) => d.connection_id === connId);
       if (!dash) {
-        const { dashboard: newDash } = await dashboardApi.create(o.id, { name: `${c.name} Dashboard`, connectionId: connId });
+        const { dashboard: newDash } = await dashboardApi.create(o.id, { name: `${c.name} Dashboard`, connectionId: connId, origin: 'datasource' });
         dash = newDash;
       }
       setDashId(dash.id);

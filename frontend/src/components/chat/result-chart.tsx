@@ -267,7 +267,7 @@ export function ResultChart({ execution }: { execution: QueryExecutionResult }) 
         <NumberCard schema={schema} />
       ) : (
         /* Chart */
-        <ResponsiveContainer width="100%" height={240}>
+        <ResponsiveContainer width="99%" height={240}>
           {activeType === 'bar' ? (
             <BarChart data={schema.data} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />

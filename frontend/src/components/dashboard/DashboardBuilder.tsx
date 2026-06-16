@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { dashboardApi, chatApi, orgApi, cardApi } from '@/lib/api';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -62,6 +62,7 @@ interface WidgetData {
   ui_hint?: string;
   isLoading?: boolean;
   isRenaming?: boolean;
+  query_definition?: any;
 }
 
 // ── Map LLM ui_hint → valid widget_type / chart_type enum ──────
@@ -474,6 +475,7 @@ function Widget({
   const rows = widget.result_rows || [];
   const columns = widget.result_columns || [];
   const hint = widget.ui_hint || widget.widget_type || 'table';
+  const qd = typeof widget.query_definition === 'string' ? JSON.parse(widget.query_definition) : (widget.query_definition || {});
 
   const renderContent = () => {
     if (widget.isLoading) return (
@@ -520,13 +522,30 @@ function Widget({
       </div>
     );
     return (
-      <div className="h-full w-full overflow-hidden p-1">
-        <GenerativeUIRenderer
-          execution={{ rows, columns, rowCount: rows.length, executionTimeMs: 0 } as any}
-          uiHint={hint as any}
-          title={widget.title}
-          compact={true}
-        />
+      <div className="h-full w-full overflow-hidden flex flex-col p-1 gap-1">
+        {qd.insightSummary && (
+          <div className="px-2 pt-1 pb-1 shrink-0">
+            <p className="text-[11px] font-medium text-foreground leading-snug">{qd.insightSummary}</p>
+          </div>
+        )}
+        <div className="flex-1 min-h-0 relative">
+          <GenerativeUIRenderer
+            execution={{ rows, columns, rowCount: rows.length, executionTimeMs: 0 } as any}
+            uiHint={hint as any}
+            title={widget.title}
+            compact={true}
+          />
+        </div>
+        {(qd.metricContext || qd.businessSignificance) && (
+          <div className="mx-2 mb-1 px-2 py-1.5 bg-muted/30 rounded-lg shrink-0 space-y-1">
+            {qd.metricContext && (
+              <p className="text-[10px] text-muted-foreground leading-relaxed"><span className="font-semibold text-foreground/70">Context:</span> {qd.metricContext}</p>
+            )}
+            {qd.businessSignificance && (
+              <p className="text-[10px] text-primary/80 font-medium leading-relaxed"><span className="font-semibold text-primary">Impact:</span> {qd.businessSignificance}</p>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -2139,6 +2158,7 @@ export function DashboardBuilder({
         result_columns: resultCols,
         ui_hint: normalizeWidgetType(String(qd.ui_hint || w.card_chart_type || w.ui_hint || w.widget_type || 'table')),
         sql: String(qd.sql || w.card_raw_query || ''),
+        query_definition: qd,
       };
     });
     setWidgets(widgetList);
@@ -2738,8 +2758,19 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     }
   }, [activePage, widgets, org, dashId]);
 
-  const layout = widgets.map(w => ({ i: w.id, x: w.position_x || 0, y: w.position_y || 0, w: Math.max(1, w.width || 6), h: Math.max(1, w.height || 4), minW: 2, minH: 2 }));
+  const layout = useMemo(() => widgets.map(w => ({
+    i: String(w.id),
+    x: w.position_x || 0,
+    y: w.position_y || 0,
+    w: Math.max(1, w.width || 6),
+    h: Math.max(1, w.height || 4),
+    minW: 2,
+    minH: 2
+  })), [widgets]);
 
+  const layouts = useMemo(() => ({
+    lg: layout, md: layout, sm: layout, xs: layout, xxs: layout
+  }), [layout]);
   const { isOver, setNodeRef } = useDroppable({ id: 'dashboard-drop-zone' });
   const mergedRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -2854,7 +2885,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             <span className="text-[10px] px-2 py-0.5 bg-success/10 border border-success/20 text-success rounded-full font-semibold shrink-0">Published</span>
           )}
 
-          {chatUrl && !hideContextNav && (
+          {/* Chat + Dashboard toggle buttons are only relevant inside a data
+              source / combo workflow. Manual dashboards (Dashboards module) omit
+              them — the user is already inside a standalone dashboard. */}
+          {chatUrl && !hideContextNav && dashboard?.origin !== 'manual' && (
             <div className="flex items-center gap-2 ml-4 shrink-0">
               <Link
                 href={chatUrl}
@@ -3044,7 +3078,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                   className="layout"
                   width={containerWidth}
                   style={{ minHeight: 'calc(100vh - 220px)' }}
-                  layouts={{ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }}
+                  layouts={layouts}
                   breakpoints={{ lg: 1200, md: 996, sm: 768, xs: 480, xxs: 0 }}
                   cols={{ lg: GRID_COLS, md: GRID_COLS, sm: 6, xs: 4, xxs: 2 }}
                   rowHeight={GRID_ROW_H}
@@ -3058,10 +3092,20 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                   resizeHandles={['s', 'e', 'se']}
                   onLayoutChange={(newLayout: any) => {
                     if (isDroppingRef.current) return;
-                    setWidgets(ws => ws.map(w => {
-                      const item = newLayout.find((l: any) => l.i === w.id);
-                      return item ? { ...w, position_x: item.x, position_y: item.y, width: item.w, height: item.h } : w;
-                    }));
+                    setWidgets(ws => {
+                      let changed = false;
+                      const next = ws.map(w => {
+                        const item = newLayout.find((l: any) => l.i === String(w.id));
+                        if (item) {
+                          if (w.position_x !== item.x || w.position_y !== item.y || w.width !== item.w || w.height !== item.h) {
+                            changed = true;
+                            return { ...w, position_x: item.x, position_y: item.y, width: item.w, height: item.h };
+                          }
+                        }
+                        return w;
+                      });
+                      return changed ? next : ws;
+                    });
                   }}
                 >
                   {widgets.map(widget => (

@@ -35,8 +35,9 @@ export class DashboardController {
     @Query('contextType') contextType?: string,
     @Query('contextId') contextId?: string,
     @Query('status') status?: string,
+    @Query('origin') origin?: string,
   ) {
-    const dashboards = await this.builder.listDashboards(orgId, user.id, { contextType, contextId, status });
+    const dashboards = await this.builder.listDashboards(orgId, user.id, { contextType, contextId, status, origin });
     return { dashboards };
   }
 
@@ -55,7 +56,7 @@ export class DashboardController {
     // with a live query before creation — no widget is created unless it returns
     // real data. Layout is saved automatically. Best-effort: failure here never
     // blocks dashboard creation.
-    if ((dto.contextType === 'connection' || dto.contextType === 'combo') && dto.contextId) {
+    if (dto.origin === 'manual' && (dto.contextType === 'connection' || dto.contextType === 'combo') && dto.contextId) {
       const pages = await this.builder.listPages(dashboard.id, orgId, user.id);
       const pageId = pages[0]?.id;
       if (pageId) {
@@ -86,6 +87,27 @@ export class DashboardController {
               .executeSync(w.id, orgId, user, false)
               .catch(() => undefined);
           }
+        }
+      }
+    } else if (dto.origin === 'manual') {
+      const pages = await this.builder.listPages(dashboard.id, orgId, user.id);
+      const pageId = pages[0]?.id;
+      if (pageId) {
+        const seeded = await this.defaultCards.seedPlaceholderCards(
+          orgId, user, dashboard.id, pageId
+        );
+        if (seeded && seeded.length > 0) {
+          const layoutItems = (seeded as any[]).map((w: any) => ({
+            widgetId: w.id,
+            gridX: w.grid_x ?? 0,
+            gridY: w.grid_y ?? 0,
+            gridW: w.grid_w ?? 6,
+            gridH: w.grid_h ?? 3,
+          }));
+          await this.builder.updateLayout(dashboard.id, orgId, user, layoutItems).catch(() => undefined);
+          await this.builder
+            .saveVersion(dashboard.id, orgId, user, 'Initial manual dashboard')
+            .catch(() => undefined);
         }
       }
     }

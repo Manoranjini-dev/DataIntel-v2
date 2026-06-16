@@ -22,6 +22,10 @@ export interface CreateDashboardDto {
   description?: string;
   contextType: 'org_overview' | 'connection' | 'combo';
   contextId?: string | null;
+  // Discriminates the two independent dashboard families. Manual dashboards
+  // belong to the Dashboards module; datasource dashboards live only inside a
+  // specific data source / combo workflow. Defaults to 'manual'.
+  origin?: 'manual' | 'datasource';
 }
 
 export interface CreateWidgetDto {
@@ -70,13 +74,14 @@ export class DashboardBuilderService {
 
   // ── Dashboard CRUD ────────────────────────────────────
 
-  async listDashboards(orgId: string, requesterId: string, opts: { contextType?: string; contextId?: string; status?: string } = {}) {
+  async listDashboards(orgId: string, requesterId: string, opts: { contextType?: string; contextId?: string; status?: string; origin?: string } = {}) {
     await this.orgPermissions.requireMember(orgId, requesterId);
 
     const conditions = ['d.org_id = $1', 'd.deleted_at IS NULL'];
     const params: unknown[] = [orgId];
     let p = 2;
 
+    if (opts.origin) { conditions.push(`d.origin = $${p++}::dashboard_origin`); params.push(opts.origin); }
     if (opts.contextType) { conditions.push(`d.context_type = $${p++}`); params.push(opts.contextType); }
     if (opts.contextId) { conditions.push(`d.context_id = $${p++}`); params.push(opts.contextId); }
     if (opts.status) { conditions.push(`d.status = $${p++}`); params.push(opts.status); }
@@ -111,12 +116,13 @@ export class DashboardBuilderService {
     const dash = await this.db.transaction(async (query) => {
       const result = await query(
         `INSERT INTO dashboards
-           (org_id, name, description, context_type, context_id, redis_key, created_by, updated_by)
-         VALUES ($1, $2, $3, $4::dashboard_context_type, $5, $6, $7, $7)
+           (org_id, name, description, context_type, context_id, origin, redis_key, created_by, updated_by)
+         VALUES ($1, $2, $3, $4::dashboard_context_type, $5, $6::dashboard_origin, $7, $8, $8)
          RETURNING *`,
         [
           orgId, dto.name, dto.description || null,
           dto.contextType, dto.contextId,
+          dto.origin || 'manual',
           `dash:${Date.now()}`,   // will be updated below
           creator.id,
         ],
@@ -142,7 +148,7 @@ export class DashboardBuilderService {
     await this.audit.log({
       orgId, accountId: creator.id,
       eventType: 'dashboard_created', resourceType: 'dashboard', resourceId: dash.id,
-      details: { name: dash.name, contextType: dto.contextType },
+      details: { name: dash.name, contextType: dto.contextType, origin: dto.origin || 'manual' },
     });
 
     return dash;

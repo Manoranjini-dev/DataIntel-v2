@@ -406,10 +406,10 @@ export default function ChatPage() {
   async function handleAddToDashboard(message: MessageBubble) {
     if (!org || !chat) return;
     try {
-      const { dashboards } = await dashboardApi.list(org.id);
+      const { dashboards } = await dashboardApi.list(org.id, { origin: 'datasource', contextType: 'connection', contextId: chat.connection_id });
       let targetDash = dashboards.find((d: any) => d.connection_id === chat.connection_id);
       if (!targetDash) {
-        const res = await dashboardApi.create(org.id, { name: 'Main Dashboard', connection_id: chat.connection_id });
+        const res = await dashboardApi.create(org.id, { name: 'Main Dashboard', connectionId: chat.connection_id, origin: 'datasource' });
         targetDash = res.dashboard;
       }
       

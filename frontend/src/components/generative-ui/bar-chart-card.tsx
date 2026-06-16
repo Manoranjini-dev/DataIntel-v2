@@ -188,7 +188,7 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
           minWidth: compact && !isHorizontal ? calculatedWidth : undefined,
           width: '100%' 
         }}>
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="99%" height="100%">
             <BarChart 
               data={schema.data} 
               layout={isHorizontal ? "vertical" : "horizontal"} 

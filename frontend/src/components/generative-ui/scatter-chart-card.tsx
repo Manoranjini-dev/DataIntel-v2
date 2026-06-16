@@ -79,7 +79,7 @@ export function ScatterChartCard({ execution, title, compact }: ScatterChartCard
         </p>
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
-        <ResponsiveContainer width="100%" height={compact ? '100%' : 240}>
+        <ResponsiveContainer width="99%" height={compact ? '100%' : 240}>
           <ScatterChart margin={{ top: 10, right: 16, bottom: 16, left: 4 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
             <XAxis

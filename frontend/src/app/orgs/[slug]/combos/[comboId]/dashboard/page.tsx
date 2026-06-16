@@ -33,8 +33,9 @@ export default function ComboDashboardPage() {
         setActiveChatId(chatList[0].id);
       }
 
-      // Find dashboard for this combo
-      const { dashboards } = await dashboardApi.list(o.id);
+      // Find the data-source dashboard owned by this combo. Scoped to
+      // origin='datasource' so it stays independent of manual dashboards.
+      const { dashboards } = await dashboardApi.list(o.id, { origin: 'datasource', contextType: 'combo', contextId: comboId });
       const dash = dashboards.find((d: any) => d.combo_id === comboId);
       if (dash) {
         setDashId(dash.id);
@@ -55,7 +56,8 @@ export default function ComboDashboardPage() {
     try {
       const { dashboard: newDash } = await dashboardApi.create(org.id, {
         name: `${combo.name} Dashboard`,
-        comboId: comboId
+        comboId: comboId,
+        origin: 'datasource',
       });
       setDashId(newDash.id);
       setHasDashboard(true);

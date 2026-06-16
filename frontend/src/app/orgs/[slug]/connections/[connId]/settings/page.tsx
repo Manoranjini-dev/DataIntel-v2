@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { connectionApi, orgApi } from '@/lib/api';
 import {
   Code2, Zap, BarChart3, Rows3, Keyboard, Trash2, Radio,
-  TestTube2, Database, ShieldAlert, CheckCircle2, RefreshCw, Check, X,
+  TestTube2, Database, ShieldAlert, CheckCircle2, RefreshCw,
 } from 'lucide-react';
 
 // ── Design Components ──────────────────────────────────────────
@@ -91,6 +91,7 @@ export default function ConnectionSettingsPage() {
   const [sessionCleared, setSessionCleared] = useState(false);
   const [org, setOrg] = useState<any>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Query / execution preferences
   const [showGeneratedQuery, setShowGeneratedQuery] = useState(false);
@@ -433,39 +434,59 @@ export default function ConnectionSettingsPage() {
                   </p>
                 </div>
               </div>
-              {confirmDelete ? (
-                <div className="flex items-center gap-2 ml-4 shrink-0">
-                  <span className="text-xs text-destructive font-medium">Permanently delete?</span>
-                  <button
-                    onClick={async () => {
-                      if (!org) return;
-                      try {
-                        await connectionApi.delete(org.id, connId);
-                        router.push(`/orgs/${slug}/connections`);
-                      } catch (e) { console.error(e); setConfirmDelete(false); }
-                    }}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-destructive text-white rounded-lg text-xs font-semibold hover:opacity-90 transition-opacity"
-                  >
-                    <Check className="w-3.5 h-3.5" /> Yes, delete
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(false)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-muted border border-border text-muted-foreground rounded-lg text-xs font-semibold hover:text-foreground transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" /> Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  className="px-4 py-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-xl text-xs font-semibold hover:bg-destructive/20 transition-colors shrink-0 ml-4"
-                >
-                  Delete
-                </button>
-              )}
+              <button
+                onClick={() => setConfirmDelete(true)}
+                className="px-4 py-2 bg-destructive/10 border border-destructive/30 text-destructive rounded-xl text-xs font-semibold hover:bg-destructive/20 transition-colors shrink-0 ml-4"
+              >
+                Delete
+              </button>
             </div>
           </div>
         </Section>
+
+        {/* Delete connection confirmation */}
+        {confirmDelete && (
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => !deleting && setConfirmDelete(false)}
+          >
+            <div className="bg-card border border-border rounded-2xl w-full max-w-md shadow-xl p-6" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center shrink-0">
+                  <ShieldAlert className="w-5 h-5 text-destructive" />
+                </div>
+                <h2 className="text-base font-semibold text-foreground">Delete Connection?</h2>
+              </div>
+              <p className="text-sm text-muted-foreground leading-relaxed mb-6">
+                This action will permanently delete the data source connection and all related
+                dashboards, chats, history, and generated artifacts. This action cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (!org) return;
+                    setDeleting(true);
+                    try {
+                      await connectionApi.delete(org.id, connId);
+                      router.push(`/orgs/${slug}/connections`);
+                    } catch (e) { console.error(e); setDeleting(false); setConfirmDelete(false); }
+                  }}
+                  disabled={deleting}
+                  className="flex-1 py-2.5 bg-destructive hover:opacity-90 text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-opacity"
+                >
+                  {deleting ? 'Deleting…' : 'Yes, delete connection'}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleting}
+                  className="px-5 py-2.5 bg-muted hover:bg-muted/80 rounded-xl text-sm text-muted-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Bottom spacer */}
         <div className="h-8" />

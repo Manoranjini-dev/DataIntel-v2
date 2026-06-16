@@ -44,7 +44,9 @@ export default function DashboardsPage() {
       const { org: o } = await orgApi.get(slug);
       setOrg(o);
       const [{ dashboards: d }, { connections: conns }] = await Promise.all([
-        dashboardApi.list(o.id),
+        // Manual dashboards belong exclusively to the Dashboards module — never
+        // show data-source dashboards here.
+        dashboardApi.list(o.id, { origin: 'manual' }),
         connectionApi.list(o.id),
       ]);
       setDashboards(d);
@@ -58,7 +60,7 @@ export default function DashboardsPage() {
     if (!org || !form.name) return;
     setSubmitting(true);
     try {
-      const { dashboard } = await dashboardApi.create(org.id, form);
+      const { dashboard } = await dashboardApi.create(org.id, { ...form, origin: 'manual' });
       router.push(`/orgs/${slug}/dashboards/${dashboard.id}`);
     } catch (e) { console.error(e); }
     finally { setSubmitting(false); }

@@ -795,11 +795,13 @@ function AddToDashboardModal({ orgId, connId, message, onClose }: {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    dashboardApi.list(orgId).then(res => {
+    // Within the data source workflow, only offer this connection's data-source
+    // dashboards — manual dashboards are independent of this context.
+    dashboardApi.list(orgId, { origin: 'datasource', contextType: 'connection', contextId: connId }).then(res => {
       setDashboards(res.dashboards);
       if (res.dashboards.length > 0) setSelectedDash(res.dashboards[0].id);
     }).catch(console.error);
-  }, [orgId]);
+  }, [orgId, connId]);
 
   useEffect(() => {
     if (!selectedDash) return;

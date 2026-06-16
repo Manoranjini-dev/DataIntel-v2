@@ -150,14 +150,86 @@ export class PersistentConnectionService {
     return conn;
   }
 
-  /** Delete a connection */
+  /**
+   * Delete a connection and perform a complete cleanup of every entity that is
+   * exclusively associated with it. This prevents orphaned data and broken UI
+   * references after the data source is removed.
+   *
+   * Removed automatically (in a single transaction):
+   *   • Data Source dashboards (origin='datasource') scoped to this connection —
+   *     and their pages, widgets, versions, filters, permissions (FK cascade) —
+   *     plus their widget execution logs and generation jobs.
+   *   • Chat sessions scoped to this connection (and their messages via FK cascade).
+   *   • Query executions / generated-dashboard history tied to this connection.
+   *   • The connection's schema, health logs, and credential rotations (FK cascade).
+   *
+   * Manual dashboards (origin='manual') that merely connect to this data source
+   * are intentionally preserved — they are independent assets owned by the
+   * Dashboards module and are not synchronized with this connection.
+   *
+   * Permission: editors and above may disconnect/delete a connection.
+   */
   async delete(orgId: string, connId: string, user: SafeAccount) {
-    await this.orgService.requireRole(orgId, user.id, 'admin');
+    await this.orgService.requireRole(orgId, user.id, 'editor');
     await this.get(orgId, connId, user.id);
-    await this.db.query(
-      'DELETE FROM datasource_connections WHERE id = $1 AND org_id = $2',
-      [connId, orgId],
-    );
+
+    await this.db.transaction(async (query) => {
+      // 1. Identify the data-source dashboards owned by this connection.
+      const dashRows = await query(
+        `SELECT id FROM dashboards
+         WHERE org_id = $1 AND origin = 'datasource'
+           AND context_type = 'connection' AND context_id = $2`,
+        [orgId, connId],
+      );
+      const dashIds: string[] = dashRows.rows.map((r: any) => r.id);
+
+      // 2. Remove generated-dashboard history / temporary artifacts (generation
+      //    jobs) for this connection — both those that produced one of the
+      //    deleted dashboards and those addressed at the connection directly.
+      await query(
+        `DELETE FROM dashboard_generation_jobs
+         WHERE org_id = $1
+           AND ( (context->>'contextId') = $2
+                 OR (context->>'datasourceContextId') = $2
+                 OR dashboard_id = ANY($3::uuid[]) )`,
+        [orgId, connId, dashIds],
+      );
+
+      // 3. Remove widget execution logs for those dashboards (no FK cascade).
+      if (dashIds.length > 0) {
+        await query(
+          `DELETE FROM widget_executions WHERE dashboard_id = ANY($1::uuid[])`,
+          [dashIds],
+        );
+        // 4. Delete the dashboards — pages, widgets_v2, versions, filters and
+        //    permissions are removed automatically via ON DELETE CASCADE.
+        await query(
+          `DELETE FROM dashboards WHERE id = ANY($1::uuid[])`,
+          [dashIds],
+        );
+      }
+
+      // 5. Remove query executions / chat history tied to this connection.
+      //    (chats.connection_id is ON DELETE SET NULL, which would violate the
+      //    chk_chat_scope CHECK constraint — so chats must be deleted explicitly
+      //    BEFORE the connection row is removed.)
+      await query(
+        `DELETE FROM query_executions WHERE org_id = $1 AND connection_id = $2`,
+        [orgId, connId],
+      );
+      await query(
+        `DELETE FROM chats WHERE org_id = $1 AND connection_id = $2`,
+        [orgId, connId],
+      );
+
+      // 6. Finally remove the connection itself. Schemas, tables, columns,
+      //    health logs and credential rotations cascade via their FK.
+      await query(
+        `DELETE FROM datasource_connections WHERE id = $1 AND org_id = $2`,
+        [connId, orgId],
+      );
+    });
+
     await this.audit.log({
       orgId, accountId: user.id, eventType: 'connection_deleted',
       resourceType: 'connection', resourceId: connId,
