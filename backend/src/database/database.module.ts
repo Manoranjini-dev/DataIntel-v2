@@ -28,7 +28,7 @@ export { DATABASE_POOL } from './database.constants';
           ssl: { rejectUnauthorized: false },
           max: 20,
           idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 10000,
+          connectionTimeoutMillis: 30000,
         });
 
         // Add error handler to prevent idle client errors from crashing Node.js
