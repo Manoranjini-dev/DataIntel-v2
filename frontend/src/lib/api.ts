@@ -898,7 +898,13 @@ export const cardApi = {
   list: async (params?: Record<string, any>) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     const r = await apiFetch(`/cards${qs}`);
-    return handleResponse<{ cards: any[], total: number }>(r);
+    const data = await handleResponse<{ cards: any[]; total: number }>(r);
+    // Map datasource_context_id → connection_id for cards backed by a connection,
+    // mirroring the same normalisation applied to dashboards in dashboardApi.list().
+    data.cards.forEach((c: any) => {
+      if (c.datasource_context_type === 'connection') c.connection_id = c.datasource_context_id;
+    });
+    return data;
   },
   create: async (data: any) => {
     const r = await apiFetch(`/cards`, {
@@ -923,6 +929,50 @@ export const cardApi = {
       method: 'POST',
     });
     return handleResponse<{ card: any }>(r);
+  },
+
+  // ── Sharing ──────────────────────────────────────────────────
+
+  listShares: async (cardId: string) => {
+    const r = await apiFetch(`/cards/${cardId}/shares`);
+    return handleResponse<{ shares: any[] }>(r);
+  },
+
+  /** Share a card by email. accessLevel is converted to canEdit on the way to the API. */
+  share: async (
+    cardId: string,
+    data: { email: string; accessLevel: 'view' | 'edit' },
+  ) => {
+    const r = await apiFetch(`/cards/${cardId}/shares`, {
+      method: 'POST',
+      body: JSON.stringify({ email: data.email, canEdit: data.accessLevel === 'edit' }),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  updateShare: async (
+    cardId: string,
+    accountId: string,
+    data: { accessLevel: 'view' | 'edit' },
+  ) => {
+    const r = await apiFetch(`/cards/${cardId}/shares/${accountId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ canEdit: data.accessLevel === 'edit' }),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  revokeShare: async (cardId: string, accountId: string) => {
+    const r = await apiFetch(`/cards/${cardId}/shares/${accountId}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  /** Search workspace users that can receive a card share (Admin, Analyst, Viewer). */
+  searchCardShareTargets: async (q: string) => {
+    const r = await apiFetch(`/cards/share-targets?q=${encodeURIComponent(q)}`);
+    return handleResponse<{ users: { id: string; email: string; display_name: string; role: string }[] }>(r);
   },
 };
 

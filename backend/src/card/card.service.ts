@@ -1,8 +1,9 @@
 // ──────────────────────────────────────────────
-// Analytics Card Service — Core CRUD + version management
+// Analytics Card Service — Core CRUD + version management + sharing
 // ──────────────────────────────────────────────
 
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -43,6 +44,7 @@ export interface UpdateCardDto {
 }
 
 export interface CardListOptions {
+  view?: 'my_cards' | 'shared_with_me';
   folderId?: string;
   tags?: string[];
   visibility?: string;
@@ -68,6 +70,7 @@ export class CardService {
 
   async list(requesterId: string, opts: CardListOptions = {}) {
     const {
+      view = 'my_cards',
       folderId,
       tags,
       visibility,
@@ -81,15 +84,25 @@ export class CardService {
       sortDir = 'desc',
     } = opts;
 
-    const conditions: string[] = ['c.created_by = $1', 'c.deleted_at IS NULL'];
+    const isSharedView = view === 'shared_with_me';
+
+    const conditions: string[] = ['c.deleted_at IS NULL'];
     const params: unknown[] = [requesterId];
     let p = 2;
+
+    // For my_cards, restrict to cards the requester created.
+    // For shared_with_me, the JOIN on card_shares enforces the filter.
+    if (!isSharedView) {
+      conditions.push(`c.created_by = $1`);
+    }
 
     if (folderId) {
       conditions.push(`c.folder_id = $${p++}`);
       params.push(folderId);
     }
-    if (visibility) {
+    // Visibility filter only applies to owned cards — shared cards are visible
+    // regardless of their visibility setting because the share grant overrides it.
+    if (!isSharedView && visibility) {
       conditions.push(`c.visibility = $${p++}`);
       params.push(visibility);
     }
@@ -115,10 +128,22 @@ export class CardService {
       p++;
     }
 
-    const allowedSortCols = { updated_at: 'c.updated_at', created_at: 'c.created_at', name: 'c.name' };
+    const allowedSortCols = {
+      updated_at: 'c.updated_at',
+      created_at: 'c.created_at',
+      name: 'c.name',
+    };
     const orderClause = `${allowedSortCols[sortBy]} ${sortDir === 'asc' ? 'ASC' : 'DESC'}`;
 
     params.push(limit, offset);
+
+    const sharedJoin = isSharedView
+      ? `JOIN card_shares cs ON cs.card_id = c.id AND cs.shared_with = $1`
+      : '';
+
+    const canEditCol = isSharedView ? 'cs.can_edit AS can_edit' : 'TRUE AS can_edit';
+    const isOwnerCol = isSharedView ? 'FALSE AS is_owner' : 'TRUE AS is_owner';
+
     const query = `
       SELECT
         c.*,
@@ -126,20 +151,30 @@ export class CardService {
         a.avatar_url AS created_by_avatar,
         cf.name AS folder_name,
         qe.result_preview AS last_result_preview,
-        qe.result_columns AS last_result_columns
+        qe.result_columns AS last_result_columns,
+        ${canEditCol},
+        ${isOwnerCol}
       FROM analytics_cards c
       JOIN accounts a ON a.id = c.created_by
       LEFT JOIN card_folders cf ON cf.id = c.folder_id AND cf.deleted_at IS NULL
       LEFT JOIN query_executions qe ON qe.id = c.last_execution_id
+      ${sharedJoin}
       WHERE ${conditions.join(' AND ')}
       ORDER BY ${orderClause}
       LIMIT $${p} OFFSET $${p + 1}
     `;
 
+    const countQuery = `
+      SELECT COUNT(*)
+      FROM analytics_cards c
+      ${sharedJoin}
+      WHERE ${conditions.join(' AND ')}
+    `;
+
     const [rows, countRow] = await Promise.all([
       this.db.queryMany(query, params),
       this.db.queryOne<{ count: string }>(
-        `SELECT COUNT(*) FROM analytics_cards c WHERE ${conditions.join(' AND ')}`,
+        countQuery,
         params.slice(0, -2),
       ),
     ]);
@@ -147,7 +182,7 @@ export class CardService {
     return { cards: rows, total: parseInt(countRow?.count || '0', 10) };
   }
 
-  /** Fetch a card and verify the requester owns it */
+  /** Owner-only guard — used for publish, rollback, softDelete, and share management */
   private async requireOwnedCard(cardId: string, requesterId: string) {
     const card = await this.db.queryOne<{ id: string; created_by: string }>(
       `SELECT id, created_by FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL`,
@@ -160,8 +195,36 @@ export class CardService {
     return card;
   }
 
+  /**
+   * Access guard that accepts owner OR a share grantee.
+   * level='view' — owner or any grantee.
+   * level='edit' — owner or a grantee with can_edit=true.
+   */
+  private async requireCardAccess(
+    cardId: string,
+    requesterId: string,
+    level: 'view' | 'edit',
+  ): Promise<{ isOwner: boolean }> {
+    const card = await this.db.queryOne<{ id: string; created_by: string }>(
+      `SELECT id, created_by FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL`,
+      [cardId],
+    );
+    if (!card) throw new NotFoundException('Card not found');
+    if (card.created_by === requesterId) return { isOwner: true };
+
+    const share = await this.db.queryOne<{ can_edit: boolean }>(
+      `SELECT can_edit FROM card_shares WHERE card_id = $1 AND shared_with = $2`,
+      [cardId, requesterId],
+    );
+    if (!share) throw new ForbiddenException('You do not have access to this card');
+    if (level === 'edit' && !share.can_edit) {
+      throw new ForbiddenException('You have view-only access to this card');
+    }
+    return { isOwner: false };
+  }
+
   async getById(cardId: string, requesterId: string) {
-    await this.requireOwnedCard(cardId, requesterId);
+    await this.requireCardAccess(cardId, requesterId, 'view');
     const card = await this.db.queryOne(
       `SELECT c.*, a.display_name AS created_by_name
        FROM analytics_cards c
@@ -174,8 +237,10 @@ export class CardService {
   }
 
   async create(creator: SafeAccount, dto: CreateCardDto) {
+    if (creator.role === 'VIEWER') {
+      throw new ForbiddenException('Viewers cannot create cards');
+    }
     const card = await this.db.transaction(async (query) => {
-      // Create the card
       const result = await query(
         `INSERT INTO analytics_cards
            (folder_id, name, description,
@@ -203,7 +268,6 @@ export class CardService {
       );
       const card = result.rows[0];
 
-      // Create version 1
       await query(
         `INSERT INTO analytics_card_versions
            (card_id, version, query_definition, raw_query, chart_type,
@@ -235,7 +299,7 @@ export class CardService {
   }
 
   async update(cardId: string, updater: SafeAccount, dto: UpdateCardDto) {
-    const existing = await this.requireOwnedCard(cardId, updater.id);
+    await this.requireCardAccess(cardId, updater.id, 'edit');
 
     const full = await this.db.queryOne<{
       id: string;
@@ -248,14 +312,13 @@ export class CardService {
     }>(
       `SELECT id, current_version, query_definition, raw_query, chart_type, visualization_config, query_language
        FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL`,
-      [existing.id],
+      [cardId],
     );
     if (!full) throw new NotFoundException('Card not found');
 
     const newVersion = full.current_version + 1;
 
     const card = await this.db.transaction(async (query) => {
-      // Update the card
       const result = await query(
         `UPDATE analytics_cards
          SET name                    = COALESCE($2, name),
@@ -292,7 +355,6 @@ export class CardService {
       );
       const updated = result.rows[0];
 
-      // Snapshot new version
       await query(
         `INSERT INTO analytics_card_versions
            (card_id, version, query_definition, raw_query, chart_type,
@@ -349,7 +411,6 @@ export class CardService {
       );
     });
 
-    // Invalidate all widget caches that use this card
     this.events.emit('card.published', { cardId });
 
     await this.audit.log({
@@ -458,7 +519,7 @@ export class CardService {
   }
 
   async listVersions(cardId: string, requesterId: string) {
-    await this.requireOwnedCard(cardId, requesterId);
+    await this.requireCardAccess(cardId, requesterId, 'view');
     return this.db.queryMany(
       `SELECT v.*, a.display_name AS created_by_name
        FROM analytics_card_versions v
@@ -467,5 +528,123 @@ export class CardService {
        ORDER BY v.version DESC`,
       [cardId],
     );
+  }
+
+  // ── Sharing ──────────────────────────────────────────────────────
+
+  /** Share a card with a user by email (owner only) */
+  async shareCard(
+    cardId: string,
+    sharer: SafeAccount,
+    email: string,
+    canEdit: boolean,
+  ) {
+    await this.requireOwnedCard(cardId, sharer.id);
+
+    const target = await this.db.queryOne<{ id: string; display_name: string; email: string; role: string }>(
+      `SELECT id, display_name, email, role FROM accounts WHERE email = $1`,
+      [email.toLowerCase()],
+    );
+    if (!target) throw new NotFoundException(`No account found for email: ${email}`);
+    if (target.id === sharer.id) {
+      throw new BadRequestException('You cannot share a card with yourself');
+    }
+
+    // Viewers can only ever have view (read-only) access — never edit
+    const effectiveCanEdit = target.role === 'VIEWER' ? false : canEdit;
+
+    const share = await this.db.queryOne(
+      `INSERT INTO card_shares (card_id, shared_with, can_edit, shared_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (card_id, shared_with) DO UPDATE
+         SET can_edit = EXCLUDED.can_edit, updated_at = NOW()
+       RETURNING *`,
+      [cardId, target.id, effectiveCanEdit, sharer.id],
+    );
+
+    await this.audit.log({
+      accountId: sharer.id,
+      eventType: 'card_shared',
+      resourceType: 'card',
+      resourceId: cardId,
+      details: { sharedWithEmail: email, sharedWithAccountId: target.id, canEdit: effectiveCanEdit },
+    });
+
+    return { share: { ...share, email: target.email, display_name: target.display_name } };
+  }
+
+  /** List all users a card is shared with (owner only) */
+  async listShares(cardId: string, requesterId: string) {
+    await this.requireOwnedCard(cardId, requesterId);
+
+    const shares = await this.db.queryMany(
+      `SELECT cs.id, cs.card_id, cs.shared_with AS account_id,
+              cs.can_edit, cs.shared_by, cs.created_at,
+              a.email, a.display_name
+       FROM card_shares cs
+       JOIN accounts a ON a.id = cs.shared_with
+       WHERE cs.card_id = $1
+       ORDER BY cs.created_at ASC`,
+      [cardId],
+    );
+    return { shares };
+  }
+
+  /** Change the permission level for an existing share (owner only) */
+  async updateShare(
+    cardId: string,
+    requesterId: string,
+    targetAccountId: string,
+    canEdit: boolean,
+  ) {
+    await this.requireOwnedCard(cardId, requesterId);
+
+    const share = await this.db.queryOne(
+      `UPDATE card_shares SET can_edit = $3, updated_at = NOW()
+       WHERE card_id = $1 AND shared_with = $2
+       RETURNING *`,
+      [cardId, targetAccountId, canEdit],
+    );
+    if (!share) throw new NotFoundException('Share not found for this account');
+    return { share };
+  }
+
+  /**
+   * Search workspace users that a card can be shared with.
+   * Unlike connection sharing (Admin/Analyst only), cards can be shared with any role.
+   */
+  async searchShareTargets(query: string, excludeAccountId: string) {
+    const trimmed = query.trim();
+    if (trimmed.length < 2) return [];
+
+    return this.db.queryMany<{ id: string; email: string; display_name: string; role: string }>(
+      `SELECT id, email, display_name, role
+       FROM accounts
+       WHERE is_deleted = FALSE
+         AND status = 'ACTIVE'
+         AND id != $1
+         AND (email ILIKE $2 OR display_name ILIKE $2)
+       ORDER BY display_name ASC
+       LIMIT 10`,
+      [excludeAccountId, `%${trimmed}%`],
+    );
+  }
+
+  /** Revoke a user's access to a card (owner only) */
+  async revokeShare(cardId: string, requesterId: string, targetAccountId: string) {
+    await this.requireOwnedCard(cardId, requesterId);
+
+    await this.db.query(
+      `DELETE FROM card_shares WHERE card_id = $1 AND shared_with = $2`,
+      [cardId, targetAccountId],
+    );
+
+    await this.audit.log({
+      accountId: requesterId,
+      eventType: 'card_share_revoked',
+      resourceType: 'card',
+      resourceId: cardId,
+      details: { revokedFromAccountId: targetAccountId },
+    });
   }
 }

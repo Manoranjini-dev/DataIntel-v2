@@ -29,6 +29,7 @@ export type AuditEventType =
   | 'widget_added' | 'widget_removed' | 'widget_executed' | 'widget_cache_invalidated'
   // Card events
   | 'card_created' | 'card_updated' | 'card_published' | 'card_deleted' | 'card_version_rollback'
+  | 'card_shared' | 'card_share_revoked'
   // Combo events
   | 'combo_created' | 'combo_updated' | 'combo_deleted';
 
