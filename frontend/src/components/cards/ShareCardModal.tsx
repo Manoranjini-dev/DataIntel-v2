@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { cardApi } from '@/lib/api';
-import { X, Share2, Trash2, Mail } from 'lucide-react';
+import { X, Share2, Trash2, Mail, Search, UserX } from 'lucide-react';
 
 interface ShareCardModalProps {
   cardId: string;
@@ -21,7 +21,10 @@ interface Share {
 export function ShareCardModal({ cardId, cardName, onClose }: ShareCardModalProps) {
   const [shares, setShares]           = useState<Share[]>([]);
   const [loading, setLoading]         = useState(true);
-  const [email, setEmail]             = useState('');
+  const [query, setQuery]             = useState('');
+  const [results, setResults]         = useState<any[]>([]);
+  const [searching, setSearching]     = useState(false);
+  const [selected, setSelected]       = useState<any | null>(null);
   const [accessLevel, setAccessLevel] = useState<'view' | 'edit'>('view');
   const [submitting, setSubmitting]   = useState(false);
   const [error, setError]             = useState('');
@@ -37,13 +40,35 @@ export function ShareCardModal({ cardId, cardName, onClose }: ShareCardModalProp
     finally { setLoading(false); }
   }
 
+  // Debounced search for users
+  useEffect(() => {
+    setSelected(null);
+    const q = query.trim();
+    if (q.length < 2) { setResults([]); return; }
+    const handle = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const { users } = await cardApi.searchCardShareTargets(q);
+        const sharedIds = new Set(shares.map((s: any) => s.account_id));
+        setResults(users.filter((u: any) => !sharedIds.has(u.id)));
+      } catch (e) { console.error(e); }
+      finally { setSearching(false); }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [query, shares]);
+
   async function handleShare(e: React.FormEvent) {
     e.preventDefault();
+    const email = selected?.email || query.trim();
+    if (!email) return;
+
     setError('');
     setSubmitting(true);
     try {
       await cardApi.share(cardId, { email, accessLevel });
-      setEmail('');
+      setQuery('');
+      setSelected(null);
+      setResults([]);
       await loadShares();
     } catch (e: any) {
       setError(e?.message || 'Failed to share card');
@@ -82,16 +107,15 @@ export function ShareCardModal({ cardId, cardName, onClose }: ShareCardModalProp
             <strong className="text-foreground">{cardName}</strong>.
           </p>
 
-          <form onSubmit={handleShare} className="space-y-3">
+          <form onSubmit={handleShare} className="space-y-3 relative">
             <div className="flex gap-2">
               <div className="flex-1 relative">
-                <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <input
-                  type="email"
-                  placeholder="user@example.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  required
+                  type="text"
+                  placeholder="Search users by name or email…"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
                   className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
@@ -105,11 +129,29 @@ export function ShareCardModal({ cardId, cardName, onClose }: ShareCardModalProp
               </select>
             </div>
 
+            {(results.length > 0 || searching) && (
+              <div className="absolute top-[38px] left-0 right-0 bg-card border border-border rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto">
+                {searching ? (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">Searching…</div>
+                ) : results.map((u: any) => (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => { setSelected(u); setQuery(u.email); setResults([]); }}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted/60 transition-colors"
+                  >
+                    <span className="text-sm text-foreground truncate">{u.display_name || u.email}</span>
+                    <span className="text-xs text-muted-foreground shrink-0">{u.role}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             {error && <p className="text-sm text-destructive font-medium">{error}</p>}
 
             <button
               type="submit"
-              disabled={submitting || !email}
+              disabled={submitting || !query.trim()}
               className="w-full px-4 py-2 bg-primary text-white text-sm font-medium rounded-md hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {submitting ? 'Sharing…' : 'Share'}
@@ -151,7 +193,7 @@ export function ShareCardModal({ cardId, cardName, onClose }: ShareCardModalProp
                       title="Revoke access"
                       className="p-1.5 hover:bg-destructive/10 text-muted-foreground hover:text-destructive rounded-md transition-colors"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <UserX className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
