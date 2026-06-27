@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { dashboardApi, connectionApi } from '@/lib/api';
-import { LayoutDashboard, Plus, X, ChevronRight, MoreVertical, Edit, Trash2 } from 'lucide-react';
+import { useAuthStore } from '@/lib/auth-store';
+import { ShareDashboardModal } from '@/components/dashboard/ShareDashboardModal';
+import { LayoutDashboard, Plus, X, ChevronRight, MoreVertical, Edit, Trash2, Share2 } from 'lucide-react';
 
 const inputCls = 'w-full px-3 py-2.5 bg-muted/60 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 transition-all';
 
 export default function DashboardsPage() {
   const router = useRouter();
+  const currentUser = useAuthStore(s => s.user);
 
   const [dashboards,  setDashboards]  = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
@@ -22,6 +25,7 @@ export default function DashboardsPage() {
   const [dashToRename, setDashToRename] = useState<any>(null);
   const [renameForm, setRenameForm] = useState({ name: '', description: '' });
   const [dashToDelete, setDashToDelete] = useState<any>(null);
+  const [dashToShare, setDashToShare] = useState<any>(null);
   const [toastMsg, setToastMsg] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
 
   useEffect(() => {
@@ -194,11 +198,18 @@ export default function DashboardsPage() {
                     <p className="font-semibold text-foreground text-sm leading-snug group-hover:text-primary transition-colors line-clamp-1">
                       {dash.name}
                     </p>
-                    {dash.is_published && (
-                      <span className="shrink-0 text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-semibold">
-                        Published
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {dash.created_by !== currentUser?.id && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-full font-semibold">
+                          Shared
+                        </span>
+                      )}
+                      {dash.is_published && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 border border-green-200 rounded-full font-semibold">
+                          Published
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {dash.description && (
                     <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{dash.description}</p>
@@ -224,7 +235,7 @@ export default function DashboardsPage() {
                     <MoreVertical className="w-4 h-4" />
                   </button>
                   {openMenuId === dash.id && (
-                    <div className="absolute right-0 mt-1 w-40 bg-card border border-border rounded-xl shadow-lg py-1.5 z-20">
+                    <div className="absolute right-0 mt-1 w-44 bg-card border border-border rounded-xl shadow-lg py-1.5 z-20">
                       <button
                         onClick={(e) => {
                           e.preventDefault();
@@ -236,6 +247,18 @@ export default function DashboardsPage() {
                       >
                         <Edit className="w-4 h-4 text-muted-foreground" /> Rename
                       </button>
+                      {dash.created_by === currentUser?.id && (
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            setOpenMenuId(null);
+                            setDashToShare(dash);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-foreground hover:bg-muted transition-colors text-left"
+                        >
+                          <Share2 className="w-4 h-4 text-muted-foreground" /> Share
+                        </button>
+                      )}
                       <button
                         onClick={(e) => {
                           e.preventDefault();
@@ -311,6 +334,15 @@ export default function DashboardsPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Share Modal */}
+      {dashToShare && (
+        <ShareDashboardModal
+          dashId={dashToShare.id}
+          dashName={dashToShare.name}
+          onClose={() => setDashToShare(null)}
+        />
       )}
 
       {/* Toast */}

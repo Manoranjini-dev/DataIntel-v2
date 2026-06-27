@@ -718,6 +718,39 @@ export const dashboardApi = {
     });
     return handleResponse<{ success: boolean }>(r);
   },
+
+  // ── Sharing ──────────────────────────────────
+
+  listShares: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/shares`);
+    return handleResponse<{ shares: any[] }>(r);
+  },
+
+  share: async (dashId: string, data: { email: string; accessLevel: 'view' | 'edit' }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/shares`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  updateShare: async (dashId: string, accountId: string, data: { accessLevel: 'view' | 'edit' }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/shares/${accountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  revokeShare: async (dashId: string, accountId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/shares/${accountId}`, { method: 'DELETE' });
+    return handleResponse<any>(r);
+  },
+
+  searchShareTargets: async (q: string) => {
+    const r = await apiFetch(`/dashboards/share-targets?q=${encodeURIComponent(q)}`);
+    return handleResponse<{ users: { id: string; email: string; display_name: string; role: string }[] }>(r);
+  },
 };
 
 // ── Combo API ──────────────────────────────

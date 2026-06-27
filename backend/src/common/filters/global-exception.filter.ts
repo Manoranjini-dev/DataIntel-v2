@@ -86,7 +86,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return 'That request took too long. Try a simpler question or reduce the data range.';
     if (lower.includes('econnrefused') || lower.includes('enotfound') || lower.includes('connect'))
       return 'The database connection was lost. Please reconnect.';
-    if (lower.includes('permission') || lower.includes('access denied'))
+    if (lower.includes('permission denied') || lower.includes('access denied'))
       return 'You do not have permission to access that data.';
 
     // Keep messages that are already user-friendly (from our LLM prompts)

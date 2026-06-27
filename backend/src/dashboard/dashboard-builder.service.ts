@@ -80,9 +80,8 @@ export class DashboardBuilderService {
       'd.deleted_at IS NULL',
       `( d.created_by = $1
          OR EXISTS (
-           SELECT 1 FROM dashboard_permissions p
-           WHERE p.dashboard_id = d.id AND p.account_id = $1
-             AND (p.expires_at IS NULL OR p.expires_at > NOW())
+           SELECT 1 FROM dashboard_shares ds
+           WHERE ds.dashboard_id = d.id AND ds.shared_with = $1
          ) )`,
     ];
     const params: unknown[] = [requesterId];

@@ -6,6 +6,7 @@ import {
   Controller, Get, Post, Put, Delete, Body, Param, HttpCode, HttpStatus, Query
 } from '@nestjs/common';
 import { DashboardBuilderService, CreateDashboardDto, CreateWidgetDto, LayoutItem } from './dashboard-builder.service';
+import { DashboardPermissionsService } from './dashboard-permissions.service';
 import { WidgetExecutionService } from './widget-execution.service';
 import { DefaultCardsService } from './default-cards.service';
 import { CurrentUser } from '../common/decorators';
@@ -19,6 +20,7 @@ export class DashboardController {
     private readonly builder: DashboardBuilderService,
     private readonly executionService: WidgetExecutionService,
     private readonly defaultCards: DefaultCardsService,
+    private readonly permissions: DashboardPermissionsService,
   ) {}
 
   // ── Dashboards ────────────────────────────────
@@ -107,6 +109,64 @@ export class DashboardController {
     }
 
     return { dashboard };
+  }
+
+  // ── Sharing (share-targets must be before :dashId to avoid param collision) ──
+
+  @Get('share-targets')
+  @ApiOperation({ summary: 'Search workspace users for sharing' })
+  async searchShareTargets(
+    @CurrentUser() user: SafeAccount,
+    @Query('q') q: string = '',
+  ) {
+    const users = await this.permissions.searchShareTargets(q, user.id);
+    return { users };
+  }
+
+  @Get(':dashId/shares')
+  @ApiOperation({ summary: 'List users a dashboard is shared with' })
+  async listShares(
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    const shares = await this.permissions.listShares(dashId, user.id);
+    return { shares };
+  }
+
+  @Post(':dashId/shares')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Share a dashboard with a user by email' })
+  async shareWithUser(
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { email: string; accessLevel: 'view' | 'edit' },
+  ) {
+    const canEdit = dto.accessLevel === 'edit';
+    const share = await this.permissions.shareByEmail(dashId, dto.email, canEdit, user.id);
+    return { share };
+  }
+
+  @Put(':dashId/shares/:accountId')
+  @ApiOperation({ summary: 'Update access level for a shared user' })
+  async updateShare(
+    @Param('dashId') dashId: string,
+    @Param('accountId') accountId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { accessLevel: 'view' | 'edit' },
+  ) {
+    await this.permissions.updateShare(dashId, accountId, dto.accessLevel === 'edit', user.id);
+    return { success: true };
+  }
+
+  @Delete(':dashId/shares/:accountId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a user\'s access to a dashboard' })
+  async revokeShare(
+    @Param('dashId') dashId: string,
+    @Param('accountId') accountId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    await this.permissions.revokeAccess(dashId, accountId, user.id);
   }
 
   @Get(':dashId')
