@@ -2,10 +2,9 @@
 // Combo Service — Datasource combo CRUD
 // ──────────────────────────────────────────────
 
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { OrgService } from '../org/org.service';
 import { SafeAccount } from '../auth/auth.service';
 import { SchemaMergerService } from './schema-merger.service';
 import { ComboPlannerService } from './combo-planner.service';
@@ -19,40 +18,35 @@ export class ComboService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly orgService: OrgService,
     private readonly schemaMerger: SchemaMergerService,
     private readonly planner: ComboPlannerService,
     private readonly executor: ComboExecutorService,
     private readonly resultMerger: ResultMergerService,
   ) {}
 
-  async list(orgId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
+  async list(accountId: string) {
     return this.db.queryMany(
       `SELECT dc.*, array_agg(dcm.connection_id) AS connection_ids,
               array_agg(c.name) AS connection_names
        FROM datasource_combos dc
        LEFT JOIN datasource_combo_members dcm ON dcm.combo_id = dc.id
        LEFT JOIN datasource_connections c ON c.id = dcm.connection_id
-       WHERE dc.org_id = $1
+       WHERE dc.created_by = $1
        GROUP BY dc.id
        ORDER BY dc.created_at DESC`,
-      [orgId],
+      [accountId],
     );
   }
 
   async create(
-    orgId: string,
     user: SafeAccount,
     data: { name: string; description?: string; connectionIds: string[] },
   ) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
-
     const combo = await this.db.transaction(async (query) => {
       const comboResult = await query(
-        `INSERT INTO datasource_combos (org_id, name, description, created_by)
-         VALUES ($1, $2, $3, $4) RETURNING *`,
-        [orgId, data.name, data.description || null, user.id],
+        `INSERT INTO datasource_combos (name, description, created_by)
+         VALUES ($1, $2, $3) RETURNING *`,
+        [data.name, data.description || null, user.id],
       );
       const combo = comboResult.rows[0];
 
@@ -68,7 +62,7 @@ export class ComboService {
     });
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'combo_created',
       resourceType: 'combo', resourceId: combo.id,
       details: { name: data.name, connectionCount: data.connectionIds.length },
@@ -77,8 +71,21 @@ export class ComboService {
     return combo;
   }
 
-  async get(orgId: string, comboId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
+  /** Fetch a combo and verify the requester owns it */
+  private async requireOwnedCombo(comboId: string, accountId: string) {
+    const combo = await this.db.queryOne<{ id: string; created_by: string }>(
+      'SELECT id, created_by FROM datasource_combos WHERE id = $1',
+      [comboId],
+    );
+    if (!combo) throw new NotFoundException('Combo not found');
+    if (combo.created_by !== accountId) {
+      throw new ForbiddenException('You do not have access to this combo');
+    }
+    return combo;
+  }
+
+  async get(comboId: string, accountId: string) {
+    await this.requireOwnedCombo(comboId, accountId);
     const combo = await this.db.queryOne(
       `SELECT dc.*, array_agg(
          json_build_object('id', c.id, 'name', c.name, 'connectorType', c.connector_type,
@@ -87,29 +94,28 @@ export class ComboService {
        FROM datasource_combos dc
        LEFT JOIN datasource_combo_members dcm ON dcm.combo_id = dc.id
        LEFT JOIN datasource_connections c ON c.id = dcm.connection_id
-       WHERE dc.id = $1 AND dc.org_id = $2
+       WHERE dc.id = $1
        GROUP BY dc.id`,
-      [comboId, orgId],
+      [comboId],
     );
     if (!combo) throw new NotFoundException('Combo not found');
     return combo;
   }
 
-  async delete(orgId: string, comboId: string, user: SafeAccount) {
-    await this.orgService.requireRole(orgId, user.id, 'admin');
-    await this.get(orgId, comboId, user.id);
+  async delete(comboId: string, user: SafeAccount) {
+    await this.requireOwnedCombo(comboId, user.id);
     await this.db.query('DELETE FROM datasource_combos WHERE id = $1', [comboId]);
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'combo_deleted',
       resourceType: 'combo', resourceId: comboId,
     });
     return { success: true };
   }
 
-  async addMember(orgId: string, comboId: string, connectionId: string, user: SafeAccount, alias?: string) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
-    
+  async addMember(comboId: string, connectionId: string, user: SafeAccount, alias?: string) {
+    await this.requireOwnedCombo(comboId, user.id);
+
     const member = await this.db.queryOne(
       `INSERT INTO datasource_combo_members (combo_id, connection_id, alias)
        VALUES ($1, $2, $3)
@@ -119,7 +125,7 @@ export class ComboService {
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'combo_updated',
       resourceType: 'combo', resourceId: comboId,
       details: { action: 'member_added', connectionId },
@@ -128,9 +134,9 @@ export class ComboService {
     return member;
   }
 
-  async removeMember(orgId: string, comboId: string, connectionId: string, user: SafeAccount) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
-    
+  async removeMember(comboId: string, connectionId: string, user: SafeAccount) {
+    await this.requireOwnedCombo(comboId, user.id);
+
     await this.db.query(
       `DELETE FROM datasource_combo_members
        WHERE combo_id = $1 AND connection_id = $2`,
@@ -138,7 +144,7 @@ export class ComboService {
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'combo_updated',
       resourceType: 'combo', resourceId: comboId,
       details: { action: 'member_removed', connectionId },
@@ -146,8 +152,8 @@ export class ComboService {
   }
 
   /** Get merged schema from all connections in a combo */
-  async getMergedSchema(orgId: string, comboId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
+  async getMergedSchema(comboId: string, accountId: string) {
+    await this.requireOwnedCombo(comboId, accountId);
     const members = await this.db.queryMany(
       `SELECT dcm.connection_id, dcm.alias, c.name, c.connector_type, c.database_name
        FROM datasource_combo_members dcm
@@ -190,14 +196,13 @@ export class ComboService {
    * Merge schema → Plan → Execute → Merge results → Persist to query_executions
    */
   async executeQuery(
-    orgId: string,
     comboId: string,
     user: SafeAccount,
     prompt: string,
     chatId?: string,
     messageId?: string,
   ) {
-    await this.orgService.requireMember(orgId, user.id);
+    await this.requireOwnedCombo(comboId, user.id);
     const start = Date.now();
 
     // Persist user message immediately so history is ordered correctly.
@@ -246,13 +251,13 @@ export class ComboService {
 
     const execRecord = await this.db.queryOne(
       `INSERT INTO query_executions
-         (org_id, chat_id, message_id, combo_id, executed_by, prompt,
+         (chat_id, message_id, combo_id, executed_by, prompt,
           generated_query, status, execution_time_ms, row_count,
           result_preview, result_columns, sub_queries, completed_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
        RETURNING id`,
       [
-        orgId, chatId || null, userMsg?.id || messageId || null, comboId, user.id, prompt,
+        chatId || null, userMsg?.id || messageId || null, comboId, user.id, prompt,
         JSON.stringify(plan),
         execStatus,
         totalMs,
@@ -277,7 +282,7 @@ export class ComboService {
     }
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'query_executed',
       resourceType: 'combo', resourceId: comboId,
       details: { prompt, steps: plan.steps.length, strategy: plan.merge.strategy, totalMs },

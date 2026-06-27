@@ -22,6 +22,10 @@ interface BarChartCardProps {
   execution: QueryExecutionResult;
   title?: string;
   compact?: boolean;
+  /** Stack all measure series into a single bar per category instead of grouping them side by side. */
+  stacked?: boolean;
+  /** Defaults to true (existing behavior) when unset. */
+  showLegend?: boolean;
 }
 
 function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
@@ -106,7 +110,7 @@ const CustomYAxisTick = (props: any) => {
   );
 };
 
-export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
+export function BarChartCard({ execution, title, compact, stacked, showLegend = true }: BarChartCardProps) {
   const { rows, columns } = execution;
 
   const schema = useMemo(() => {
@@ -214,7 +218,7 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
               interval={isHorizontal ? 0 : 'preserveEnd'}
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f4f4f5' }} />
-            {schema.numericCols.length > 1 && (
+            {showLegend && schema.numericCols.length > 1 && (
               <Legend wrapperStyle={{ fontSize: 11, color: '#71717a', paddingTop: '10px' }} />
             )}
             {schema.numericCols.map((col, i) => (
@@ -224,6 +228,7 @@ export function BarChartCard({ execution, title, compact }: BarChartCardProps) {
                 fill={COLORS[i % COLORS.length]}
                 radius={isHorizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]}
                 maxBarSize={isHorizontal ? barThickness : 50}
+                stackId={stacked ? 'stack' : undefined}
               />
             ))}
           </BarChart>

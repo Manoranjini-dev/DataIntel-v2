@@ -50,6 +50,10 @@ export class LayoutEngineService {
       case 'bar_chart':
       case 'area_chart':
       case 'scatter':
+      case 'stacked_bar':
+      case 'stacked_area_chart':
+      case 'combo_chart':
+      case 'image':
         return { w: 6, h: 4 }; // Half row
       case 'pie_chart':
       case 'donut_chart':
@@ -58,6 +62,8 @@ export class LayoutEngineService {
       case 'table':
       case 'pivot':
         return { w: 12, h: 5 }; // Full row
+      case 'text':
+        return { w: 6, h: 3 }; // Static content needs less vertical space
       default:
         return { w: 6, h: 4 };
     }

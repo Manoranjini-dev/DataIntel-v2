@@ -3,13 +3,13 @@
 // ──────────────────────────────────────────────
 
 import {
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { OrgPermissionsService } from '../org/org-permissions.service';
 import { CardService } from '../card/card.service';
 import { SafeAccount } from '../auth/auth.service';
 
@@ -35,7 +35,6 @@ export class ChatPromotionService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly orgPermissions: OrgPermissionsService,
     private readonly cardService: CardService,
   ) {}
 
@@ -50,24 +49,24 @@ export class ChatPromotionService {
    */
   async promote(
     chatId: string,
-    orgId: string,
     promoter: SafeAccount,
     dto: PromoteToCardDto,
   ) {
-    await this.orgPermissions.requireMember(orgId, promoter.id);
-
     // 1. Load chat (to get datasource context)
     const chat = await this.db.queryOne<{
       id: string;
-      org_id: string;
+      created_by: string;
       connection_id: string | null;
       combo_id: string | null;
     }>(
-      `SELECT id, org_id, connection_id, combo_id FROM chats
-       WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [chatId, orgId],
+      `SELECT id, created_by, connection_id, combo_id FROM chats
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [chatId],
     );
     if (!chat) throw new NotFoundException('Chat not found');
+    if (chat.created_by !== promoter.id) {
+      throw new ForbiddenException('You do not have access to this chat');
+    }
 
     // 2. Load the message
     const message = await this.db.queryOne<{
@@ -112,7 +111,7 @@ export class ChatPromotionService {
     const datasourceContextId = (chat.connection_id || chat.combo_id)!;
 
     // 5. Create the card
-    const card = await this.cardService.create(orgId, promoter, {
+    const card = await this.cardService.create(promoter, {
       name: dto.cardName,
       description: dto.description,
       folderId: dto.folderId,
@@ -130,21 +129,20 @@ export class ChatPromotionService {
     // 6. Record the promotion
     await this.db.query(
       `INSERT INTO chat_card_promotions
-         (org_id, chat_id, message_id, execution_id, card_id, promoted_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [orgId, chatId, dto.messageId, executionId || null, card.id, promoter.id],
+         (chat_id, message_id, execution_id, card_id, promoted_by)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [chatId, dto.messageId, executionId || null, card.id, promoter.id],
     );
 
     // 7. Optionally place on a dashboard widget
     let widget = null;
     if (dto.dashboardId && dto.pageId) {
       widget = await this.placeOnDashboard(
-        card.id, dto.pageId, orgId, promoter,
+        card.id, dto.pageId, promoter,
       );
     }
 
     await this.audit.log({
-      orgId,
       accountId: promoter.id,
       eventType: 'chat_message_promoted',
       resourceType: 'card',
@@ -168,7 +166,6 @@ export class ChatPromotionService {
   private async placeOnDashboard(
     cardId: string,
     pageId: string,
-    orgId: string,
     creator: SafeAccount,
   ) {
     // Find the next available Y position
@@ -212,17 +209,17 @@ export class ChatPromotionService {
   }
 
   /** Get promotion history for a chat */
-  async listPromotions(chatId: string, orgId: string, requesterId: string) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
+  async listPromotions(chatId: string, requesterId: string) {
     return this.db.queryMany(
       `SELECT p.*, c.name AS card_name, c.status AS card_status, c.chart_type,
               a.display_name AS promoted_by_name
        FROM chat_card_promotions p
        JOIN analytics_cards c ON c.id = p.card_id
        JOIN accounts a ON a.id = p.promoted_by
-       WHERE p.chat_id = $1 AND p.org_id = $2
+       JOIN chats ch ON ch.id = p.chat_id
+       WHERE p.chat_id = $1 AND ch.created_by = $2
        ORDER BY p.promoted_at DESC`,
-      [chatId, orgId],
+      [chatId, requesterId],
     );
   }
 }

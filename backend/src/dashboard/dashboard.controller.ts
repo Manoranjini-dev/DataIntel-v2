@@ -1,23 +1,19 @@
 // ──────────────────────────────────────────────
-// Dashboard Controller (v2) — /api/orgs/:orgId/dashboards
+// Dashboard Controller (v2) — /dashboards
 // ──────────────────────────────────────────────
 
 import {
-  Controller, Get, Post, Put, Delete, Body, Param, HttpCode, HttpStatus, Query, UseGuards, UseInterceptors
+  Controller, Get, Post, Put, Delete, Body, Param, HttpCode, HttpStatus, Query
 } from '@nestjs/common';
 import { DashboardBuilderService, CreateDashboardDto, CreateWidgetDto, LayoutItem } from './dashboard-builder.service';
 import { WidgetExecutionService } from './widget-execution.service';
 import { DefaultCardsService } from './default-cards.service';
-import { CurrentUser, OrgId } from '../common/decorators';
+import { CurrentUser } from '../common/decorators';
 import { SafeAccount } from '../auth/auth.service';
-import { OrgMemberGuard } from '../common/guards/org-member.guard';
-import { RlsContextInterceptor } from '../common/interceptors/rls-context.interceptor';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Dashboards')
-@UseGuards(OrgMemberGuard)
-@UseInterceptors(RlsContextInterceptor)
-@Controller('orgs/:orgId/dashboards')
+@Controller('dashboards')
 export class DashboardController {
   constructor(
     private readonly builder: DashboardBuilderService,
@@ -30,25 +26,23 @@ export class DashboardController {
   @Get()
   @ApiOperation({ summary: 'List dashboards' })
   async list(
-    @OrgId() orgId: string,
     @CurrentUser() user: SafeAccount,
     @Query('contextType') contextType?: string,
     @Query('contextId') contextId?: string,
     @Query('status') status?: string,
     @Query('origin') origin?: string,
   ) {
-    const dashboards = await this.builder.listDashboards(orgId, user.id, { contextType, contextId, status, origin });
+    const dashboards = await this.builder.listDashboards(user.id, { contextType, contextId, status, origin });
     return { dashboards };
   }
 
   @Post()
   @ApiOperation({ summary: 'Create a new dashboard' })
   async create(
-    @OrgId() orgId: string,
     @CurrentUser() user: SafeAccount,
     @Body() dto: CreateDashboardDto,
   ) {
-    const dashboard = await this.builder.createDashboard(orgId, user, dto);
+    const dashboard = await this.builder.createDashboard(user, dto);
 
     // Fully-automated dashboard scaffolding: seed Page 1 with 5 intelligent
     // default analytical cards (KPI, trend, comparison, distribution,
@@ -57,11 +51,11 @@ export class DashboardController {
     // real data. Layout is saved automatically. Best-effort: failure here never
     // blocks dashboard creation.
     if (dto.origin === 'manual' && (dto.contextType === 'connection' || dto.contextType === 'combo') && dto.contextId) {
-      const pages = await this.builder.listPages(dashboard.id, orgId, user.id);
+      const pages = await this.builder.listPages(dashboard.id, user.id);
       const pageId = pages[0]?.id;
       if (pageId) {
         const seeded = await this.defaultCards.seedDefaultCards(
-          orgId, user, dashboard.id, pageId, dto.contextType, dto.contextId,
+          user, dashboard.id, pageId, dto.contextType, dto.contextId,
         );
 
         if (seeded.length > 0) {
@@ -73,28 +67,28 @@ export class DashboardController {
             gridW: w.grid_w ?? 6,
             gridH: w.grid_h ?? 4,
           }));
-          await this.builder.updateLayout(dashboard.id, orgId, user, layoutItems).catch(() => undefined);
+          await this.builder.updateLayout(dashboard.id, user, layoutItems).catch(() => undefined);
 
           // Save an initial version so the dashboard is ready without any user action
           await this.builder
-            .saveVersion(dashboard.id, orgId, user, 'Initial auto-generated dashboard')
+            .saveVersion(dashboard.id, user, 'Initial auto-generated dashboard')
             .catch(() => undefined);
 
           // Fire async re-execution for any widget that may still have no pre-loaded data
           // (best-effort background refresh — does not block the API response)
           for (const w of seeded as any[]) {
             this.executionService
-              .executeSync(w.id, orgId, user, false)
+              .executeSync(w.id, user, false)
               .catch(() => undefined);
           }
         }
       }
     } else if (dto.origin === 'manual') {
-      const pages = await this.builder.listPages(dashboard.id, orgId, user.id);
+      const pages = await this.builder.listPages(dashboard.id, user.id);
       const pageId = pages[0]?.id;
       if (pageId) {
         const seeded = await this.defaultCards.seedPlaceholderCards(
-          orgId, user, dashboard.id, pageId
+          user, dashboard.id, pageId
         );
         if (seeded && seeded.length > 0) {
           const layoutItems = (seeded as any[]).map((w: any) => ({
@@ -104,9 +98,9 @@ export class DashboardController {
             gridW: w.grid_w ?? 6,
             gridH: w.grid_h ?? 3,
           }));
-          await this.builder.updateLayout(dashboard.id, orgId, user, layoutItems).catch(() => undefined);
+          await this.builder.updateLayout(dashboard.id, user, layoutItems).catch(() => undefined);
           await this.builder
-            .saveVersion(dashboard.id, orgId, user, 'Initial manual dashboard')
+            .saveVersion(dashboard.id, user, 'Initial manual dashboard')
             .catch(() => undefined);
         }
       }
@@ -118,14 +112,13 @@ export class DashboardController {
   @Get(':dashId')
   @ApiOperation({ summary: 'Get dashboard with draft state' })
   async get(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const dashboard = await this.builder.getDashboard(dashId, orgId, user.id);
-    const pages = await this.builder.listPages(dashId, orgId, user.id);
+    const dashboard = await this.builder.getDashboard(dashId, user.id);
+    const pages = await this.builder.listPages(dashId, user.id);
     const pagesWithWidgets = await Promise.all(pages.map(async p => {
-      const widgets = await this.builder.listWidgets(p.id, orgId, user.id);
+      const widgets = await this.builder.listWidgets(p.id, user.id);
       return { ...p, widgets };
     }));
     return { dashboard, pages: pagesWithWidgets };
@@ -134,12 +127,11 @@ export class DashboardController {
   @Put(':dashId')
   @ApiOperation({ summary: 'Update a dashboard' })
   async update(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
     @Body() dto: { name?: string; description?: string },
   ) {
-    const dashboard = await this.builder.updateDashboard(dashId, orgId, user, dto);
+    const dashboard = await this.builder.updateDashboard(dashId, user, dto);
     return { dashboard };
   }
 
@@ -147,11 +139,10 @@ export class DashboardController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Publish draft layout' })
   async publish(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const dashboard = await this.builder.publishDashboard(dashId, orgId, user);
+    const dashboard = await this.builder.publishDashboard(dashId, user);
     return { dashboard };
   }
 
@@ -159,23 +150,21 @@ export class DashboardController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a dashboard' })
   async delete(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    await this.builder.softDeleteDashboard(dashId, orgId, user);
+    await this.builder.softDeleteDashboard(dashId, user);
   }
 
   @Post(':dashId/layout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Update draft layout' })
   async updateLayout(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
     @Body('layout') layout: LayoutItem[],
   ) {
-    await this.builder.updateLayout(dashId, orgId, user, layout);
+    await this.builder.updateLayout(dashId, user, layout);
     return { success: true };
   }
 
@@ -184,23 +173,21 @@ export class DashboardController {
   @Get(':dashId/pages')
   @ApiOperation({ summary: 'List pages' })
   async listPages(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const pages = await this.builder.listPages(dashId, orgId, user.id);
+    const pages = await this.builder.listPages(dashId, user.id);
     return { pages };
   }
 
   @Post(':dashId/pages')
   @ApiOperation({ summary: 'Create page' })
   async createPage(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
     @Body('name') name: string,
   ) {
-    const page = await this.builder.createPage(dashId, orgId, user, name);
+    const page = await this.builder.createPage(dashId, user, name);
     return { page };
   }
 
@@ -208,25 +195,23 @@ export class DashboardController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reorder pages' })
   async reorderPages(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
     @Body('order') order: string[],
   ) {
-    await this.builder.reorderPages(dashId, orgId, user, order);
+    await this.builder.reorderPages(dashId, user, order);
     return { success: true };
   }
 
   @Put(':dashId/pages/:pageId')
   @ApiOperation({ summary: 'Update page details' })
   async updatePage(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @Param('pageId') pageId: string,
     @CurrentUser() user: SafeAccount,
     @Body() data: { name?: string; isDefault?: boolean },
   ) {
-    const page = await this.builder.updatePage(pageId, dashId, orgId, user, data);
+    const page = await this.builder.updatePage(pageId, dashId, user, data);
     return { page };
   }
 
@@ -234,23 +219,21 @@ export class DashboardController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete page' })
   async deletePage(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @Param('pageId') pageId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    await this.builder.deletePage(pageId, dashId, orgId, user);
+    await this.builder.deletePage(pageId, dashId, user);
   }
 
   @Post(':dashId/pages/:pageId/duplicate')
   @ApiOperation({ summary: 'Duplicate page' })
   async duplicatePage(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @Param('pageId') pageId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const page = await this.builder.duplicatePage(pageId, dashId, orgId, user);
+    const page = await this.builder.duplicatePage(pageId, dashId, user);
     return { page };
   }
 
@@ -259,36 +242,33 @@ export class DashboardController {
   @Get(':dashId/pages/:pageId/widgets')
   @ApiOperation({ summary: 'List widgets for a page' })
   async listWidgets(
-    @OrgId() orgId: string,
     @Param('pageId') pageId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const widgets = await this.builder.listWidgets(pageId, orgId, user.id);
+    const widgets = await this.builder.listWidgets(pageId, user.id);
     return { widgets };
   }
 
   @Post(':dashId/pages/:pageId/widgets')
   @ApiOperation({ summary: 'Add a widget' })
   async addWidget(
-    @OrgId() orgId: string,
     @Param('pageId') pageId: string,
     @CurrentUser() user: SafeAccount,
     @Body() dto: CreateWidgetDto,
   ) {
-    const widget = await this.builder.addWidget(pageId, orgId, user, dto);
+    const widget = await this.builder.addWidget(pageId, user, dto);
     return { widget };
   }
 
   @Put(':dashId/pages/:pageId/widgets/:widgetId')
   @ApiOperation({ summary: 'Update a widget' })
   async updateWidget(
-    @OrgId() orgId: string,
     @Param('pageId') pageId: string,
     @Param('widgetId') widgetId: string,
     @CurrentUser() user: SafeAccount,
     @Body() dto: Partial<CreateWidgetDto>,
   ) {
-    const widget = await this.builder.updateWidget(widgetId, pageId, orgId, user, dto);
+    const widget = await this.builder.updateWidget(widgetId, pageId, user, dto);
     return { widget };
   }
 
@@ -296,45 +276,41 @@ export class DashboardController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a widget' })
   async removeWidget(
-    @OrgId() orgId: string,
     @Param('pageId') pageId: string,
     @Param('widgetId') widgetId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    await this.builder.removeWidget(widgetId, pageId, orgId, user);
+    await this.builder.removeWidget(widgetId, pageId, user);
   }
 
   @Post(':dashId/pages/:pageId/widgets/:widgetId/execute')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Execute widget query synchronously' })
   async executeWidget(
-    @OrgId() orgId: string,
     @Param('widgetId') widgetId: string,
     @CurrentUser() user: SafeAccount,
     @Body('forceRefresh') forceRefresh?: boolean,
   ) {
-    return this.executionService.executeSync(widgetId, orgId, user, forceRefresh);
+    return this.executionService.executeSync(widgetId, user, forceRefresh);
   }
 
   @Get(':dashId/pages/:pageId/widgets/:widgetId/inspect')
   @ApiOperation({ summary: 'Inspect widget execution details' })
   async inspectWidget(
-    @OrgId() orgId: string,
     @Param('widgetId') widgetId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    return this.builder.inspectWidget(widgetId, orgId, user);
+    return this.builder.inspectWidget(widgetId, user);
   }
 
   @Post(':dashId/pages/:pageId/widgets/:widgetId/suggest-question')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'AI-suggest an analytics question for an empty widget prompt' })
   async suggestWidgetQuestion(
-    @OrgId() orgId: string,
     @Param('widgetId') widgetId: string,
     @CurrentUser() _user: SafeAccount,
   ) {
-    const question = await this.executionService.suggestQuestion(widgetId, orgId);
+    const question = await this.executionService.suggestQuestion(widgetId);
     return { question };
   }
 
@@ -342,12 +318,11 @@ export class DashboardController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'AI-rephrase a user prompt into a clearer analytical request' })
   async improveWidgetPrompt(
-    @OrgId() _orgId: string,
-    @Param('widgetId') _widgetId: string,
+    @Param('widgetId') widgetId: string,
     @CurrentUser() _user: SafeAccount,
     @Body('prompt') prompt: string,
   ) {
-    const improved = await this.executionService.improvePrompt(prompt || '');
+    const improved = await this.executionService.improvePrompt(prompt || '', widgetId);
     return { prompt: improved };
   }
 
@@ -356,23 +331,21 @@ export class DashboardController {
   @Get(':dashId/filters')
   @ApiOperation({ summary: 'List dashboard filters' })
   async listFilters(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const filters = await this.builder.listFilters(dashId, orgId, user);
+    const filters = await this.builder.listFilters(dashId, user);
     return { filters };
   }
 
   @Post(':dashId/filters')
   @ApiOperation({ summary: 'Add dashboard filter' })
   async addFilter(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
     @Body() dto: any,
   ) {
-    const filter = await this.builder.addFilter(dashId, orgId, user, dto);
+    const filter = await this.builder.addFilter(dashId, user, dto);
     return { filter };
   }
 
@@ -380,12 +353,11 @@ export class DashboardController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Remove dashboard filter' })
   async removeFilter(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @Param('filterId') filterId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    await this.builder.removeFilter(filterId, dashId, orgId, user);
+    await this.builder.removeFilter(filterId, dashId, user);
   }
 
   // ── Versioning ───────────────────────────────────
@@ -393,23 +365,21 @@ export class DashboardController {
   @Get(':dashId/versions')
   @ApiOperation({ summary: 'List dashboard versions' })
   async listVersions(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const versions = await this.builder.listVersions(dashId, orgId, user);
+    const versions = await this.builder.listVersions(dashId, user);
     return { versions };
   }
 
   @Post(':dashId/versions')
   @ApiOperation({ summary: 'Save new dashboard version' })
   async saveVersion(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
     @Body('message') message?: string,
   ) {
-    const version = await this.builder.saveVersion(dashId, orgId, user, message);
+    const version = await this.builder.saveVersion(dashId, user, message);
     return { version };
   }
 
@@ -417,11 +387,10 @@ export class DashboardController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Restore dashboard to a saved version' })
   async restoreVersion(
-    @OrgId() orgId: string,
     @Param('dashId') dashId: string,
     @Param('versionId') versionId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    return this.builder.restoreVersion(dashId, versionId, orgId, user);
+    return this.builder.restoreVersion(dashId, versionId, user);
   }
 }

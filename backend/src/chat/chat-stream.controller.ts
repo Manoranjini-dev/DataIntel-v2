@@ -14,7 +14,7 @@ import { SafeAccount } from '../auth/auth.service';
 import { decrypt } from '../common/utils/encryption';
 import { ConnectorType } from '../common/types';
 
-@Controller('orgs/:orgId/chats')
+@Controller('chats')
 export class ChatStreamController {
   private readonly logger = new Logger(ChatStreamController.name);
   private readonly encKey: string;
@@ -34,7 +34,6 @@ export class ChatStreamController {
   @Post(':chatId/stream')
   @HttpCode(HttpStatus.OK)
   async stream(
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
     @CurrentUser() user: SafeAccount,
     @Body() body: { prompt: string },
@@ -51,7 +50,7 @@ export class ChatStreamController {
     };
 
     try {
-      const chat = await this.chatService.get(orgId, chatId, user.id) as any;
+      const chat = await this.chatService.get(chatId, user.id) as any;
       if (!chat.connection_id) {
         throw new BadRequestException('Streaming is for connection-scoped chats only.');
       }
@@ -161,14 +160,14 @@ export class ChatStreamController {
       // Persist execution
       const execRecord = await this.db.queryOne(
         `INSERT INTO query_executions
-           (org_id, chat_id, message_id, connection_id, executed_by, prompt,
+           (chat_id, message_id, connection_id, executed_by, prompt,
             generated_query, query_explanation, tables_used, confidence,
             status, execution_time_ms, row_count, result_preview, result_columns,
             error_message, insight, completed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
          RETURNING *`,
         [
-          orgId, chatId, userMsg!.id, conn.id, user.id, body.prompt,
+          chatId, userMsg!.id, conn.id, user.id, body.prompt,
           llmResponse.sql, llmResponse.explanation,
           llmResponse.tables_used, llmResponse.confidence,
           execStatus, execTimeMs, rowCount,

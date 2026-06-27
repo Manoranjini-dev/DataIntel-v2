@@ -215,14 +215,18 @@ export class PostgresConnector extends BaseMCPConnector {
   // ── Private Helpers ──────────────────────────
 
   private createClient(params: ConnectionParams): Client {
-    return new Client({
+    const config: any = {
       host: params.host,
       port: params.port,
       user: params.username,
       password: params.password,
       database: params.database,
       connectionTimeoutMillis: 10000,
-    });
+    };
+    if (params.ssl) {
+      config.ssl = { rejectUnauthorized: false };
+    }
+    return new Client(config);
   }
 
   private async getTables(client: Client): Promise<string[]> {

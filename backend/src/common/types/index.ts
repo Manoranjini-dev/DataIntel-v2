@@ -47,6 +47,8 @@ export interface ConnectionParams {
   password: string;
   database: string;
   connectorType: ConnectorType;
+  ssl?: boolean;
+  connectionOptions?: Record<string, any>;
 }
 
 /** Connection status */

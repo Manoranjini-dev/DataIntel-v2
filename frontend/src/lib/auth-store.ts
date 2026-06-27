@@ -5,11 +5,16 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+export type PlatformRole = 'ADMIN' | 'ANALYST' | 'VIEWER';
+export type UserStatus = 'PENDING_INVITATION' | 'ACTIVE' | 'INACTIVE' | 'DELETED';
+
 export interface Account {
   id: string;
   email: string;
   displayName: string;
   avatarUrl: string | null;
+  role: PlatformRole;
+  status: UserStatus;
   isActive: boolean;
   emailVerified: boolean;
   lastLoginAt: string | null;

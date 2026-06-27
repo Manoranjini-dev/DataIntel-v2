@@ -3,15 +3,13 @@
 // ──────────────────────────────────────────────
 
 import {
-  ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { OrgPermissionsService } from '../org/org-permissions.service';
-import { CacheService } from '../cache/cache.service';
 import { SafeAccount } from '../auth/auth.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
@@ -65,14 +63,10 @@ export class CardService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly orgPermissions: OrgPermissionsService,
-    private readonly cache: CacheService,
     private readonly events: EventEmitter2,
   ) {}
 
-  async list(orgId: string, requesterId: string, opts: CardListOptions = {}) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
-
+  async list(requesterId: string, opts: CardListOptions = {}) {
     const {
       folderId,
       tags,
@@ -87,8 +81,8 @@ export class CardService {
       sortDir = 'desc',
     } = opts;
 
-    const conditions: string[] = ['c.org_id = $1', 'c.deleted_at IS NULL'];
-    const params: unknown[] = [orgId];
+    const conditions: string[] = ['c.created_by = $1', 'c.deleted_at IS NULL'];
+    const params: unknown[] = [requesterId];
     let p = 2;
 
     if (folderId) {
@@ -153,35 +147,45 @@ export class CardService {
     return { cards: rows, total: parseInt(countRow?.count || '0', 10) };
   }
 
-  async getById(cardId: string, orgId: string, requesterId: string) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
+  /** Fetch a card and verify the requester owns it */
+  private async requireOwnedCard(cardId: string, requesterId: string) {
+    const card = await this.db.queryOne<{ id: string; created_by: string }>(
+      `SELECT id, created_by FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL`,
+      [cardId],
+    );
+    if (!card) throw new NotFoundException('Card not found');
+    if (card.created_by !== requesterId) {
+      throw new ForbiddenException('You do not have access to this card');
+    }
+    return card;
+  }
+
+  async getById(cardId: string, requesterId: string) {
+    await this.requireOwnedCard(cardId, requesterId);
     const card = await this.db.queryOne(
       `SELECT c.*, a.display_name AS created_by_name
        FROM analytics_cards c
        JOIN accounts a ON a.id = c.created_by
-       WHERE c.id = $1 AND c.org_id = $2 AND c.deleted_at IS NULL`,
-      [cardId, orgId],
+       WHERE c.id = $1 AND c.deleted_at IS NULL`,
+      [cardId],
     );
     if (!card) throw new NotFoundException('Card not found');
     return card;
   }
 
-  async create(orgId: string, creator: SafeAccount, dto: CreateCardDto) {
-    await this.orgPermissions.requireRole(orgId, creator.id, 'editor');
-
+  async create(creator: SafeAccount, dto: CreateCardDto) {
     const card = await this.db.transaction(async (query) => {
       // Create the card
       const result = await query(
         `INSERT INTO analytics_cards
-           (org_id, folder_id, name, description,
+           (folder_id, name, description,
             datasource_context_type, datasource_context_id,
             query_definition, raw_query, query_language,
             chart_type, visualization_config, visibility, tags,
             created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13)
          RETURNING *`,
         [
-          orgId,
           dto.folderId || null,
           dto.name,
           dto.description || null,
@@ -220,7 +224,6 @@ export class CardService {
     });
 
     await this.audit.log({
-      orgId,
       accountId: creator.id,
       eventType: 'card_created',
       resourceType: 'card',
@@ -231,10 +234,10 @@ export class CardService {
     return card;
   }
 
-  async update(cardId: string, orgId: string, updater: SafeAccount, dto: UpdateCardDto) {
-    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+  async update(cardId: string, updater: SafeAccount, dto: UpdateCardDto) {
+    const existing = await this.requireOwnedCard(cardId, updater.id);
 
-    const existing = await this.db.queryOne<{
+    const full = await this.db.queryOne<{
       id: string;
       current_version: number;
       query_definition: Record<string, unknown>;
@@ -244,36 +247,35 @@ export class CardService {
       query_language: string;
     }>(
       `SELECT id, current_version, query_definition, raw_query, chart_type, visualization_config, query_language
-       FROM analytics_cards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [cardId, orgId],
+       FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL`,
+      [existing.id],
     );
-    if (!existing) throw new NotFoundException('Card not found');
+    if (!full) throw new NotFoundException('Card not found');
 
-    const newVersion = existing.current_version + 1;
+    const newVersion = full.current_version + 1;
 
     const card = await this.db.transaction(async (query) => {
       // Update the card
       const result = await query(
         `UPDATE analytics_cards
-         SET name                    = COALESCE($3, name),
-             description             = COALESCE($4, description),
-             folder_id               = COALESCE($5, folder_id),
-             query_definition        = CASE WHEN $6::jsonb IS NULL THEN query_definition ELSE $6::jsonb END,
-             raw_query               = COALESCE($7, raw_query),
-             query_language          = COALESCE($8, query_language),
-             chart_type              = COALESCE($9::chart_type, chart_type),
-             visualization_config    = CASE WHEN $10::jsonb IS NULL THEN visualization_config ELSE $10::jsonb END,
-             visibility              = COALESCE($11::card_visibility, visibility),
-             tags                    = COALESCE($12, tags),
-             current_version         = $13,
+         SET name                    = COALESCE($2, name),
+             description             = COALESCE($3, description),
+             folder_id               = COALESCE($4, folder_id),
+             query_definition        = CASE WHEN $5::jsonb IS NULL THEN query_definition ELSE $5::jsonb END,
+             raw_query               = COALESCE($6, raw_query),
+             query_language          = COALESCE($7, query_language),
+             chart_type              = COALESCE($8::chart_type, chart_type),
+             visualization_config    = CASE WHEN $9::jsonb IS NULL THEN visualization_config ELSE $9::jsonb END,
+             visibility              = COALESCE($10::card_visibility, visibility),
+             tags                    = COALESCE($11, tags),
+             current_version         = $12,
              status                  = 'draft',
-             updated_by              = $14,
+             updated_by              = $13,
              updated_at              = NOW()
-         WHERE id = $1 AND org_id = $2
+         WHERE id = $1
          RETURNING *`,
         [
           cardId,
-          orgId,
           dto.name || null,
           dto.description !== undefined ? dto.description : null,
           dto.folderId || null,
@@ -299,11 +301,11 @@ export class CardService {
         [
           cardId,
           newVersion,
-          JSON.stringify(dto.queryDefinition || existing.query_definition),
-          dto.rawQuery !== undefined ? dto.rawQuery : existing.raw_query,
-          dto.chartType || existing.chart_type,
-          JSON.stringify(dto.visualizationConfig || existing.visualization_config),
-          dto.queryLanguage || existing.query_language,
+          JSON.stringify(dto.queryDefinition || full.query_definition),
+          dto.rawQuery !== undefined ? dto.rawQuery : full.raw_query,
+          dto.chartType || full.chart_type,
+          JSON.stringify(dto.visualizationConfig || full.visualization_config),
+          dto.queryLanguage || full.query_language,
           dto.changeSummary || null,
           updater.id,
         ],
@@ -313,7 +315,6 @@ export class CardService {
     });
 
     await this.audit.log({
-      orgId,
       accountId: updater.id,
       eventType: 'card_updated',
       resourceType: 'card',
@@ -324,15 +325,15 @@ export class CardService {
     return card;
   }
 
-  async publish(cardId: string, orgId: string, publisher: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, publisher.id, 'editor');
+  async publish(cardId: string, publisher: SafeAccount) {
+    const card = await this.requireOwnedCard(cardId, publisher.id);
 
-    const card = await this.db.queryOne<{ id: string; current_version: number; status: string }>(
+    const full = await this.db.queryOne<{ id: string; current_version: number; status: string }>(
       `SELECT id, current_version, status FROM analytics_cards
-       WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [cardId, orgId],
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [card.id],
     );
-    if (!card) throw new NotFoundException('Card not found');
+    if (!full) throw new NotFoundException('Card not found');
 
     await this.db.transaction(async (query) => {
       await query(
@@ -344,27 +345,26 @@ export class CardService {
         `UPDATE analytics_card_versions
          SET published_at = NOW(), published_by = $2
          WHERE card_id = $1 AND version = $3`,
-        [cardId, publisher.id, card.current_version],
+        [cardId, publisher.id, full.current_version],
       );
     });
 
     // Invalidate all widget caches that use this card
-    this.events.emit('card.published', { cardId, orgId });
+    this.events.emit('card.published', { cardId });
 
     await this.audit.log({
-      orgId,
       accountId: publisher.id,
       eventType: 'card_published',
       resourceType: 'card',
       resourceId: cardId,
-      details: { version: card.current_version },
+      details: { version: full.current_version },
     });
 
-    return this.getById(cardId, orgId, publisher.id);
+    return this.getById(cardId, publisher.id);
   }
 
-  async rollback(cardId: string, orgId: string, roller: SafeAccount, targetVersion: number) {
-    await this.orgPermissions.requireRole(orgId, roller.id, 'editor');
+  async rollback(cardId: string, roller: SafeAccount, targetVersion: number) {
+    const card = await this.requireOwnedCard(cardId, roller.id);
 
     const version = await this.db.queryOne<{
       query_definition: unknown;
@@ -380,8 +380,8 @@ export class CardService {
     if (!version) throw new NotFoundException(`Version ${targetVersion} not found`);
 
     const existing = await this.db.queryOne<{ current_version: number }>(
-      `SELECT current_version FROM analytics_cards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [cardId, orgId],
+      `SELECT current_version FROM analytics_cards WHERE id = $1 AND deleted_at IS NULL`,
+      [card.id],
     );
     if (!existing) throw new NotFoundException('Card not found');
 
@@ -390,18 +390,18 @@ export class CardService {
     await this.db.transaction(async (query) => {
       await query(
         `UPDATE analytics_cards
-         SET query_definition     = $3,
-             raw_query            = $4,
-             chart_type           = $5::chart_type,
-             visualization_config = $6,
-             query_language       = $7,
-             current_version      = $8,
+         SET query_definition     = $2,
+             raw_query            = $3,
+             chart_type           = $4::chart_type,
+             visualization_config = $5,
+             query_language       = $6,
+             current_version      = $7,
              status               = 'draft',
-             updated_by           = $9,
+             updated_by           = $8,
              updated_at           = NOW()
-         WHERE id = $1 AND org_id = $2`,
+         WHERE id = $1`,
         [
-          cardId, orgId,
+          cardId,
           JSON.stringify(version.query_definition),
           version.raw_query,
           version.chart_type,
@@ -432,7 +432,6 @@ export class CardService {
     });
 
     await this.audit.log({
-      orgId,
       accountId: roller.id,
       eventType: 'card_version_rollback',
       resourceType: 'card',
@@ -440,18 +439,17 @@ export class CardService {
       details: { fromVersion: existing.current_version, toVersion: targetVersion, newVersion },
     });
 
-    return this.getById(cardId, orgId, roller.id);
+    return this.getById(cardId, roller.id);
   }
 
-  async softDelete(cardId: string, orgId: string, deleter: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, deleter.id, 'editor');
+  async softDelete(cardId: string, deleter: SafeAccount) {
+    await this.requireOwnedCard(cardId, deleter.id);
     await this.db.query(
       `UPDATE analytics_cards SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW()
-       WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+       WHERE id = $1 AND deleted_at IS NULL`,
       [cardId, deleter.id],
     );
     await this.audit.log({
-      orgId,
       accountId: deleter.id,
       eventType: 'card_deleted',
       resourceType: 'card',
@@ -459,8 +457,8 @@ export class CardService {
     });
   }
 
-  async listVersions(cardId: string, orgId: string, requesterId: string) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
+  async listVersions(cardId: string, requesterId: string) {
+    await this.requireOwnedCard(cardId, requesterId);
     return this.db.queryMany(
       `SELECT v.*, a.display_name AS created_by_name
        FROM analytics_card_versions v

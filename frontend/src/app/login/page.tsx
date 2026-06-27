@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/auth-store';
-import { Zap, AlertCircle } from 'lucide-react';
+import { AlertCircle } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,10 +22,17 @@ export default function LoginPage() {
     try {
       const { account } = await authApi.login(email, password);
       setUser(account);
-      router.push('/orgs');
+
+      // Honor a deep-link the user was bounced from (set by middleware), else
+      // route straight to the Dashboard — no org selection.
+      const redirect = new URLSearchParams(window.location.search).get('redirect');
+      if (redirect && redirect.startsWith('/') && !redirect.startsWith('/login')) {
+        router.replace(redirect);
+      } else {
+        router.replace('/dashboards');
+      }
     } catch (err: any) {
       setError(err?.message || 'Login failed');
-    } finally {
       setLoading(false);
     }
   }
@@ -70,6 +77,12 @@ export default function LoginPage() {
               />
             </div>
 
+            <div className="text-right -mt-2">
+              <Link href="/forgot-password" className="text-xs text-primary hover:opacity-80 font-medium">
+                Forgot password?
+              </Link>
+            </div>
+
             {error && (
               <div className="px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
@@ -94,10 +107,7 @@ export default function LoginPage() {
 
           <div className="mt-6 text-center">
             <p className="text-sm text-muted-foreground">
-              Don&apos;t have an account?{' '}
-              <Link href="/register" className="text-primary hover:opacity-80 font-semibold transition-opacity">
-                Create one
-              </Link>
+              Need access? Ask your administrator to send you an invitation.
             </p>
           </div>
         </div>

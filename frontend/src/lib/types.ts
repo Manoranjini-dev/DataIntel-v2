@@ -29,7 +29,11 @@ export type UIHint =
   | 'comparison_card'
   | 'funnel_chart'
   | 'timeline'
-  | 'treemap';
+  | 'treemap'
+  | 'stacked_area_chart'
+  | 'combo_chart'
+  | 'text'
+  | 'image';
 
 /** Map a ConnectorType to its family */
 export function getConnectorFamily(type: ConnectorType): ConnectorFamily {

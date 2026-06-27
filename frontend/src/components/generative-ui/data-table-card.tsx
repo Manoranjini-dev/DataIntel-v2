@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { QueryExecutionResult } from '@/lib/types';
 
 interface DataTableCardProps {
@@ -9,14 +10,36 @@ interface DataTableCardProps {
   compact?: boolean;
 }
 
+const PAGE_SIZE = 25;
+const MAX_ROWS = 500;
+
+function formatCell(val: unknown): string {
+  if (val === null || val === undefined) return '—';
+  if (typeof val === 'object') return JSON.stringify(val);
+  if (typeof val === 'number' && isFinite(val)) return val.toLocaleString();
+  return String(val);
+}
+
 export function DataTableCard({ execution, title, compact }: DataTableCardProps) {
   const { rows, columns } = execution;
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(0);
+
+  const filteredRows = useMemo(() => {
+    if (!rows) return rows;
+    const capped = rows.slice(0, MAX_ROWS);
+    const q = search.trim().toLowerCase();
+    if (!q) return capped;
+    return capped.filter((row) =>
+      columns.some((c) => formatCell(row[c]).toLowerCase().includes(q)),
+    );
+  }, [rows, columns, search]);
 
   const sortedRows = useMemo(() => {
-    if (!sortCol || !rows) return rows;
-    return [...rows].sort((a, b) => {
+    if (!sortCol || !filteredRows) return filteredRows;
+    return [...filteredRows].sort((a, b) => {
       const aVal = a[sortCol];
       const bVal = b[sortCol];
       const aNum = Number(aVal);
@@ -28,7 +51,17 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
       const bStr = String(bVal ?? '');
       return sortDir === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
     });
-  }, [rows, sortCol, sortDir]);
+  }, [filteredRows, sortCol, sortDir]);
+
+  const pageCount = Math.max(1, Math.ceil((sortedRows?.length || 0) / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const displayRows = useMemo(
+    () => (sortedRows || []).slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE),
+    [sortedRows, safePage],
+  );
+
+  // Reset to page 1 whenever the search/sort changes the result set.
+  useEffect(() => { setPage(0); }, [search, sortCol, sortDir]);
 
   if (!rows || rows.length === 0 || columns.length === 0) {
     return (
@@ -47,17 +80,24 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
     }
   };
 
-  const maxRows = 500;
-  const displayRows = sortedRows.slice(0, maxRows);
-  console.log(`[DEBUG TRACE] Rendered Count: ${displayRows.length}`);
-
   return (
     <div className={`w-full flex flex-col overflow-hidden bg-white ${compact ? 'h-full' : 'rounded-xl border border-zinc-200 shadow-sm'}`}>
-      {title && (
-        <div className="border-b border-zinc-200 px-4 py-3 shrink-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
-            {title} <span className="text-zinc-400">· {rows.length} rows</span>
-          </p>
+      {(title || rows.length > PAGE_SIZE) && (
+        <div className="border-b border-zinc-200 px-4 py-2.5 shrink-0 flex items-center gap-3">
+          {title && (
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 whitespace-nowrap">
+              {title} <span className="text-zinc-400">· {rows.length} rows</span>
+            </p>
+          )}
+          <div className="relative ml-auto w-40">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3 h-3 text-zinc-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search…"
+              className="w-full pl-6 pr-2 py-1 text-xs bg-zinc-50 border border-zinc-200 rounded-md text-zinc-700 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            />
+          </div>
         </div>
       )}
       <div className={`w-full overflow-auto ${compact ? 'flex-1 min-h-0' : 'max-h-[300px]'}`}>
@@ -83,19 +123,19 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((row, i) => (
+            {displayRows.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length} className="px-4 py-6 text-center text-xs text-zinc-400">
+                  No rows match &ldquo;{search}&rdquo;
+                </td>
+              </tr>
+            ) : displayRows.map((row, i) => (
               <tr
                 key={i}
                 className="border-b border-zinc-100 transition-colors hover:bg-zinc-50"
               >
                 {columns.map((col) => {
-                  const val = row[col];
-                  const display =
-                    val === null || val === undefined
-                      ? '—'
-                      : typeof val === 'object'
-                        ? JSON.stringify(val)
-                        : String(val);
+                  const display = formatCell(row[col]);
                   return (
                     <td
                       key={col}
@@ -111,9 +151,33 @@ export function DataTableCard({ execution, title, compact }: DataTableCardProps)
           </tbody>
         </table>
       </div>
-      {rows.length > maxRows && (
-        <div className="border-t border-zinc-200 bg-white px-4 py-2 text-center text-[11px] text-zinc-500 shrink-0 sticky bottom-0">
-          Showing {maxRows} of {rows.length} rows
+      {pageCount > 1 && (
+        <div className="border-t border-zinc-200 bg-white px-4 py-2 flex items-center justify-between text-[11px] text-zinc-500 shrink-0 sticky bottom-0">
+          <span>
+            Page {safePage + 1} of {pageCount}
+            {sortedRows && sortedRows.length !== rows.length ? ` · ${sortedRows.length} matching` : ''}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={safePage === 0}
+              className="p-1 rounded-md border border-zinc-200 text-zinc-500 disabled:opacity-40 hover:bg-zinc-50 transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+              disabled={safePage >= pageCount - 1}
+              className="p-1 rounded-md border border-zinc-200 text-zinc-500 disabled:opacity-40 hover:bg-zinc-50 transition-colors"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+      {rows.length > MAX_ROWS && (
+        <div className="border-t border-zinc-200 bg-white px-4 py-1.5 text-center text-[10px] text-zinc-400 shrink-0">
+          Showing first {MAX_ROWS} of {rows.length} rows
         </div>
       )}
     </div>

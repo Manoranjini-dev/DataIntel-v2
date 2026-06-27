@@ -17,6 +17,7 @@ import { BarChartCard } from './bar-chart-card';
 import { LineChartCard } from './line-chart-card';
 import { PieChartCard } from './pie-chart-card';
 import { AreaChartCard } from './area-chart-card';
+import { ComboChartCard } from './combo-chart-card';
 import { ScatterChartCard } from './scatter-chart-card';
 import { DataTableCard } from './data-table-card';
 import { ListCard } from './list-card';
@@ -26,6 +27,8 @@ interface GenerativeUIRendererProps {
   uiHint?: UIHint;
   title?: string;
   compact?: boolean;
+  /** Defaults to true (existing behavior) when unset. */
+  showLegend?: boolean;
 }
 
 /**
@@ -71,6 +74,16 @@ function resolveComponent(
         if (hasNumeric && rows.length >= 3 && columns.length >= 2) return 'area_chart';
         break;
 
+      case 'stacked_area_chart':
+        if (numericCols.length >= 2 && rows.length >= 3) return 'stacked_area_chart';
+        if (hasNumeric && rows.length >= 3 && columns.length >= 2) return 'area_chart';
+        break;
+
+      case 'combo_chart':
+        if (numericCols.length >= 2 && rows.length >= 2) return 'combo_chart';
+        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        break;
+
       case 'pie_chart':
         if (hasNumeric && rows.length >= 2 && rows.length <= 12 && columns.length >= 2)
           return 'pie_chart';
@@ -92,6 +105,10 @@ function resolveComponent(
         break;
 
       case 'stacked_bar':
+        if (numericCols.length >= 2 && rows.length >= 2) return 'stacked_bar';
+        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        break;
+
       case 'horizontal_bar':
         if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
         break;
@@ -172,6 +189,7 @@ export function GenerativeUIRenderer({
   uiHint,
   title,
   compact,
+  showLegend,
 }: GenerativeUIRendererProps) {
   const [view, setView] = useState<'chart' | 'table'>('chart');
   const resolved = resolveComponent(execution, uiHint);
@@ -191,16 +209,25 @@ export function GenerativeUIRenderer({
       viz = <StatGrid execution={execution} title={title} compact={compact} />;
       break;
     case 'bar_chart':
-      viz = <BarChartCard execution={execution} title={title} compact={compact} />;
+      viz = <BarChartCard execution={execution} title={title} compact={compact} showLegend={showLegend} />;
+      break;
+    case 'stacked_bar':
+      viz = <BarChartCard execution={execution} title={title} compact={compact} stacked showLegend={showLegend} />;
       break;
     case 'line_chart':
-      viz = <LineChartCard execution={execution} title={title} compact={compact} />;
+      viz = <LineChartCard execution={execution} title={title} compact={compact} showLegend={showLegend} />;
       break;
     case 'area_chart':
-      viz = <AreaChartCard execution={execution} title={title} compact={compact} />;
+      viz = <AreaChartCard execution={execution} title={title} compact={compact} showLegend={showLegend} />;
+      break;
+    case 'stacked_area_chart':
+      viz = <AreaChartCard execution={execution} title={title} compact={compact} stacked showLegend={showLegend} />;
+      break;
+    case 'combo_chart':
+      viz = <ComboChartCard execution={execution} title={title} compact={compact} showLegend={showLegend} />;
       break;
     case 'pie_chart':
-      viz = <PieChartCard execution={execution} title={title} compact={compact} />;
+      viz = <PieChartCard execution={execution} title={title} compact={compact} showLegend={showLegend} />;
       break;
     case 'scatter':
       viz = <ScatterChartCard execution={execution} title={title} compact={compact} />;

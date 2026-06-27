@@ -73,6 +73,34 @@ export class EnvironmentVariables {
 
   @IsString() @IsNotEmpty({ message: 'CREDENTIAL_ENCRYPTION_KEY must not be empty' })
   CREDENTIAL_ENCRYPTION_KEY!: string;
+
+  // ── Frontend / links ──────────────────────────
+
+  @IsString() @IsOptional()
+  FRONTEND_URL: string = 'http://localhost:3000';
+
+  @IsNumber() @IsOptional()
+  RESET_TOKEN_TTL_MINUTES: number = 60;
+
+  // ── SMTP (email delivery) ─────────────────────
+
+  @IsString() @IsOptional()
+  SMTP_HOST?: string;
+
+  @IsNumber() @IsOptional()
+  SMTP_PORT: number = 587;
+
+  @IsString() @IsOptional()
+  SMTP_USERNAME?: string;
+
+  @IsString() @IsOptional()
+  SMTP_PASSWORD?: string;
+
+  @IsString() @IsOptional()
+  SMTP_FROM_EMAIL?: string;
+
+  @IsString() @IsOptional()
+  SMTP_FROM_NAME: string = 'DataIntel';
 }
 
 export function validateEnvironment(config: Record<string, unknown>): EnvironmentVariables {

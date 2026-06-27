@@ -5,11 +5,10 @@ import { SchemaMergerService } from './schema-merger.service';
 import { ComboPlannerService } from './combo-planner.service';
 import { ComboExecutorService } from './combo-executor.service';
 import { ResultMergerService } from './result-merger.service';
-import { OrgModule } from '../org/org.module';
 import { LLMModule } from '../llm/llm.module';
 
 @Module({
-  imports: [OrgModule, LLMModule],
+  imports: [LLMModule],
   controllers: [ComboController],
   providers: [
     ComboService,

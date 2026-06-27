@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 
-export interface OrgPrefs {
+export interface AppPrefs {
   autoExecute: boolean;
   showGeneratedSQL: boolean;
   streamResults: boolean;
@@ -16,12 +16,12 @@ export interface OrgPrefs {
   compactMessages: boolean;
 }
 
-interface PrefsStore extends OrgPrefs {
-  updatePref: <K extends keyof OrgPrefs>(key: K, value: OrgPrefs[K]) => void;
+interface PrefsStore extends AppPrefs {
+  updatePref: <K extends keyof AppPrefs>(key: K, value: AppPrefs[K]) => void;
   resetPrefs: () => void;
 }
 
-const DEFAULT_PREFS: OrgPrefs = {
+const DEFAULT_PREFS: AppPrefs = {
   autoExecute: true,
   showGeneratedSQL: true,
   streamResults: false,

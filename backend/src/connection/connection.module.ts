@@ -3,22 +3,24 @@
 // ──────────────────────────────────────────────
 
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ConnectionController } from './connection.controller';
 import { ConnectionService } from './connection.service';
 import { PersistentConnectionController } from './persistent-connection.controller';
 import { PersistentConnectionService } from './persistent-connection.service';
 import { SchemaExplorerController } from './schema-explorer.controller';
 
-import { CredentialVaultService } from './credential-vault.service';
 import { ConnectionHealthService } from './connection-health.service';
 import { ConnectionHealthController } from './connection-health.controller';
+import { ConnectionPermissionsService } from './connection-permissions.service';
+import { ConnectionRefreshService } from './connection-refresh.service';
+import { ConnectionRefreshScheduler } from './connection-refresh.scheduler';
 import { SchemaModule } from '../schema/schema.module';
-import { OrgModule } from '../org/org.module';
 import { AuditModule } from '../audit/audit.module';
 import { CacheModule } from '../cache/cache.module';
 
 @Module({
-  imports: [SchemaModule, OrgModule, AuditModule, CacheModule],
+  imports: [SchemaModule, AuditModule, CacheModule, ScheduleModule.forRoot()],
   controllers: [
     ConnectionController,
     PersistentConnectionController,
@@ -28,14 +30,17 @@ import { CacheModule } from '../cache/cache.module';
   providers: [
     ConnectionService,
     PersistentConnectionService,
-    CredentialVaultService,
     ConnectionHealthService,
+    ConnectionPermissionsService,
+    ConnectionRefreshService,
+    ConnectionRefreshScheduler,
   ],
   exports: [
     ConnectionService,
     PersistentConnectionService,
-    CredentialVaultService,
     ConnectionHealthService,
+    ConnectionPermissionsService,
+    ConnectionRefreshService,
   ],
 })
 export class ConnectionModule {}

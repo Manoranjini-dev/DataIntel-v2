@@ -1,22 +1,26 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// Routes that don't require authentication
-const PUBLIC_ROUTES = ['/login', '/register'];
+// Routes that don't require authentication. Invitation activation and the
+// password-reset flow must be reachable without a session — an invited user
+// has no session yet when they click the link in their email.
+const PUBLIC_ROUTES = ['/login', '/register', '/activate', '/forgot-password', '/reset-password'];
 
-// Routes that should redirect to /orgs if already authenticated
+// Auth routes that an already-authenticated user should be bounced away from.
+// (Activation / reset are intentionally excluded so the links still work.)
 const AUTH_ROUTES = ['/login', '/register'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const sessionToken = request.cookies.get('session_token')?.value;
+  const sessionToken = request.cookies.get('c1x_session')?.value;
 
   const isPublicRoute = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
   const isAuthRoute = AUTH_ROUTES.some((r) => pathname.startsWith(r));
 
-  // If authenticated user hits login/register → redirect to orgs
+  // If an authenticated user hits login/register, send them straight to the
+  // Dashboard. There is no organization selection step.
   if (sessionToken && isAuthRoute) {
-    return NextResponse.redirect(new URL('/orgs', request.url));
+    return NextResponse.redirect(new URL('/dashboards', request.url));
   }
 
   // If unauthenticated user hits a protected route → redirect to login

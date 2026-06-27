@@ -205,18 +205,22 @@ export class MySQLConnector extends BaseMCPConnector {
   // ── Private Helpers ──────────────────────────
 
   private async createConnection(params: ConnectionParams): Promise<mysql.Connection> {
-    return mysql.createConnection({
+    const options: mysql.ConnectionOptions = {
       host: params.host,
       port: params.port,
       user: params.username,
       password: params.password,
       database: params.database,
       connectTimeout: 10000,
-      multipleStatements: false, // Critical: prevent multi-statement injection
-      supportBigNumbers: true,   // Handle BIGINT/DECIMAL without precision loss
-      bigNumberStrings: false,   // Return as JS numbers when safe
-      decimalNumbers: true,      // Return DECIMAL as numbers
-    });
+      multipleStatements: false,
+      supportBigNumbers: true,
+      bigNumberStrings: false,
+      decimalNumbers: true,
+    };
+    if (params.ssl) {
+      options.ssl = { rejectUnauthorized: false };
+    }
+    return mysql.createConnection(options);
   }
 
   private async getTables(connection: mysql.Connection, database: string): Promise<string[]> {

@@ -14,34 +14,19 @@ export const CurrentUser = createParamDecorator(
   },
 );
 
-// ── @CurrentOrg ───────────────────────────────
-// Extracts orgId from route params (injected by RlsContextInterceptor).
-export const CurrentOrg = createParamDecorator(
-  (_: unknown, ctx: ExecutionContext): string => {
-    const request = ctx.switchToHttp().getRequest();
-    return request.params.orgId || request.orgId;
-  },
-);
-
 // ── @Public ───────────────────────────────────
 // Marks an endpoint as public (bypasses JwtAuthGuard).
 export const IS_PUBLIC_KEY = 'isPublic';
 export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
 
-// ── @RequireRole ──────────────────────────────
-// Used alongside OrgRoleGuard to specify minimum required role.
-// Usage: @RequireRole('admin') @UseGuards(OrgRoleGuard)
-export const REQUIRE_ROLE_KEY = 'requireRole';
-export const RequireRole = (role: 'owner' | 'admin' | 'editor' | 'viewer') =>
-  SetMetadata(REQUIRE_ROLE_KEY, role);
-
-// ── @OrgId ────────────────────────────────────
-// Shorthand to extract just the orgId param.
-export const OrgId = createParamDecorator(
-  (_: unknown, ctx: ExecutionContext): string => {
-    return ctx.switchToHttp().getRequest().params.orgId;
-  },
-);
+// ── @RequirePlatformRole ──────────────────────
+// Platform-wide RBAC.
+// Used alongside PlatformRoleGuard to gate ADMIN-only routes such as
+// User Management. Usage: @RequirePlatformRole('ADMIN') @UseGuards(PlatformRoleGuard)
+export type PlatformRole = 'ADMIN' | 'ANALYST' | 'VIEWER';
+export const REQUIRE_PLATFORM_ROLE_KEY = 'requirePlatformRole';
+export const RequirePlatformRole = (...roles: PlatformRole[]) =>
+  SetMetadata(REQUIRE_PLATFORM_ROLE_KEY, roles);
 
 // ── @ConnectionId ─────────────────────────────
 export const ConnectionId = createParamDecorator(

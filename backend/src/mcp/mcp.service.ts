@@ -136,6 +136,8 @@ export class MCPService implements OnModuleDestroy {
         username: params.username,
         database: params.database,
         connectorType: params.connectorType,
+        ssl: params.ssl,
+        connectionOptions: params.connectionOptions,
       },
       capabilities,
       isActive: true,
@@ -151,6 +153,8 @@ export class MCPService implements OnModuleDestroy {
         username: params.username,
         database: params.database,
         connectorType: params.connectorType,
+        ssl: params.ssl,
+        connectionOptions: params.connectionOptions,
       },
       ...this.encryptPassword(params.password),
     });

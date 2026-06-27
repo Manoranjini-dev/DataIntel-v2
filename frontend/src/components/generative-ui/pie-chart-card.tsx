@@ -20,6 +20,8 @@ interface PieChartCardProps {
   execution: QueryExecutionResult;
   title?: string;
   compact?: boolean;
+  /** Defaults to true (existing behavior) when unset. */
+  showLegend?: boolean;
 }
 
 function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
@@ -43,7 +45,7 @@ const CustomTooltip = ({
   );
 };
 
-export function PieChartCard({ execution, title, compact }: PieChartCardProps) {
+export function PieChartCard({ execution, title, compact, showLegend = true }: PieChartCardProps) {
   const { rows, columns } = execution;
 
   const schema = useMemo(() => {
@@ -88,7 +90,7 @@ export function PieChartCard({ execution, title, compact }: PieChartCardProps) {
               ))}
             </Pie>
             <Tooltip content={<CustomTooltip />} />
-            <Legend wrapperStyle={{ fontSize: 11, color: '#71717a' }} />
+            {showLegend && <Legend wrapperStyle={{ fontSize: 11, color: '#71717a' }} />}
           </PieChart>
         </ResponsiveContainer>
       </div>

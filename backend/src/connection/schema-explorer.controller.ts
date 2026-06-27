@@ -1,34 +1,33 @@
 // ──────────────────────────────────────────────
 // Schema Explorer Controller
-// GET /orgs/:orgId/connections/:connId/schema/tables
-// GET /orgs/:orgId/connections/:connId/schema/tables/:tableName
-// GET /orgs/:orgId/connections/:connId/schema/search?q=term
+// GET /connections/:connId/schema/tables
+// GET /connections/:connId/schema/tables/:tableName
+// GET /connections/:connId/schema/search?q=term
 // ──────────────────────────────────────────────
 
 import {
   Controller, Get, Param, Query,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { OrgService } from '../org/org.service';
+import { ConnectionPermissionsService } from './connection-permissions.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SafeAccount } from '../auth/auth.service';
 
-@Controller('orgs/:orgId/connections/:connId/schema')
+@Controller('connections/:connId/schema')
 export class SchemaExplorerController {
   constructor(
     private readonly db: DatabaseService,
-    private readonly orgService: OrgService,
+    private readonly connectionPermissions: ConnectionPermissionsService,
   ) {}
 
   /** List all schemas/tables for a connection */
   @Get('tables')
   async listTables(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('connId') connId: string,
     @Query('q') search?: string,
   ) {
-    await this.orgService.requireMember(orgId, user.id);
+    await this.connectionPermissions.requireAction(connId, user.id, 'view');
 
     let sql: string;
     let params: any[];
@@ -71,11 +70,10 @@ export class SchemaExplorerController {
   @Get('tables/:tableName/columns')
   async getTableColumns(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('connId') connId: string,
     @Param('tableName') tableName: string,
   ) {
-    await this.orgService.requireMember(orgId, user.id);
+    await this.connectionPermissions.requireAction(connId, user.id, 'view');
 
     const columns = await this.db.queryMany(
       `SELECT cc.column_name, cc.data_type, cc.is_nullable,
@@ -111,11 +109,10 @@ export class SchemaExplorerController {
   @Get('search')
   async searchColumns(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('connId') connId: string,
     @Query('q') q: string,
   ) {
-    await this.orgService.requireMember(orgId, user.id);
+    await this.connectionPermissions.requireAction(connId, user.id, 'view');
     if (!q?.trim()) return { results: [] };
 
     const results = await this.db.queryMany(

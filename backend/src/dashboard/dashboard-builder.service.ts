@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { OrgPermissionsService } from '../org/org-permissions.service';
+import { DashboardPermissionsService } from './dashboard-permissions.service';
 import { CacheService, CacheKeys, CacheTTL } from '../cache/cache.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { SafeAccount } from '../auth/auth.service';
@@ -67,18 +67,25 @@ export class DashboardBuilderService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly orgPermissions: OrgPermissionsService,
+    private readonly dashboardPermissions: DashboardPermissionsService,
     private readonly cache: CacheService,
     private readonly events: EventEmitter2,
   ) {}
 
   // ── Dashboard CRUD ────────────────────────────────────
 
-  async listDashboards(orgId: string, requesterId: string, opts: { contextType?: string; contextId?: string; status?: string; origin?: string } = {}) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
-
-    const conditions = ['d.org_id = $1', 'd.deleted_at IS NULL'];
-    const params: unknown[] = [orgId];
+  /** List dashboards the user owns or that were shared with them */
+  async listDashboards(requesterId: string, opts: { contextType?: string; contextId?: string; status?: string; origin?: string } = {}) {
+    const conditions = [
+      'd.deleted_at IS NULL',
+      `( d.created_by = $1
+         OR EXISTS (
+           SELECT 1 FROM dashboard_permissions p
+           WHERE p.dashboard_id = d.id AND p.account_id = $1
+             AND (p.expires_at IS NULL OR p.expires_at > NOW())
+         ) )`,
+    ];
+    const params: unknown[] = [requesterId];
     let p = 2;
 
     if (opts.origin) { conditions.push(`d.origin = $${p++}::dashboard_origin`); params.push(opts.origin); }
@@ -97,30 +104,28 @@ export class DashboardBuilderService {
     );
   }
 
-  async getDashboard(dashId: string, orgId: string, requesterId: string) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
+  async getDashboard(dashId: string, requesterId: string) {
+    await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
     const dash = await this.db.queryOne(
       `SELECT d.*, a.display_name AS created_by_name
        FROM dashboards d
        JOIN accounts a ON a.id = d.created_by
-       WHERE d.id = $1 AND d.org_id = $2 AND d.deleted_at IS NULL`,
-      [dashId, orgId],
+       WHERE d.id = $1 AND d.deleted_at IS NULL`,
+      [dashId],
     );
     if (!dash) throw new NotFoundException('Dashboard not found');
     return dash;
   }
 
-  async createDashboard(orgId: string, creator: SafeAccount, dto: CreateDashboardDto) {
-    await this.orgPermissions.requireRole(orgId, creator.id, 'editor');
-
+  async createDashboard(creator: SafeAccount, dto: CreateDashboardDto) {
     const dash = await this.db.transaction(async (query) => {
       const result = await query(
         `INSERT INTO dashboards
-           (org_id, name, description, context_type, context_id, origin, redis_key, created_by, updated_by)
-         VALUES ($1, $2, $3, $4::dashboard_context_type, $5, $6::dashboard_origin, $7, $8, $8)
+           (name, description, context_type, context_id, origin, redis_key, created_by, updated_by)
+         VALUES ($1, $2, $3::dashboard_context_type, $4, $5::dashboard_origin, $6, $7, $7)
          RETURNING *`,
         [
-          orgId, dto.name, dto.description || null,
+          dto.name, dto.description || null,
           dto.contextType, dto.contextId,
           dto.origin || 'manual',
           `dash:${Date.now()}`,   // will be updated below
@@ -146,7 +151,7 @@ export class DashboardBuilderService {
     });
 
     await this.audit.log({
-      orgId, accountId: creator.id,
+      accountId: creator.id,
       eventType: 'dashboard_created', resourceType: 'dashboard', resourceId: dash.id,
       details: { name: dash.name, contextType: dto.contextType, origin: dto.origin || 'manual' },
     });
@@ -154,8 +159,8 @@ export class DashboardBuilderService {
     return dash;
   }
 
-  async updateDashboard(dashId: string, orgId: string, updater: SafeAccount, dto: { name?: string; description?: string }) {
-    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+  async updateDashboard(dashId: string, updater: SafeAccount, dto: { name?: string; description?: string }) {
+    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
 
     const dash = await this.db.queryOne(
       `UPDATE dashboards
@@ -163,15 +168,15 @@ export class DashboardBuilderService {
            description = COALESCE($4, description),
            updated_at = NOW(),
            updated_by = $2
-       WHERE id = $1 AND org_id = $5 AND deleted_at IS NULL
+       WHERE id = $1 AND deleted_at IS NULL
        RETURNING *`,
-      [dashId, updater.id, dto.name ?? null, dto.description ?? null, orgId],
+      [dashId, updater.id, dto.name ?? null, dto.description ?? null],
     );
 
     if (!dash) throw new NotFoundException('Dashboard not found');
 
     await this.audit.log({
-      orgId, accountId: updater.id,
+      accountId: updater.id,
       eventType: 'dashboard_updated', resourceType: 'dashboard', resourceId: dashId,
       details: { name: dash.name },
     });
@@ -179,12 +184,12 @@ export class DashboardBuilderService {
     return dash;
   }
 
-  async publishDashboard(dashId: string, orgId: string, publisher: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, publisher.id, 'editor');
+  async publishDashboard(dashId: string, publisher: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, publisher.id, 'can_publish');
 
     const dash = await this.db.queryOne<{ id: string; draft_layout: unknown }>(
-      `SELECT id, draft_layout FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [dashId, orgId],
+      `SELECT id, draft_layout FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
+      [dashId],
     );
     if (!dash) throw new NotFoundException('Dashboard not found');
 
@@ -200,34 +205,34 @@ export class DashboardBuilderService {
     await this.invalidateDashboardCache(dashId);
 
     // Emit event to trigger widget refresh
-    this.events.emit('dashboard.published', { dashId, orgId });
+    this.events.emit('dashboard.published', { dashId });
 
     await this.audit.log({
-      orgId, accountId: publisher.id,
+      accountId: publisher.id,
       eventType: 'dashboard_published', resourceType: 'dashboard', resourceId: dashId,
     });
 
-    return this.getDashboard(dashId, orgId, publisher.id);
+    return this.getDashboard(dashId, publisher.id);
   }
 
-  async softDeleteDashboard(dashId: string, orgId: string, deleter: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, deleter.id, 'admin');
+  async softDeleteDashboard(dashId: string, deleter: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, deleter.id, 'can_delete');
     await this.db.query(
       `UPDATE dashboards SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW()
-       WHERE id = $1 AND org_id = $3 AND deleted_at IS NULL`,
-      [dashId, deleter.id, orgId],
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [dashId, deleter.id],
     );
     await this.invalidateDashboardCache(dashId);
     await this.audit.log({
-      orgId, accountId: deleter.id,
+      accountId: deleter.id,
       eventType: 'dashboard_deleted', resourceType: 'dashboard', resourceId: dashId,
     });
   }
 
   // ── Page Management ────────────────────────────────────
 
-  async listPages(dashId: string, orgId: string, requesterId: string) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
+  async listPages(dashId: string, requesterId: string) {
+    await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
     return this.db.queryMany(
       `SELECT p.*,
          (SELECT COUNT(*) FROM dashboard_widgets_v2 w WHERE w.page_id = p.id AND w.deleted_at IS NULL) AS widget_count
@@ -238,9 +243,8 @@ export class DashboardBuilderService {
     );
   }
 
-  async createPage(dashId: string, orgId: string, creator: SafeAccount, name: string) {
-    await this.orgPermissions.requireRole(orgId, creator.id, 'editor');
-    await this.verifyDashboardOwnership(dashId, orgId);
+  async createPage(dashId: string, creator: SafeAccount, name: string) {
+    await this.dashboardPermissions.requireAction(dashId, creator.id, 'can_edit');
 
     const maxOrder = await this.db.queryOne<{ max_order: number }>(
       `SELECT COALESCE(MAX(order_index), -1) AS max_order FROM dashboard_pages
@@ -255,7 +259,7 @@ export class DashboardBuilderService {
     );
 
     await this.audit.log({
-      orgId, accountId: creator.id,
+      accountId: creator.id,
       eventType: 'dashboard_page_created', resourceType: 'dashboard_page', resourceId: page!.id,
     });
 
@@ -263,10 +267,10 @@ export class DashboardBuilderService {
   }
 
   async updatePage(
-    pageId: string, dashId: string, orgId: string,
+    pageId: string, dashId: string,
     updater: SafeAccount, data: { name?: string; isDefault?: boolean },
   ) {
-    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
 
     // Validate the new name: non-empty and unique within the dashboard.
     if (data.name !== undefined) {
@@ -306,8 +310,8 @@ export class DashboardBuilderService {
     );
   }
 
-  async deletePage(pageId: string, dashId: string, orgId: string, deleter: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, deleter.id, 'editor');
+  async deletePage(pageId: string, dashId: string, deleter: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, deleter.id, 'can_edit');
 
     // Cannot delete the last page
     const pageCount = await this.db.queryOne<{ count: string }>(
@@ -325,13 +329,13 @@ export class DashboardBuilderService {
     );
 
     await this.audit.log({
-      orgId, accountId: deleter.id,
+      accountId: deleter.id,
       eventType: 'dashboard_page_deleted', resourceType: 'dashboard_page', resourceId: pageId,
     });
   }
 
-  async reorderPages(dashId: string, orgId: string, updater: SafeAccount, order: string[]) {
-    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+  async reorderPages(dashId: string, updater: SafeAccount, order: string[]) {
+    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
 
     await this.db.transaction(async (query) => {
       for (let i = 0; i < order.length; i++) {
@@ -343,8 +347,8 @@ export class DashboardBuilderService {
     });
   }
 
-  async duplicatePage(pageId: string, dashId: string, orgId: string, creator: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, creator.id, 'editor');
+  async duplicatePage(pageId: string, dashId: string, creator: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, creator.id, 'can_edit');
 
     const sourcePage = await this.db.queryOne<{ name: string; order_index: number }>(
       `SELECT name, order_index FROM dashboard_pages WHERE id = $1 AND dashboard_id = $2 AND deleted_at IS NULL`,
@@ -381,8 +385,18 @@ export class DashboardBuilderService {
 
   // ── Widget Management ──────────────────────────────────
 
-  async listWidgets(pageId: string, orgId: string, requesterId: string) {
-    await this.orgPermissions.requireMember(orgId, requesterId);
+  /** Resolve the dashboard_id that owns a page (for permission checks) */
+  private async resolveDashboardIdForPage(pageId: string): Promise<string> {
+    const page = await this.db.queryOne<{ dashboard_id: string }>(
+      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
+    );
+    if (!page) throw new NotFoundException('Page not found');
+    return page.dashboard_id;
+  }
+
+  async listWidgets(pageId: string, requesterId: string) {
+    const dashId = await this.resolveDashboardIdForPage(pageId);
+    await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
     return this.db.queryMany(
       `SELECT w.*,
               c.name AS card_name, c.status AS card_status,
@@ -401,12 +415,9 @@ export class DashboardBuilderService {
     );
   }
 
-  async addWidget(pageId: string, orgId: string, creator: SafeAccount, dto: CreateWidgetDto) {
-    await this.orgPermissions.requireRole(orgId, creator.id, 'editor');
-    
-    const page = await this.db.queryOne<{ dashboard_id: string }>(
-      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
-    );
+  async addWidget(pageId: string, creator: SafeAccount, dto: CreateWidgetDto) {
+    const dashId = await this.resolveDashboardIdForPage(pageId);
+    await this.dashboardPermissions.requireAction(dashId, creator.id, 'can_edit');
 
     const widget = await this.db.queryOne(
       `INSERT INTO dashboard_widgets_v2
@@ -438,22 +449,21 @@ export class DashboardBuilderService {
     );
 
     await this.audit.log({
-      orgId, accountId: creator.id,
+      accountId: creator.id,
       eventType: 'widget_added', resourceType: 'widget', resourceId: widget!.id,
     });
 
-    if (page?.dashboard_id) {
-      await this.invalidateDashboardCache(page.dashboard_id);
-    }
+    await this.invalidateDashboardCache(dashId);
 
     return widget;
   }
 
   async updateWidget(
-    widgetId: string, pageId: string, orgId: string,
+    widgetId: string, pageId: string,
     updater: SafeAccount, dto: Partial<CreateWidgetDto>,
   ) {
-    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+    const dashId = await this.resolveDashboardIdForPage(pageId);
+    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
 
     const widget = await this.db.queryOne(
       `UPDATE dashboard_widgets_v2
@@ -490,19 +500,15 @@ export class DashboardBuilderService {
 
     // Invalidate widget cache
     await this.cache.del(CacheKeys.widgetResult(widgetId));
-    
-    const page = await this.db.queryOne<{ dashboard_id: string }>(
-      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
-    );
-    if (page?.dashboard_id) {
-      await this.invalidateDashboardCache(page.dashboard_id);
-    }
+    await this.invalidateDashboardCache(dashId);
 
     return widget;
   }
 
-  async removeWidget(widgetId: string, pageId: string, orgId: string, remover: SafeAccount) {
-    await this.orgPermissions.requireRole(orgId, remover.id, 'editor');
+  async removeWidget(widgetId: string, pageId: string, remover: SafeAccount) {
+    const dashId = await this.resolveDashboardIdForPage(pageId);
+    await this.dashboardPermissions.requireAction(dashId, remover.id, 'can_edit');
+
     await this.db.query(
       `UPDATE dashboard_widgets_v2
        SET deleted_at = NOW(), updated_at = NOW(), updated_by = $3
@@ -511,16 +517,11 @@ export class DashboardBuilderService {
     );
     await this.cache.del(CacheKeys.widgetResult(widgetId));
     await this.audit.log({
-      orgId, accountId: remover.id,
+      accountId: remover.id,
       eventType: 'widget_removed', resourceType: 'widget', resourceId: widgetId,
     });
-    
-    const pageInfo = await this.db.queryOne<{ dashboard_id: string }>(
-      `SELECT dashboard_id FROM dashboard_pages WHERE id = $1`, [pageId]
-    );
-    if (pageInfo?.dashboard_id) {
-      await this.invalidateDashboardCache(pageInfo.dashboard_id);
-    }
+
+    await this.invalidateDashboardCache(dashId);
   }
 
   /**
@@ -528,8 +529,8 @@ export class DashboardBuilderService {
    * Saves the new layout as a draft (not yet published).
    * Also updates individual widget grid positions.
    */
-  async updateLayout(dashId: string, orgId: string, updater: SafeAccount, layout: LayoutItem[]) {
-    await this.orgPermissions.requireRole(orgId, updater.id, 'editor');
+  async updateLayout(dashId: string, updater: SafeAccount, layout: LayoutItem[]) {
+    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
 
     await this.db.transaction(async (query) => {
       for (const item of layout) {
@@ -564,8 +565,14 @@ export class DashboardBuilderService {
     );
   }
 
-  async inspectWidget(widgetId: string, orgId: string, requester: SafeAccount) {
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async inspectWidget(widgetId: string, requester: SafeAccount) {
+    const widgetRow = await this.db.queryOne<{ page_id: string }>(
+      `SELECT page_id FROM dashboard_widgets_v2 WHERE id = $1`,
+      [widgetId],
+    );
+    if (!widgetRow) throw new NotFoundException('Widget not found');
+    const dashId = await this.resolveDashboardIdForPage(widgetRow.page_id);
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
 
     // Try the most-recent widget_execution → query_execution for the generated SQL
     const execution = await this.db.queryOne(
@@ -573,9 +580,9 @@ export class DashboardBuilderService {
               q.generated_query, q.row_count AS rows_returned
        FROM widget_executions w
        LEFT JOIN query_executions q ON w.execution_id = q.id
-       WHERE w.widget_id = $1 AND w.org_id = $2
+       WHERE w.widget_id = $1
        ORDER BY w.started_at DESC LIMIT 1`,
-      [widgetId, orgId],
+      [widgetId],
     );
 
     // Fallback: read generated_query from the widget's own query_definition JSONB
@@ -603,15 +610,13 @@ export class DashboardBuilderService {
 
   // ── Filters ──────────────────────────────────────────────
 
-  async listFilters(dashId: string, orgId: string, requester: SafeAccount) {
-    await this.verifyDashboardOwnership(dashId, orgId);
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async listFilters(dashId: string, requester: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
     return this.db.queryMany(`SELECT * FROM dashboard_filters WHERE dashboard_id = $1 ORDER BY created_at ASC`, [dashId]);
   }
 
-  async addFilter(dashId: string, orgId: string, requester: SafeAccount, dto: any) {
-    await this.verifyDashboardOwnership(dashId, orgId);
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async addFilter(dashId: string, requester: SafeAccount, dto: any) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
     const filter = await this.db.queryOne(
       `INSERT INTO dashboard_filters (dashboard_id, name, filter_type, operator, default_value, config)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -620,17 +625,15 @@ export class DashboardBuilderService {
     return filter;
   }
 
-  async removeFilter(filterId: string, dashId: string, orgId: string, requester: SafeAccount) {
-    await this.verifyDashboardOwnership(dashId, orgId);
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async removeFilter(filterId: string, dashId: string, requester: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
     await this.db.query(`DELETE FROM dashboard_filters WHERE id = $1 AND dashboard_id = $2`, [filterId, dashId]);
   }
 
   // ── Versioning ───────────────────────────────────────────
 
-  async saveVersion(dashId: string, orgId: string, requester: SafeAccount, message?: string) {
-    await this.verifyDashboardOwnership(dashId, orgId);
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async saveVersion(dashId: string, requester: SafeAccount, message?: string) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
 
       return this.db.transaction(async (query) => {
       // Get current max version
@@ -641,8 +644,8 @@ export class DashboardBuilderService {
       const dashInfo = await query(`SELECT * FROM dashboards WHERE id = $1`, [dashId]);
       const pages = await query(`SELECT * FROM dashboard_pages WHERE dashboard_id = $1 ORDER BY order_index ASC`, [dashId]);
       const widgets = await query(`
-        SELECT w.* FROM dashboard_widgets_v2 w 
-        JOIN dashboard_pages p ON w.page_id = p.id 
+        SELECT w.* FROM dashboard_widgets_v2 w
+        JOIN dashboard_pages p ON w.page_id = p.id
         WHERE p.dashboard_id = $1 AND w.deleted_at IS NULL
       `, [dashId]);
       const filters = await query(`SELECT * FROM dashboard_filters WHERE dashboard_id = $1`, [dashId]);
@@ -659,7 +662,7 @@ export class DashboardBuilderService {
          VALUES ($1, $2, $3, $4, $5) RETURNING *`,
         [dashId, nextVer, requester.id, JSON.stringify(snapshotData), message || `Version ${nextVer}`]
       );
-      
+
       // Update dash version
       await query(`UPDATE dashboards SET version = $1 WHERE id = $2`, [nextVer, dashId]);
 
@@ -676,11 +679,10 @@ export class DashboardBuilderService {
     });
   }
 
-  async listVersions(dashId: string, orgId: string, requester: SafeAccount) {
-    await this.verifyDashboardOwnership(dashId, orgId);
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async listVersions(dashId: string, requester: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
     return this.db.queryMany(
-      `SELECT v.id, v.version as version_number, v.change_summary as commit_message, v.published_at as created_at, a.email as created_by_email 
+      `SELECT v.id, v.version as version_number, v.change_summary as commit_message, v.published_at as created_at, a.email as created_by_email
        FROM dashboard_versions v
        LEFT JOIN accounts a ON v.published_by = a.id
        WHERE v.dashboard_id = $1 ORDER BY v.version DESC`,
@@ -688,9 +690,8 @@ export class DashboardBuilderService {
     );
   }
 
-  async restoreVersion(dashId: string, versionId: string, orgId: string, requester: SafeAccount) {
-    await this.verifyDashboardOwnership(dashId, orgId);
-    await this.orgPermissions.requireMember(orgId, requester.id);
+  async restoreVersion(dashId: string, versionId: string, requester: SafeAccount) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
 
     const vrow = await this.db.queryOne(
       `SELECT snapshot_data FROM dashboard_versions WHERE id = $1 AND dashboard_id = $2`,
@@ -720,7 +721,7 @@ export class DashboardBuilderService {
       for (const w of widgets) {
         await query(
           `INSERT INTO dashboard_widgets_v2
-             (id, page_id, card_id, title, widget_type, grid_x, grid_y, grid_w, grid_h, 
+             (id, page_id, card_id, title, widget_type, grid_x, grid_y, grid_w, grid_h,
               datasource_context_type, datasource_context_id, query_definition,
               layout_desktop, layout_tablet, layout_mobile,
               created_by, updated_by)
@@ -762,15 +763,5 @@ export class DashboardBuilderService {
     } catch (e: any) {
       this.logger.warn(`Failed to invalidate cache for dashboard ${dashId}: ${e.message}`);
     }
-  }
-
-  // ── Private Helpers ────────────────────────────────────
-
-  private async verifyDashboardOwnership(dashId: string, orgId: string) {
-    const dash = await this.db.queryOne(
-      `SELECT id FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
-      [dashId, orgId],
-    );
-    if (!dash) throw new NotFoundException('Dashboard not found in this organization');
   }
 }

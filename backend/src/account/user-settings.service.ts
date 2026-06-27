@@ -14,7 +14,7 @@ export class UserSettingsService {
    */
   async getSettings(accountId: string) {
     const settings = await this.db.queryOne(
-      `SELECT theme, default_org_id, notification_preferences
+      `SELECT theme, notification_prefs
        FROM user_settings
        WHERE account_id = $1`,
       [accountId]
@@ -24,7 +24,6 @@ export class UserSettingsService {
       // Return defaults if not set
       return {
         theme: 'system',
-        default_org_id: null,
         notification_preferences: { email: true, in_app: true },
       };
     }
@@ -35,17 +34,16 @@ export class UserSettingsService {
   /**
    * Update settings for a user
    */
-  async updateSettings(accountId: string, data: { theme?: string; defaultOrgId?: string; notificationPreferences?: any }) {
+  async updateSettings(accountId: string, data: { theme?: string; notificationPreferences?: any }) {
     return this.db.queryOne(
-      `INSERT INTO user_settings (account_id, theme, default_org_id, notification_preferences)
-       VALUES ($1, COALESCE($2, 'system'), $3, COALESCE($4, '{"email": true, "in_app": true}'::jsonb))
+      `INSERT INTO user_settings (account_id, theme, notification_prefs)
+       VALUES ($1, COALESCE($2, 'system'), COALESCE($3, '{"email": true, "in_app": true}'::jsonb))
        ON CONFLICT (account_id) DO UPDATE SET
          theme = COALESCE(EXCLUDED.theme, user_settings.theme),
-         default_org_id = EXCLUDED.default_org_id,
-         notification_preferences = COALESCE(EXCLUDED.notification_preferences, user_settings.notification_preferences),
+         notification_prefs = COALESCE(EXCLUDED.notification_prefs, user_settings.notification_prefs),
          updated_at = NOW()
        RETURNING *`,
-      [accountId, data.theme || null, data.defaultOrgId || null, data.notificationPreferences ? JSON.stringify(data.notificationPreferences) : null]
+      [accountId, data.theme || null, data.notificationPreferences ? JSON.stringify(data.notificationPreferences) : null]
     );
   }
 }

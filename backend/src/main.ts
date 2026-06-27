@@ -35,7 +35,7 @@ async function bootstrap() {
       ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
     ],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Id', 'App-Current-Org'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Session-Id'],
     credentials: true,
   });
 
@@ -55,7 +55,7 @@ async function bootstrap() {
   await app.listen(port);
 
   logger.log(`══════════════════════════════════════════════`);
-  logger.log(`  DataIntel v2 — Multi-Org Intelligence Platform`);
+  logger.log(`  DataIntel v2 — Data Intelligence Platform`);
   logger.log(`  Running on: http://localhost:${port}`);
   logger.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.log(`  Database: Neon Postgres (connected)`);

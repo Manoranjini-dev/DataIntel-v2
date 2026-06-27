@@ -22,6 +22,8 @@ interface LineChartCardProps {
   execution: QueryExecutionResult;
   title?: string;
   compact?: boolean;
+  /** Defaults to true (existing behavior) when unset. */
+  showLegend?: boolean;
 }
 
 function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
@@ -89,7 +91,7 @@ const CustomTick = (props: any) => {
   );
 };
 
-export function LineChartCard({ execution, title, compact }: LineChartCardProps) {
+export function LineChartCard({ execution, title, compact, showLegend = true }: LineChartCardProps) {
   const { rows, columns } = execution;
 
   const schema = useMemo(() => {
@@ -151,7 +153,7 @@ export function LineChartCard({ execution, title, compact }: LineChartCardProps)
             />
             <YAxis tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={yAxisWidth} />
             <Tooltip content={<CustomTooltip />} />
-            {schema.numericCols.length > 1 && (
+            {showLegend && schema.numericCols.length > 1 && (
               <Legend wrapperStyle={{ fontSize: 11, color: '#71717a', paddingTop: '10px' }} />
             )}
             {schema.numericCols.map((col, i) => (

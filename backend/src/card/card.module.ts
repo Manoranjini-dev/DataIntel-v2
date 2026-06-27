@@ -9,10 +9,9 @@ import { CardService } from './card.service';
 import { DatabaseModule } from '../database/database.module';
 import { AuditModule } from '../audit/audit.module';
 import { CacheModule } from '../cache/cache.module';
-import { OrgModule } from '../org/org.module';
 
 @Module({
-  imports: [DatabaseModule, AuditModule, CacheModule, OrgModule],
+  imports: [DatabaseModule, AuditModule, CacheModule],
   controllers: [CardController, CardFolderController],
   providers: [CardService],
   exports: [CardService],

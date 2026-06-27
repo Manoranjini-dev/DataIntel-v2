@@ -24,7 +24,7 @@ export class AccountController {
   @ApiOperation({ summary: 'Update user settings' })
   async updateSettings(
     @CurrentUser() user: SafeAccount,
-    @Body() data: { theme?: string; defaultOrgId?: string; notificationPreferences?: any },
+    @Body() data: { theme?: string; notificationPreferences?: any },
   ) {
     const settings = await this.settingsService.updateSettings(user.id, data);
     return { settings };

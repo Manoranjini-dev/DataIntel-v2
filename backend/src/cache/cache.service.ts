@@ -3,8 +3,6 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 
 export const CacheKeys = {
   session: (tokenHash: string) => `di:session:${tokenHash}`,
-  orgPerm: (orgId: string, accountId: string) => `di:org-perm:${orgId}:${accountId}`,
-  orgHierarchy: (orgId: string) => `di:org-perm:hierarchy:${orgId}`,
   connSession: (connectionId: string) => `di:conn:session:${connectionId}`,
   connHealth: (connectionId: string) => `di:conn:health:${connectionId}`,
   connSchema: (connectionId: string) => `di:conn:schema:${connectionId}`,
@@ -19,18 +17,13 @@ export const CacheKeys = {
   queryResult: (executionId: string) => `di:query:result:${executionId}`,
   genJob: (jobId: string) => `di:gen-job:${jobId}`,
   rateLimitAccount: (accountId: string, bucket: string) => `di:rate:${accountId}:${bucket}`,
-  rateLimitOrg: (orgId: string, bucket: string) => `di:rate:${orgId}:${bucket}`,
-  aiCost: (orgId: string, month: string) => `di:ai-cost:${orgId}:${month}`,
   userSettings: (accountId: string) => `di:user:settings:${accountId}`,
-  orgEvents: (orgId: string) => `di:events:${orgId}`,
   widgetRefreshChannel: (dashId: string) => `di:events:widget-refresh:${dashId}`,
   chatStreamChannel: (chatId: string) => `di:events:chat-stream:${chatId}`,
 };
 
 export const CacheTTL = {
   SESSION: 7 * 24 * 3600,
-  ORG_PERM: 5 * 60,
-  ORG_HIERARCHY: 10 * 60,
   CONN_SCHEMA: 3600,
   CONN_HEALTH: 5 * 60,
   CONN_SESSION: 30 * 60,

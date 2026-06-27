@@ -65,7 +65,7 @@ export class AuthGuard implements CanActivate {
 
   private extractSessionToken(request: any): string | null {
     // 1. Try HttpOnly cookie first
-    const cookieToken = request.cookies?.['session_token'];
+    const cookieToken = request.cookies?.['c1x_session'];
     if (cookieToken) {
       return cookieToken;
     }

@@ -1,8 +1,13 @@
+'use client';
+
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ArrowRight, Bot, CheckCircle2, Database, Layers,
   LayoutDashboard, MessageSquare, Shield, Zap,
 } from 'lucide-react';
+import { useAuthStore } from '@/lib/auth-store';
+import { authApi } from '@/lib/api';
 
 // ── Static data ──────────────────────────────────────────────────
 const features = [
@@ -60,6 +65,17 @@ const connectors = ['PostgreSQL', 'MySQL', 'MSSQL', 'MongoDB', 'Snowflake', 'Big
 
 // ── Page ─────────────────────────────────────────────────────────
 export default function LandingPage() {
+  const { isAuthenticated, clearUser } = useAuthStore();
+  const router = useRouter();
+
+  const handleSignOut = async () => {
+    try {
+      await authApi.logout();
+    } finally {
+      clearUser();
+    }
+  };
+
   return (
     <main className="min-h-screen bg-[hsl(30_5%_11%)] text-[hsl(38_8%_96%)] overflow-x-hidden">
 
@@ -80,20 +96,41 @@ export default function LandingPage() {
           </div>
 
           <nav className="flex items-center gap-3">
-            <Link
-              href="/login"
-              className="px-4 py-2 text-sm font-medium text-[hsl(38_8%_80%)] hover:text-white transition-colors"
-            >
-              Sign in
-            </Link>
-            <Link
-              href="/register"
-              className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
-            >
-              Get started
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
+            {isAuthenticated ? (
+              <>
+                <button
+                  onClick={handleSignOut}
+                  className="px-4 py-2 text-sm font-medium text-[hsl(38_8%_80%)] hover:text-white transition-colors"
+                >
+                  Sign out
+                </button>
+                <Link
+                  href="/dashboards"
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+                >
+                  Dashboard
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="px-4 py-2 text-sm font-medium text-[hsl(38_8%_80%)] hover:text-white transition-colors"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/register"
+                  className="inline-flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+                >
+                  Get started
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </>
+            )}
           </nav>
         </header>
 
@@ -120,20 +157,33 @@ export default function LandingPage() {
           </p>
 
           <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              href="/register"
-              className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
-            >
-              Start for free
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-            <Link
-              href="/login"
-              className="px-7 py-3.5 rounded-xl text-sm font-semibold border border-[hsl(30_4%_28%)] bg-[hsl(30_5%_14%)] text-[hsl(38_8%_80%)] hover:border-[#D97A1E]/40 hover:text-white transition-all"
-            >
-              Sign in to workspace
-            </Link>
+            {isAuthenticated ? (
+              <Link
+                href="/dashboards"
+                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
+                style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+              >
+                Go to Dashboard
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/register"
+                  className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-sm font-bold text-white transition-opacity hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+                >
+                  Start for free
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+                <Link
+                  href="/login"
+                  className="px-7 py-3.5 rounded-xl text-sm font-semibold border border-[hsl(30_4%_28%)] bg-[hsl(30_5%_14%)] text-[hsl(38_8%_80%)] hover:border-[#D97A1E]/40 hover:text-white transition-all"
+                >
+                  Sign in to workspace
+                </Link>
+              </>
+            )}
           </div>
 
           <div className="mt-10 flex flex-wrap items-center justify-center gap-6 text-sm text-[hsl(35_4%_55%)]">
@@ -235,20 +285,33 @@ export default function LandingPage() {
               Connect your database, type a question in plain English, and get a verified answer in seconds.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href="/register"
-                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-opacity"
-                style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
-              >
-                <Zap className="w-4 h-4" />
-                Create your workspace
-              </Link>
-              <Link
-                href="/login"
-                className="px-7 py-3.5 rounded-xl text-sm font-semibold border border-[hsl(30_4%_28%)] bg-[hsl(30_5%_14%)] text-[hsl(38_8%_80%)] hover:text-white transition-colors"
-              >
-                Sign in
-              </Link>
+              {isAuthenticated ? (
+                <Link
+                  href="/dashboards"
+                  className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-opacity"
+                  style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+                >
+                  <Zap className="w-4 h-4" />
+                  Go to Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/register"
+                    className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl text-sm font-bold text-white hover:opacity-90 transition-opacity"
+                    style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}
+                  >
+                    <Zap className="w-4 h-4" />
+                    Create your workspace
+                  </Link>
+                  <Link
+                    href="/login"
+                    className="px-7 py-3.5 rounded-xl text-sm font-semibold border border-[hsl(30_4%_28%)] bg-[hsl(30_5%_14%)] text-[hsl(38_8%_80%)] hover:text-white transition-colors"
+                  >
+                    Sign in
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </section>

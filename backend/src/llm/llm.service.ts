@@ -29,6 +29,10 @@ export class LLMService {
     this.client = new OpenAI({
       apiKey,
       baseURL,
+      // Without an explicit timeout a hanging LLM call blocks the user's
+      // Generate click indefinitely (SDK default is several minutes).
+      timeout: 30_000,
+      maxRetries: 0, // we own retry/backoff in generateSQL — avoid double-retrying
     });
 
     this.model =
@@ -92,13 +96,13 @@ export class LLMService {
         return parsed;
       } catch (error) {
         lastError = error instanceof Error ? error.message : 'Unknown error';
-        
+
         if (lastError.includes('402') || lastError.includes('401') || lastError.includes('Insufficient credits')) {
           this.logger.error(`LLM API Error (Fast Fail): ${lastError}`);
-          throw new Error(`LLM format violation after ${attempt + 1} attempts: ${lastError}`);
+          throw new Error(`llm_auth_error: ${lastError}`);
         }
 
-        this.logger.warn(`LLM generation attempt ${attempt + 1} failed: ${lastError}`);
+        this.logger.warn(`LLM generation attempt ${attempt + 1}/${this.maxRetries + 1} failed: ${lastError}`);
 
         if (attempt === this.maxRetries) {
           break;
@@ -106,8 +110,21 @@ export class LLMService {
       }
     }
 
-    // All retries exhausted — reject, never repair
-    throw new Error(`LLM format violation after ${this.maxRetries + 1} attempts: ${lastError}`);
+    // All retries exhausted — classify the failure so the caller (and
+    // eventually the user) gets an accurate message instead of every
+    // failure being mislabeled as a JSON-format problem.
+    const lower = (lastError || '').toLowerCase();
+    let category = 'llm_format_violation';
+    if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout')) {
+      category = 'llm_timeout';
+    } else if (lower.includes('econnrefused') || lower.includes('enotfound') || lower.includes('econnreset') || lower.includes('network')) {
+      category = 'llm_network_error';
+    } else if (lower.includes('rate limit') || lower.includes('429')) {
+      category = 'llm_rate_limited';
+    }
+
+    this.logger.error(`LLM generation failed after ${this.maxRetries + 1} attempts [${category}]: ${lastError}`);
+    throw new Error(`${category}: ${lastError}`);
   }
 
   /**

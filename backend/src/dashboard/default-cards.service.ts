@@ -98,7 +98,6 @@ export class DefaultCardsService {
    * Best-effort: never throws.
    */
   async seedPlaceholderCards(
-    orgId: string,
     creator: SafeAccount,
     dashId: string,
     pageId: string,
@@ -129,7 +128,7 @@ export class DefaultCardsService {
             queryDefinition: {},
             visualizationConfig: {},
           };
-          return this.builder.addWidget(pageId, orgId, creator, dto);
+          return this.builder.addWidget(pageId, creator, dto);
         }),
       );
       this.logger.log(`Seeded ${created.length} placeholder cards for manual dashboard ${dashId}`);
@@ -147,7 +146,6 @@ export class DefaultCardsService {
    * Best-effort: never throws — a failure here must not block dashboard creation.
    */
   async seedDefaultCards(
-    orgId: string,
     creator: SafeAccount,
     dashId: string,
     pageId: string,
@@ -159,14 +157,14 @@ export class DefaultCardsService {
       if (tables.length === 0) {
         this.logger.log(`No synced schema for ${contextType} ${contextId}; attempting auto-sync.`);
         if (contextType === 'connection') {
-          await this.autoSyncSchema(orgId, contextId);
+          await this.autoSyncSchema(contextId);
         } else if (contextType === 'combo') {
           const members = await this.db.queryMany<{ connection_id: string }>(
             `SELECT connection_id FROM datasource_combo_members WHERE combo_id = $1`,
             [contextId],
           );
           for (const m of members) {
-            await this.autoSyncSchema(orgId, m.connection_id);
+            await this.autoSyncSchema(m.connection_id);
           }
         }
         tables = await this.fetchSchema(contextType, contextId);
@@ -182,7 +180,7 @@ export class DefaultCardsService {
       // Resolve the primary connection ID for query execution
       const primaryConnId = await this.resolvePrimaryConnectionId(contextType, contextId);
 
-      let specs = await this.generateCardSpecs(orgId, tables).catch((e) => {
+      let specs = await this.generateCardSpecs(tables).catch((e) => {
         this.logger.warn(`LLM card generation failed, falling back to heuristics: ${e?.message}`);
         return null;
       });
@@ -252,7 +250,7 @@ export class DefaultCardsService {
             execResult ?? undefined,
           );
 
-          const w = await this.builder.addWidget(pageId, orgId, creator, dto);
+          const w = await this.builder.addWidget(pageId, creator, dto);
 
           this.logger.log(
             `Widget ${i + 1}/${DEFAULT_CARD_COUNT} created: "${refinedSpec.title}" [${refinedSpec.widgetType}]` +
@@ -279,7 +277,7 @@ export class DefaultCardsService {
               },
               visualizationConfig: {},
             };
-            const w = await this.builder.addWidget(pageId, orgId, creator, dto);
+            const w = await this.builder.addWidget(pageId, creator, dto);
             this.logger.log(`Created static placeholder fallback for widget ${i + 1}`);
             return w;
           } catch (e2: any) {
@@ -367,7 +365,7 @@ export class DefaultCardsService {
 
   // ── LLM-driven card specs ─────────────────────────────────────
 
-  private async generateCardSpecs(orgId: string, tables: TableInfo[]): Promise<CardSpec[] | null> {
+  private async generateCardSpecs(tables: TableInfo[]): Promise<CardSpec[] | null> {
     const schema = this.compressSchema(tables);
 
     const systemPrompt = `You are a senior data analyst embedded in a business intelligence platform.
@@ -868,11 +866,11 @@ Technical formatting rules — follow every one strictly:
     return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   }
 
-  private async autoSyncSchema(orgId: string, connectionId: string): Promise<void> {
+  private async autoSyncSchema(connectionId: string): Promise<void> {
     try {
       const conn = await this.db.queryOne<any>(
-        'SELECT * FROM datasource_connections WHERE id = $1 AND org_id = $2',
-        [connectionId, orgId],
+        'SELECT * FROM datasource_connections WHERE id = $1',
+        [connectionId],
       );
       if (!conn) return;
 

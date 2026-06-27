@@ -27,3 +27,30 @@ export class LoginDto {
   @IsNotEmpty({ message: 'Password is required' })
   password!: string;
 }
+
+export class ActivateAccountDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Invitation token is required' })
+  token!: string;
+
+  @IsString()
+  @MinLength(8, { message: 'Password must be at least 8 characters' })
+  @MaxLength(128)
+  password!: string;
+}
+
+export class ForgotPasswordDto {
+  @IsEmail({}, { message: 'Invalid email address' })
+  email!: string;
+}
+
+export class ResetPasswordDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Reset token is required' })
+  token!: string;
+
+  @IsString()
+  @MinLength(8, { message: 'Password must be at least 8 characters' })
+  @MaxLength(128)
+  password!: string;
+}

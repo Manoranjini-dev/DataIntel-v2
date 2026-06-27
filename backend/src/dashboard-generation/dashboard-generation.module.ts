@@ -15,15 +15,12 @@ import { AuditModule } from '../audit/audit.module';
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { LLMModule } from '../llm/llm.module';
 
-import { OrgModule } from '../org/org.module';
-
 @Module({
   imports: [
     DatabaseModule,
     AuditModule,
     DashboardModule,
     LLMModule,
-    OrgModule,
   ],
   controllers: [DashboardGenerationController],
   providers: [

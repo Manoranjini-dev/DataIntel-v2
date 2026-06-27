@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { dashboardApi, chatApi, orgApi, cardApi } from '@/lib/api';
+import { dashboardApi, chatApi, cardApi } from '@/lib/api';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ResponsiveGridLayout = require('react-grid-layout').Responsive as React.ComponentType<any>;
 import 'react-grid-layout/css/styles.css';
@@ -23,6 +23,12 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GenerativeUIRenderer } from '../generative-ui';
+import { TextCard } from '../generative-ui/text-card';
+import { ImageCard } from '../generative-ui/image-card';
+import {
+  applyVisualizationConfig, AGGREGATION_OPTIONS, NUMERIC_ONLY_AGGREGATIONS, isNumericColumn,
+  type VisualizationConfig, type AggregationFn,
+} from '@/lib/aggregation';
 import { useUIStore } from '@/lib/ui-store';
 
 // ── Grid geometry — MUST stay in sync with the ResponsiveGridLayout props
@@ -63,6 +69,13 @@ interface WidgetData {
   isLoading?: boolean;
   isRenaming?: boolean;
   query_definition?: any;
+  /** Static content for non-query widgets — Free Text card markdown body. */
+  text_content?: string;
+  /** Static content for non-query widgets — Image card source URL and caption. */
+  image_url?: string;
+  image_caption?: string;
+  /** Client-side chart/aggregation settings (X/Y axis, group by, aggregation, sort, legend). */
+  visualization_config?: VisualizationConfig;
 }
 
 // ── Map LLM ui_hint → valid widget_type / chart_type enum ──────
@@ -72,7 +85,6 @@ function normalizeWidgetType(hint?: string | null): string {
   const MAP: Record<string, string> = {
     data_table: 'table',
     stat_grid: 'metric_card',
-    stacked_bar: 'bar_chart',
     horizontal_bar: 'bar_chart',
     scatter_plot: 'scatter',
     gauge_chart: 'gauge',
@@ -87,6 +99,7 @@ function normalizeWidgetType(hint?: string | null): string {
     'metric_card', 'line_chart', 'area_chart', 'bar_chart', 'pie_chart',
     'donut_chart', 'table', 'heatmap', 'funnel', 'scatter', 'pivot',
     'gauge', 'treemap', 'sankey', 'text', 'image', 'divider', 'filter_control',
+    'stacked_bar', 'stacked_area_chart', 'combo_chart',
   ]);
   const normalized = MAP[hint || ''] || hint || 'table';
   return VALID.has(normalized) ? normalized : 'table';
@@ -100,15 +113,20 @@ const WIDGET_TEMPLATES = [
   { type: 'bar_chart', name: 'Bar Chart', icon: '▦', desc: 'Compare categories' },
   { type: 'line_chart', name: 'Line Chart', icon: '↗', desc: 'Trends over time' },
   { type: 'area_chart', name: 'Area Chart', icon: '◿', desc: 'Volume over time' },
+  { type: 'stacked_area_chart', name: 'Stacked Area Chart', icon: '◣', desc: 'Stacked volume over time' },
   { type: 'pie_chart', name: 'Pie Chart', icon: '◑', desc: 'Part-to-whole' },
   { type: 'donut_chart', name: 'Donut Chart', icon: '◎', desc: 'Proportion rings' },
   { type: 'horizontal_bar', name: 'Horizontal Bar', icon: '▬', desc: 'Ranked comparison' },
+  { type: 'stacked_bar', name: 'Stacked Bar Chart', icon: '▤', desc: 'Stacked category comparison' },
+  { type: 'combo_chart', name: 'Line & Bar Combo', icon: '⌗', desc: 'Dual-axis bar + line' },
   { type: 'scatter_chart', name: 'Scatter Plot', icon: '⁝', desc: 'Correlation / clusters' },
   { type: 'funnel_chart', name: 'Funnel', icon: '▽', desc: 'Conversion stages' },
   { type: 'gauge_chart', name: 'Gauge', icon: '◐', desc: 'Single value vs target' },
   { type: 'waterfall_chart', name: 'Waterfall', icon: '⊟', desc: 'Running totals' },
   { type: 'stat_grid', name: 'Stat Grid', icon: '⊞', desc: 'Multiple metrics' },
   { type: 'table', name: 'Data Table', icon: '☰', desc: 'Raw row data' },
+  { type: 'text', name: 'Free Text', icon: '✎', desc: 'Static note or annotation' },
+  { type: 'image', name: 'Image', icon: '▢', desc: 'Picture or logo' },
 ];
 
 const CHART_COLORS = ['#D97A1E', '#F5A623', '#50A0B4', '#6ECA97', '#E97B7B', '#9B8EF5'];
@@ -472,9 +490,16 @@ function Widget({
     if (renaming) inputRef.current?.focus();
   }, [renaming]);
 
-  const rows = widget.result_rows || [];
-  const columns = widget.result_columns || [];
-  const hint = widget.ui_hint || widget.widget_type || 'table';
+  const rawRows = widget.result_rows || [];
+  const rawColumns = widget.result_columns || [];
+  const vizConfig = widget.visualization_config;
+  // Pure, deterministic reshape (group by / aggregate) — a no-op when no
+  // visualization config is set, so unconfigured widgets render unchanged.
+  const { rows, columns } = useMemo(
+    () => applyVisualizationConfig(rawRows, rawColumns, vizConfig),
+    [rawRows, rawColumns, vizConfig],
+  );
+  const hint = vizConfig?.vizType || widget.ui_hint || widget.widget_type || 'table';
   const qd = typeof widget.query_definition === 'string' ? JSON.parse(widget.query_definition) : (widget.query_definition || {});
 
   const renderContent = () => {
@@ -486,6 +511,53 @@ function Widget({
         </div>
       </div>
     );
+    // Free Text and Image cards are static content, not query-driven — they
+    // never have rows/columns, so they must bypass the rows-based branches
+    // below entirely (otherwise they'd permanently show "no data").
+    if (widget.widget_type === 'text' || widget.widget_type === 'image') {
+      const isText = widget.widget_type === 'text';
+      const content = String(widget.text_content ?? qd.text_content ?? '');
+      const imageUrl = String(widget.image_url ?? qd.image_url ?? '');
+      const caption = String(widget.image_caption ?? qd.image_caption ?? '');
+      const hasContent = isText ? !!content.trim() : !!imageUrl.trim();
+
+      if (!hasContent) {
+        return (
+          <div
+            className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
+            onClick={() => {
+              if (isEditing) onSelect?.();
+              if (!isGeneral) onEditQuery?.();
+            }}
+            title={!isGeneral ? `Click to add ${isText ? 'text' : 'an image'}` : ''}
+          >
+            {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/50 text-xs gap-3">
+              <div className="w-10 h-10 rounded-full bg-muted/40 border border-border/50 flex items-center justify-center text-muted-foreground transition-transform duration-300 group-hover/card:scale-105 group-hover/card:bg-primary/5 group-hover/card:text-primary/70 group-hover/card:border-primary/20">
+                {isText
+                  ? <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+                  : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>}
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span className="font-medium text-foreground/70">{isText ? 'Empty Text Card' : 'No Image Set'}</span>
+                <span className="text-[10px] text-muted-foreground/60 max-w-[160px] text-center">
+                  {isGeneral ? 'General dashboard widget' : `Click to ${isText ? 'write a note' : 'add an image URL'}`}
+                </span>
+                {!isGeneral && <span className="mt-1 text-[10px] px-2 py-1 bg-primary/10 text-primary rounded-md font-medium opacity-0 group-hover/card:opacity-100 transition-opacity duration-300">Configure</span>}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="h-full w-full overflow-hidden" onClick={() => { if (isEditing) onSelect?.(); }}>
+          {isText
+            ? <TextCard content={content} title={widget.title} compact />
+            : <ImageCard imageUrl={imageUrl} caption={caption} title={widget.title} compact />}
+        </div>
+      );
+    }
     if (!rows.length) return (
       <div
         className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
@@ -534,6 +606,7 @@ function Widget({
             uiHint={hint as any}
             title={widget.title}
             compact={true}
+            showLegend={vizConfig?.showLegend}
           />
         </div>
         {(qd.metricContext || qd.businessSignificance) && (
@@ -800,8 +873,7 @@ function DraggableCardItem({ card, onClick }: { card: any, onClick: () => void }
 }
 
 // ── Widget Sidebar ─────────────────────────────────────────────
-function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
-  orgId: string;
+function WidgetSidebar({ onCardClick, onTemplateClick }: {
   onCardClick?: (c: any) => void;
   onTemplateClick?: (t: string) => void;
 }) {
@@ -809,8 +881,8 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
   const [tab, setTab] = useState<'templates' | 'cards'>('templates');
 
   useEffect(() => {
-    cardApi.list(orgId, { limit: 50 }).then(res => setCards(res.cards)).catch(console.error);
-  }, [orgId]);
+    cardApi.list({ limit: 50 }).then(res => setCards(res.cards)).catch(console.error);
+  }, []);
 
   return (
     <div className="w-56 bg-card border-l border-border flex flex-col shrink-0 h-full overflow-hidden">
@@ -844,8 +916,8 @@ function WidgetSidebar({ orgId, onCardClick, onTemplateClick }: {
 }
 
 // ── Add Widget Dialog ──────────────────────────────────────────
-function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCreated, onAdd, onClose, defaultHint, defaultPosition, isGeneral }: {
-  orgId: string; dashId: string; pageId: string; chatId?: string; connectionId?: string;
+function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, onAdd, onClose, defaultHint, defaultPosition, isGeneral }: {
+  dashId: string; pageId: string; chatId?: string; connectionId?: string;
   onChatCreated?: (id: string) => void;
   onAdd: (widget: Record<string, unknown>) => void; onClose: () => void;
   defaultHint?: string; defaultPosition?: { x: number; y: number; w: number; h: number };
@@ -862,13 +934,13 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
     try {
       let activeChatId = chatId;
       if (!activeChatId && connectionId) {
-        const { chat } = await chatApi.create(orgId, { connectionId });
+        const { chat } = await chatApi.create({ connectionId });
         activeChatId = chat.id;
         onChatCreated?.(chat.id);
       }
       if (!activeChatId) return;
       const p = defaultHint ? `${prompt} (format for a ${defaultHint.replace(/_/g, ' ')})` : prompt;
-      const data = await chatApi.ask(orgId, activeChatId, p, true);
+      const data = await chatApi.ask(activeChatId, p, true);
       setPreview(data as Record<string, unknown>);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -887,7 +959,7 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
       // across add, save, and reload cycles.
       const posX = defaultPosition?.x ?? 0;
       const posY = defaultPosition?.y ?? 0;
-      const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
+      const widget = await dashboardApi.addWidget(dashId, pageId, {
         title: title || prompt,
         widget_type: widgetType,
         queryPrompt: prompt,
@@ -1007,8 +1079,8 @@ function AddWidgetDialog({ orgId, dashId, pageId, chatId, connectionId, onChatCr
 }
 
 // ── AI Generate Dashboard Dialog ───────────────────────────────
-function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAdded, dashId, pageId, onClose }: {
-  orgId: string; chatId?: string; connectionId?: string;
+function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, dashId, pageId, onClose }: {
+  chatId?: string; connectionId?: string;
   onChatCreated?: (id: string) => void;
   onWidgetAdded: (w: Record<string, unknown>) => void;
   dashId: string; pageId: string; onClose: () => void;
@@ -1031,7 +1103,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
     let activeChatId = chatId;
     if (!activeChatId && connectionId) {
       try {
-        const { chat } = await chatApi.create(orgId, { connectionId });
+        const { chat } = await chatApi.create({ connectionId });
         activeChatId = chat.id;
         onChatCreated?.(chat.id);
       } catch (e) { console.error(e); setGenerating(false); return; }
@@ -1052,7 +1124,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
       let resolvedHint = fallbackHint;
 
       try {
-        const result = await chatApi.ask(orgId, activeChatId, prompt, true);
+        const result = await chatApi.ask(activeChatId, prompt, true);
         const exec = (result as any).execution;
         // ui_hint lives on assistantMessage, NOT on execution record
         const llmHint = (result as any).assistantMessage?.ui_hint || exec?.ui_hint;
@@ -1078,7 +1150,7 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
         const slot = findNextSlot(existingPositions);
         existingWidgetPositions.push(slot);
 
-        const widget = await dashboardApi.addWidget(orgId, dashId, pageId, {
+        const widget = await dashboardApi.addWidget(dashId, pageId, {
           title: prompt.slice(0, 60),
           widget_type: resolvedHint,
           queryPrompt: prompt,
@@ -1198,18 +1270,18 @@ function GenerateDialog({ orgId, chatId, connectionId, onChatCreated, onWidgetAd
 }
 
 // ── Query Inspector ─────────────────────────────────────────────
-function QueryInspectorModal({ widgetId, orgId, dashId, pageId, onClose }: {
-  widgetId: string; orgId: string; dashId: string; pageId: string; onClose: () => void;
+function QueryInspectorModal({ widgetId, dashId, pageId, onClose }: {
+  widgetId: string; dashId: string; pageId: string; onClose: () => void;
 }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    dashboardApi.inspect(orgId, dashId, pageId, widgetId)
+    dashboardApi.inspect(dashId, pageId, widgetId)
       .then(res => setData(res.execution))
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [widgetId, orgId, dashId, pageId]);
+  }, [widgetId, dashId, pageId]);
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1250,9 +1322,8 @@ function QueryInspectorModal({ widgetId, orgId, dashId, pageId, onClose }: {
 // ── Edit Query Dialog ──────────────────────────────────────────
 // Shows BOTH the natural-language prompt and the generated SQL so
 // the user can edit either and re-run. Apply persists to the DB.
-function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, onUpdate, onClose, isGeneral }: {
+function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdate, onClose, isGeneral }: {
   widget: WidgetData;
-  orgId: string;
   dashId: string;
   pageId: string;
   chatId?: string;
@@ -1277,12 +1348,59 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
   const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; fullRows: Record<string, unknown>[]; columns: string[]; ui_hint: string; llm_suggested_hint?: string } | null>(null);
   const [error, setError] = useState('');
 
+  // ── Visualization Settings — chart type, axes, group by, aggregation,
+  // sort, legend. Purely client-side: reshapes the already-returned rows,
+  // never touches the SQL. Seeded from the widget's saved config so it's
+  // automatically restored when the dialog is reopened.
+  const vc = widget.visualization_config;
+  const [vizType, setVizType] = useState(vc?.vizType || widget.widget_type || 'bar_chart');
+  const [xAxis, setXAxis] = useState(vc?.xAxis || '');
+  const [yAxis, setYAxis] = useState(vc?.yAxis || '');
+  const [groupBy, setGroupBy] = useState(vc?.groupBy || '');
+  const [aggregation, setAggregation] = useState<AggregationFn | ''>(vc?.aggregation || '');
+  const [sortBy, setSortBy] = useState(vc?.sortBy || '');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(vc?.sortDir || 'asc');
+  const [showLegendSetting, setShowLegendSetting] = useState(vc?.showLegend !== false);
+  const [vizSaving, setVizSaving] = useState(false);
+  const [vizSaved, setVizSaved] = useState(false);
+  const [vizError, setVizError] = useState('');
+
+  // Prefer the freshest preview's columns/rows; fall back to the widget's
+  // last-saved result so the section is usable without re-running anything.
+  const availableColumns = preview?.columns?.length ? preview.columns : (widget.result_columns || []);
+  const sampleRows = preview?.fullRows?.length ? preview.fullRows : (widget.result_rows || []);
+  const yAxisIsNumeric = !yAxis || isNumericColumn(sampleRows, yAxis);
+
+  async function handleSaveVisualization() {
+    setVizSaving(true); setVizError(''); setVizSaved(false);
+    try {
+      const visualization_config: VisualizationConfig = {
+        vizType: vizType || undefined,
+        xAxis: xAxis || undefined,
+        yAxis: yAxis || undefined,
+        groupBy: groupBy || undefined,
+        aggregation: (aggregation || undefined) as AggregationFn | undefined,
+        sortBy: sortBy || undefined,
+        sortDir,
+        showLegend: showLegendSetting,
+      };
+      await dashboardApi.updateWidget(dashId, pageId, widget.id, { ...widget, visualization_config });
+      onUpdate({ visualization_config });
+      setVizSaved(true);
+      setTimeout(() => setVizSaved(false), 2500);
+    } catch (e: any) {
+      setVizError('Failed to save: ' + (e?.message || 'unknown error'));
+    } finally {
+      setVizSaving(false);
+    }
+  }
+
   // Load the current SQL from the widget's last execution on mount.
   // widget.sql is the immediate fallback (seeded from query_definition.sql above).
   // The inspect call may find a more-recent SQL from a widget_execution record.
   useEffect(() => {
     setSqlLoading(true);
-    dashboardApi.inspect(orgId, dashId, pageId, widget.id)
+    dashboardApi.inspect(dashId, pageId, widget.id)
       .then(res => {
         // Prefer the execution's generated_query (most recent run) over the stored prompt-sql
         const execSql = res.execution?.generated_query;
@@ -1299,7 +1417,7 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     if (chatId) return chatId;
     if (connectionId) {
       try {
-        const { chat } = await chatApi.create(orgId, { connectionId });
+        const { chat } = await chatApi.create({ connectionId });
         return chat.id;
       } catch { return null; }
     }
@@ -1314,7 +1432,7 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     try {
       const cid = await getChat();
       if (!cid) { setError('No connection available to run this query.'); return; }
-      const result = await chatApi.ask(orgId, cid, finalPrompt, true);
+      const result = await chatApi.ask(cid, finalPrompt, true);
       const exec = (result as any).execution;
 
       if (exec?.generated_query) {
@@ -1325,63 +1443,101 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
       const llmHint: string = (result as any).assistantMessage?.ui_hint || exec?.ui_hint;
 
       if (exec?.status === 'failed') {
-        setError(exec.error_message || 'Query failed to execute. Check the generated SQL.');
+        setError(formatQueryError(exec.error_message));
       } else {
         setPreview({ rows: rows.slice(0, 5), fullRows: rows, columns: exec?.columns || [], ui_hint: widget.widget_type, llm_suggested_hint: llmHint });
         setLastRanVia('prompt');
       }
-    } catch (e: any) { setError(e?.message || 'Query failed.'); }
+    } catch (e: any) { setError(formatQueryError(e?.message)); }
     finally { setRunning(false); }
   }
 
+  function formatQueryError(raw?: string): string {
+    const msg = (raw || '').toLowerCase();
+    if (msg.includes('etimedout') || msg.includes('timed out') || msg.includes('econnrefused') || msg.includes('connection failed')) {
+      return 'Database connection failed — the server is unreachable. Go to Connections and verify the host, port, and credentials, then retry.';
+    }
+    if (msg.includes('schema') && msg.includes('sync')) {
+      return 'Schema not synced — go to Connection Settings → Schema Sync and run a sync, then retry.';
+    }
+    if (raw?.trim()) return raw.trim();
+    return 'Query could not be executed. Try editing the prompt, or check your data source connection.';
+  }
+
+  /** Map an AI-assist (suggest/refine) failure to a clear, non-empty message. */
+  function formatAssistError(e: any, mode: 'suggest' | 'refine'): string {
+    const code = e?.code || e?.cause?.code;
+    const status: number | undefined = e?.status ?? e?.structured?.status;
+    const raw = (e?.structured?.message || e?.message || '').toLowerCase();
+    if (code === 'ECONNABORTED' || raw.includes('timeout')) return 'The AI request timed out. Please try again.';
+    if (code === 'ERR_NETWORK' || raw.includes('network') || raw.includes('econnrefused') || raw.includes('failed to fetch')) {
+      return 'Could not reach the server. Please check your connection and try again.';
+    }
+    if (raw.includes('schema')) return 'Failed to load the database schema. Run Schema Sync for this connection and try again.';
+    if (status === 404) return 'This widget could not be found. Try reopening the dashboard.';
+    return mode === 'suggest'
+      ? 'AI generation failed — could not propose a question. Please type one and try again.'
+      : 'Unable to refine the prompt right now. Please try again.';
+  }
+
   /**
-   * Primary AI-assisted action.
-   *  • Empty prompt → suggest a relevant analytics question for this widget &
-   *    datasource, populate the field, and let the user review before a second
-   *    click generates the chart.
-   *  • Non-empty prompt → first rephrase it into a clearer analytical request,
-   *    show the improved text, then generate the chart from it.
+   * Primary AI-assisted action — ALWAYS produces a populated prompt + SQL in a
+   * single click. Two modes:
+   *  • Empty prompt  → AI proposes a question for this widget/schema, fills the
+   *                    prompt, then generates the SQL + preview from it.
+   *  • Existing text → AI refines the wording (best-effort), updates the prompt,
+   *                    then generates SQL + preview from the refined text.
+   * A misleading "type a question" message is never shown for an empty prompt —
+   * an error surfaces only when the AI service itself genuinely fails.
    */
   async function handleGenerate() {
     if (running || saving || assisting || noConnection) return;
     setError('');
+    setAssistNote('');
 
-    // Scenario 2 — empty prompt: suggest a question and stop for review.
-    if (!prompt.trim()) {
+    let finalPrompt = prompt.trim();
+
+    if (!finalPrompt) {
+      // ── Mode 1: empty prompt → suggest a question, then continue to SQL. ──
       setAssisting(true);
       try {
-        const { question } = await dashboardApi.suggestQuestion(orgId, dashId, pageId, widget.id);
-        if (question && question.trim()) {
-          setPrompt(question.trim());
-          setJustSuggested(true);
-          setAssistNote('AI suggested a question — review or edit it, then click Generate.');
-        } else {
-          setError('Could not suggest a question. Please type one and click Generate.');
+        const { question } = await dashboardApi.suggestQuestion(dashId, pageId, widget.id);
+        const suggested = (question || '').trim();
+        if (!suggested) {
+          // Backend always returns a fallback, so empty here means a real failure.
+          setError('AI generation failed — could not propose a question. Please type one and try again.');
+          return;
         }
-      } catch {
-        setError('Could not suggest a question. Please type one and click Generate.');
-      } finally { setAssisting(false); }
-      return;
+        finalPrompt = suggested;
+        setPrompt(finalPrompt);
+        setAssistNote('AI proposed a question from this widget and your schema.');
+      } catch (e: any) {
+        setError(formatAssistError(e, 'suggest'));
+        return;
+      } finally {
+        setAssisting(false);
+      }
+    } else {
+      // ── Mode 2: existing text → refine (best-effort), then continue to SQL. ──
+      setAssisting(true);
+      try {
+        const { prompt: improved } = await dashboardApi.improvePrompt(dashId, pageId, widget.id, finalPrompt);
+        const refined = (improved || '').trim();
+        if (refined && refined !== finalPrompt) {
+          finalPrompt = refined;
+          setPrompt(finalPrompt);
+          setAssistNote('Refined your question for clearer analysis.');
+        }
+      } catch (e: any) {
+        // Refinement is best-effort — log, keep the user's wording, still generate SQL.
+        console.warn('[widget-generate] prompt refinement failed, using original wording:', e);
+      } finally {
+        setAssisting(false);
+      }
     }
 
-    // Scenario 1 — prompt has text: rephrase, then generate from the improved text.
-    setAssisting(true);
-    let finalPrompt = prompt.trim();
-    try {
-      const { prompt: improved } = await dashboardApi.improvePrompt(orgId, dashId, pageId, widget.id, finalPrompt);
-      if (improved && improved.trim() && improved.trim() !== finalPrompt) {
-        finalPrompt = improved.trim();
-        setPrompt(finalPrompt);
-        setAssistNote('Refined your question for clearer analysis.');
-      } else {
-        setAssistNote('');
-      }
-    } catch {
-      // If rephrasing fails, fall back to the user's original prompt.
-      setAssistNote('');
-    } finally { setAssisting(false); }
-
     setJustSuggested(false);
+    // Both modes converge here → populates the Generated SQL editor + preview.
     await runPromptGeneration(finalPrompt);
   }
 
@@ -1391,17 +1547,17 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
     try {
       const cid = await getChat();
       if (!cid) { setError('No connection available to run this query.'); return; }
-      const result = await chatApi.executeDraft(orgId, cid, '', sql);
+      const result = await chatApi.executeDraft(cid, '', sql);
       const exec = result.execution ?? result;
       const rows: Record<string, unknown>[] = exec?.rows || [];
       
       if (exec?.status === 'failed') {
-        setError(exec.error_message || 'SQL execution failed.');
+        setError(formatQueryError(exec.error_message));
       } else {
         setPreview({ rows: rows.slice(0, 5), fullRows: rows, columns: exec?.columns || [], ui_hint: widget.widget_type, llm_suggested_hint: exec?.ui_hint });
         setLastRanVia('sql');
       }
-    } catch (e: any) { setError(e?.message || 'SQL execution failed.'); }
+    } catch (e: any) { setError(formatQueryError(e?.message)); }
     finally { setRunning(false); }
   }
 
@@ -1419,7 +1575,7 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
         sql: sql,
       };
       // Persist to DB (sql goes into query_definition.sql via updateWidget)
-      await dashboardApi.updateWidget(orgId, dashId, pageId, widget.id, {
+      await dashboardApi.updateWidget(dashId, pageId, widget.id, {
         ...widget,
         ...patch,
       });
@@ -1596,6 +1752,138 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
               </div>
             </div>
           )}
+
+          {/* ── Visualization Settings ──────────────────────────── */}
+          <div className="border-t border-border pt-5">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <label className="text-xs font-semibold text-foreground">Visualization Settings</label>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Reshapes the returned rows client-side — no need to re-run the query.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">Visualization Type</label>
+                <select
+                  value={vizType}
+                  onChange={e => setVizType(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                >
+                  {WIDGET_TEMPLATES.filter(t => t.type !== 'text' && t.type !== 'image').map(t => (
+                    <option key={t.type} value={t.type}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">Aggregation</label>
+                <select
+                  value={aggregation}
+                  onChange={e => setAggregation(e.target.value as AggregationFn | '')}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                >
+                  <option value="">(none)</option>
+                  {AGGREGATION_OPTIONS.map(opt => (
+                    <option
+                      key={opt.value}
+                      value={opt.value}
+                      disabled={!yAxisIsNumeric && NUMERIC_ONLY_AGGREGATIONS.includes(opt.value)}
+                    >
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">X-Axis</label>
+                <select
+                  value={xAxis}
+                  onChange={e => setXAxis(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                >
+                  <option value="">Select column…</option>
+                  {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Y-Axis (Measure) {yAxis && !yAxisIsNumeric && <span className="text-warning">— not numeric</span>}
+                </label>
+                <select
+                  value={yAxis}
+                  onChange={e => setYAxis(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                >
+                  <option value="">Select column…</option>
+                  {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">Group By</label>
+                <select
+                  value={groupBy}
+                  onChange={e => setGroupBy(e.target.value)}
+                  className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                >
+                  <option value="">(use X-Axis)</option>
+                  {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">Sort By</label>
+                <div className="flex gap-1.5">
+                  <select
+                    value={sortBy}
+                    onChange={e => setSortBy(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
+                  >
+                    <option value="">(none)</option>
+                    {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                    disabled={!sortBy}
+                    title="Toggle sort direction"
+                    className="px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground disabled:opacity-40 hover:bg-muted transition-colors"
+                  >
+                    {sortDir === 'asc' ? '↑' : '↓'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 mt-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showLegendSetting}
+                onChange={e => setShowLegendSetting(e.target.checked)}
+                className="w-3.5 h-3.5 rounded border-border accent-primary"
+              />
+              <span className="text-xs text-foreground">Show legend</span>
+            </label>
+
+            {vizError && (
+              <p className="mt-3 text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{vizError}</p>
+            )}
+
+            <button
+              onClick={handleSaveVisualization}
+              disabled={vizSaving}
+              className="mt-3 px-4 py-2 bg-muted hover:bg-muted/80 border border-border rounded-xl text-xs font-semibold text-foreground disabled:opacity-50 transition-colors flex items-center gap-2"
+            >
+              {vizSaving
+                ? <><span className="w-3 h-3 border-2 border-foreground/30 border-t-foreground rounded-full animate-spin" />Saving…</>
+                : vizSaved ? <><Check className="w-3.5 h-3.5 text-success" />Saved</> : 'Save Visualization Settings'}
+            </button>
+          </div>
         </div>
 
         {/* Footer */}
@@ -1614,6 +1902,127 @@ function EditQueryDialog({ widget, orgId, dashId, pageId, chatId, connectionId, 
             {saving
               ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Saving…</>
               : 'Apply & Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Free Text / Image content editor ────────────────────────────
+// Text and Image cards are static content, not queries — they get a
+// dedicated, much simpler editor instead of EditQueryDialog's prompt/SQL flow.
+function TextImageEditDialog({ widget, dashId, pageId, onUpdate, onClose }: {
+  widget: WidgetData;
+  dashId: string;
+  pageId: string;
+  onUpdate: (patch: Partial<WidgetData>) => void;
+  onClose: () => void;
+}) {
+  const isText = widget.widget_type === 'text';
+  const [textContent, setTextContent] = useState(widget.text_content || '');
+  const [imageUrl, setImageUrl] = useState(widget.image_url || '');
+  const [imageCaption, setImageCaption] = useState(widget.image_caption || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all';
+
+  async function handleSave() {
+    setSaving(true); setError('');
+    try {
+      const patch: Partial<WidgetData> = isText
+        ? { text_content: textContent }
+        : { image_url: imageUrl, image_caption: imageCaption };
+      await dashboardApi.updateWidget(dashId, pageId, widget.id, { ...widget, ...patch });
+      onUpdate(patch);
+      onClose();
+    } catch (e: any) {
+      setError('Failed to save: ' + (e?.message || 'unknown error'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]"
+        onClick={e => e.stopPropagation()}
+        style={{ boxShadow: 'var(--shadow-elevated)' }}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">{isText ? 'Edit Text Card' : 'Edit Image Card'}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xs">{widget.title}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {isText ? (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-foreground">Content</label>
+                <span className="text-[10px] text-muted-foreground">Markdown supported</span>
+              </div>
+              <textarea
+                value={textContent}
+                onChange={e => setTextContent(e.target.value)}
+                placeholder="Write a note, annotation, or context for this dashboard…"
+                rows={10}
+                className={`${inputCls} resize-none font-mono text-xs`}
+                autoFocus
+              />
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Image URL</label>
+                <input
+                  value={imageUrl}
+                  onChange={e => setImageUrl(e.target.value)}
+                  placeholder="https://example.com/logo.png"
+                  className={inputCls}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Caption (optional)</label>
+                <input
+                  value={imageCaption}
+                  onChange={e => setImageCaption(e.target.value)}
+                  placeholder="e.g., Q3 brand campaign"
+                  className={inputCls}
+                />
+              </div>
+              {imageUrl.trim() && (
+                <div className="rounded-xl border border-border overflow-hidden bg-muted/30 p-3">
+                  <ImageCard imageUrl={imageUrl} caption={imageCaption} compact={false} />
+                </div>
+              )}
+            </>
+          )}
+
+          {error && (
+            <p className="text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{error}</p>
+          )}
+        </div>
+
+        <div className="flex gap-2 px-5 py-4 border-t border-border shrink-0">
+          <button onClick={onClose} className="px-4 py-2 border border-border text-muted-foreground rounded-xl text-sm hover:bg-muted transition-colors">
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || (isText ? !textContent.trim() : !imageUrl.trim())}
+            className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
+          >
+            {saving
+              ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Saving…</>
+              : 'Save'}
           </button>
         </div>
       </div>
@@ -1850,15 +2259,14 @@ function ExportPdfModal({
 }
 
 export function DashboardBuilder({
-  orgSlug, dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav,
+  dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav,
 }: {
-  orgSlug: string; dashId: string; backUrl?: string; backLabel?: string;
+  dashId: string; backUrl?: string; backLabel?: string;
   titleOverride?: string; subtitleOverride?: string;
   // When true, hides the in-header back link + Chat/Dashboard buttons because
   // the surrounding layout already provides that navigation (single data source).
   hideContextNav?: boolean;
 }) {
-  const [org, setOrg] = useState<Record<string, unknown> | null>(null);
   const [dashboard, setDashboard] = useState<Record<string, unknown> | null>(null);
   const [pages, setPages] = useState<Record<string, unknown>[]>([]);
   const [activePage, setActivePage] = useState<string | null>(null);
@@ -1874,9 +2282,9 @@ export function DashboardBuilder({
 
   let chatUrl = '';
   if (dashboard?.combo_id) {
-    chatUrl = `/orgs/${orgSlug}/combos/${dashboard.combo_id}/chat`;
+    chatUrl = `/combos/${dashboard.combo_id}/chat`;
   } else if (dashboard?.connection_id) {
-    chatUrl = `/orgs/${orgSlug}/connections/${dashboard.connection_id}/chat`;
+    chatUrl = `/connections/${dashboard.connection_id}/chat`;
   }
   if (chatUrl && activeChatId) {
     chatUrl += `?chatId=${activeChatId}`;
@@ -1975,12 +2383,10 @@ export function DashboardBuilder({
 
   const loadData = useCallback(async () => {
     try {
-      const { org: o } = await orgApi.get(orgSlug);
-      setOrg(o as Record<string, unknown>);
-      const data = await dashboardApi.get(o.id, dashId);
+      const data = await dashboardApi.get(dashId);
       setDashboard(data.dashboard);
       setPages(data.pages || []);
-      dashboardApi.listVersions(o.id, dashId).then(res => setVersions(res.versions || [])).catch(console.error);
+      dashboardApi.listVersions(dashId).then(res => setVersions(res.versions || [])).catch(console.error);
       const first = data.pages?.[0];
       if (first) {
         setActivePage(first.id);
@@ -1992,21 +2398,21 @@ export function DashboardBuilder({
         const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
         if (emptyWidgets.length > 0) {
           // Refresh only the empty widgets; pre-seeded widgets keep showing their data
-          refreshWidgets(o.id, String(first.id), emptyWidgets);
+          refreshWidgets(String(first.id), emptyWidgets);
         }
         // If ALL widgets have data, no refresh needed — dashboard is immediately ready
       }
       if (data.dashboard?.connection_id) {
-        const { chats } = await chatApi.list(o.id, { connectionId: data.dashboard.connection_id as string });
+        const { chats } = await chatApi.list({ connectionId: data.dashboard.connection_id as string });
         if (chats.length > 0) setActiveChatId(chats[0].id);
       } else if (data.dashboard?.combo_id) {
-        const { chats } = await chatApi.list(o.id, { comboId: data.dashboard.combo_id as string });
+        const { chats } = await chatApi.list({ comboId: data.dashboard.combo_id as string });
         if (chats.length > 0) setActiveChatId(chats[0].id);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgSlug, dashId]);
+  }, [dashId]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -2018,7 +2424,6 @@ export function DashboardBuilder({
    * populated the moment they open.
    */
   async function refreshWidgets(
-    orgId: string,
     pageId: string,
     widgetList: WidgetData[],
     forceRefresh = false,
@@ -2041,7 +2446,7 @@ export function DashboardBuilder({
         let succeeded = false;
         for (let attempt = 0; attempt < 2 && !succeeded; attempt++) {
           try {
-            const result = await dashboardApi.executeWidget(orgId, dashId, pageId, widget.id, attempt > 0 || forceRefresh);
+            const result = await dashboardApi.executeWidget(dashId, pageId, widget.id, attempt > 0 || forceRefresh);
             if (result.rows?.length > 0 && result.columns) {
               setWidgets(prev => prev.map(w =>
                 w.id === widget.id
@@ -2073,7 +2478,6 @@ export function DashboardBuilder({
    * Used by the manual Refresh button (forceRefresh=true) and page switching.
    */
   async function refreshAllWidgets(
-    orgId: string,
     pageId: string,
     widgetList: WidgetData[],
     forceRefresh = false,
@@ -2098,7 +2502,7 @@ export function DashboardBuilder({
         let succeeded = false;
         for (let attempt = 0; attempt < 2 && !succeeded; attempt++) {
           try {
-            const result = await dashboardApi.executeWidget(orgId, dashId, pageId, widget.id, attempt > 0 || forceRefresh);
+            const result = await dashboardApi.executeWidget(dashId, pageId, widget.id, attempt > 0 || forceRefresh);
             if (result.rows?.length > 0 && result.columns) {
               setWidgets(prev => prev.map(w =>
                 w.id === widget.id
@@ -2159,6 +2563,12 @@ export function DashboardBuilder({
         ui_hint: normalizeWidgetType(String(qd.ui_hint || w.card_chart_type || w.ui_hint || w.widget_type || 'table')),
         sql: String(qd.sql || w.card_raw_query || ''),
         query_definition: qd,
+        text_content: qd.text_content as string | undefined,
+        image_url: qd.image_url as string | undefined,
+        image_caption: qd.image_caption as string | undefined,
+        visualization_config: (typeof w.visualization_config === 'string'
+          ? JSON.parse(w.visualization_config)
+          : (w.visualization_config as VisualizationConfig | undefined)) || undefined,
       };
     });
     setWidgets(widgetList);
@@ -2172,8 +2582,7 @@ export function DashboardBuilder({
     const p = pages.find(p => p.id === id);
     if (p) {
       const builtWidgets = buildWidgets(p as Record<string, unknown>);
-      if (org) {
-        const orgId = String((org as any).id);
+      {
         const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
         if (emptyWidgets.length === 0) {
           // All widgets have data — nothing to refresh
@@ -2181,24 +2590,23 @@ export function DashboardBuilder({
         }
         if (emptyWidgets.length === builtWidgets.length) {
           // All widgets are empty — full refresh with spinner
-          refreshAllWidgets(orgId, id, builtWidgets);
+          refreshAllWidgets(id, builtWidgets);
         } else {
           // Some widgets are empty — targeted refresh preserves seeded data
-          refreshWidgets(orgId, id, emptyWidgets);
+          refreshWidgets(id, emptyWidgets);
         }
       }
     }
   }
 
   async function addPage() {
-    if (!org) return;
     // Sequential, duplicate-free naming: take the highest existing "Page N"
     // and the highest number reserved by in-flight clicks, then +1. The ref
     // guarantees rapid successive clicks each get a unique increasing number.
     const next = Math.max(highestPageNumber(pages), pageSeqRef.current) + 1;
     pageSeqRef.current = next;
     try {
-      const { page } = await dashboardApi.addPage(String(org.id), dashId, `Page ${next}`);
+      const { page } = await dashboardApi.addPage(dashId, `Page ${next}`);
       setPages(ps => [...ps, { ...page, widgets: [] }]);
       setActivePage(page.id); setWidgets([]); setSelectedWidgetId(null);
     } catch (e) { console.error(e); }
@@ -2208,9 +2616,8 @@ export function DashboardBuilder({
     e.stopPropagation();
     if (pages.length <= 1) return;
     if (confirmDeletePageId !== pageId) { setConfirmDeletePageId(pageId); return; }
-    if (!org) return;
     try {
-      await dashboardApi.deletePage?.(String(org.id), dashId, pageId);
+      await dashboardApi.deletePage?.(dashId, pageId);
       const next = pages.filter(p => p.id !== pageId);
       setPages(next);
       if (activePage === pageId && next.length > 0) switchPage(String(next[0].id));
@@ -2242,14 +2649,13 @@ export function DashboardBuilder({
 
     setPages(prev => prev.map(p => String(p.id) === String(pageId) ? { ...p, name } : p));
     setRenamingPage(null);
-    if (!org) return;
     try {
-      await dashboardApi.updatePage(String(org.id), dashId, pageId, { name });
+      await dashboardApi.updatePage(dashId, pageId, { name });
     } catch (err: any) {
       setPageNote({ kind: 'error', msg: err?.message || 'Failed to rename page' });
       // Reload authoritative pages to revert the optimistic change.
       try {
-        const data = await dashboardApi.get(String(org.id), dashId);
+        const data = await dashboardApi.get(dashId);
         setPages(data.pages || []);
       } catch { /* ignore */ }
     }
@@ -2258,41 +2664,40 @@ export function DashboardBuilder({
   // Persist a new page order after a drag-reorder.
   const handlePageReorder = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
-    if (!over || active.id === over.id || !org) return;
+    if (!over || active.id === over.id) return;
     setPages(prev => {
       const oldIdx = prev.findIndex(p => String(p.id) === String(active.id));
       const newIdx = prev.findIndex(p => String(p.id) === String(over.id));
       if (oldIdx < 0 || newIdx < 0) return prev;
       const next = arrayMove(prev, oldIdx, newIdx);
       dashboardApi
-        .reorderPages(String((org as any).id), dashId, next.map(p => String(p.id)))
+        .reorderPages(dashId, next.map(p => String(p.id)))
         .catch(err => {
           console.error('reorderPages failed:', err);
           setExportNote({ kind: 'error', msg: 'Failed to save page order' });
         });
       return next;
     });
-  }, [org, dashId]);
+  }, [dashId]);
 
   async function handleSave() {
-    if (!org) return;
     setSaving(true);
     try {
       if (activePage && deletedWidgetIds.length > 0) {
         await Promise.all(deletedWidgetIds.map(id => 
-          dashboardApi.deleteWidget?.(String(org.id), dashId, activePage, id).catch(() => {})
+          dashboardApi.deleteWidget?.(dashId, activePage, id).catch(() => {})
         ));
       }
       setDeletedWidgetIds([]);
 
-      await dashboardApi.updateLayout(String(org.id), dashId, widgets.map(w => ({
+      await dashboardApi.updateLayout(dashId, widgets.map(w => ({
         widgetId: w.id,
         gridX: w.position_x,
         gridY: w.position_y,
         gridW: w.width,
         gridH: w.height
       })));
-      const result = await dashboardApi.saveVersion(String(org.id), dashId, undefined);
+      const result = await dashboardApi.saveVersion(dashId, undefined);
       setVersions(vs => [result.version, ...vs]);
     } catch (e) { console.error(e); }
     finally { setSaving(false); }
@@ -2338,12 +2743,12 @@ export function DashboardBuilder({
   }
 
   async function moveWidgetToPage(widgetId: string, targetPageId: string) {
-    if (!org || !activePage) return;
+    if (!activePage) return;
     const widget = widgets.find(w => w.id === widgetId);
     if (!widget) return;
     try {
       // Add to target page
-      const res = await dashboardApi.addWidget(String(org.id), dashId, targetPageId, {
+      const res = await dashboardApi.addWidget(dashId, targetPageId, {
         title: widget.title, widget_type: widget.widget_type,
         queryPrompt: widget.query_prompt, sql: widget.sql,
         resultRows: widget.result_rows || [], resultColumns: widget.result_columns || [],
@@ -2354,7 +2759,7 @@ export function DashboardBuilder({
       const newWidget = res.widget;
       
       // Remove from current page backend
-      await dashboardApi.deleteWidget?.(String(org.id), dashId, activePage, widgetId).catch(() => { });
+      await dashboardApi.deleteWidget?.(dashId, activePage, widgetId).catch(() => { });
       
       // Update the pages array so the target page has the new widget
       setPages(ps => ps.map(p => {
@@ -2376,7 +2781,7 @@ export function DashboardBuilder({
 
   async function suggestWidgetTitle(widgetId: string) {
     const widget = widgets.find(w => w.id === widgetId);
-    if (!widget || !org) return;
+    if (!widget) return;
     setWidgets(ws => ws.map(w => w.id === widgetId ? { ...w, isLoading: true } : w));
     try {
       const cols = (widget.result_columns || []).join(', ');
@@ -2389,7 +2794,7 @@ Columns: ${cols}${intent}${sqlContext}
 
 Based on the above data context, suggest a highly relevant dashboard card title.`;
       
-      const result = await chatApi.suggestTitle(String(org.id), prompt);
+      const result = await chatApi.suggestTitle(prompt);
       const title = (result.title || '').trim().replace(/^["']|["']$/g, '');
       // The backend always returns a usable title (AI or a deterministic
       // fallback), so we only keep the existing title if it came back blank.
@@ -2405,7 +2810,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
       // Persist the generated title to the backend so it survives refresh
       if (activePage) {
-        await dashboardApi.updateWidget(String(org.id), dashId, activePage, widgetId, {
+        await dashboardApi.updateWidget(dashId, activePage, widgetId, {
           ...widget,
           title: cleanTitle,
         });
@@ -2433,26 +2838,25 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     widgetTitle: string,
     widgetType: string,
   ) {
-    if (!org) return;
     try {
       // Find or create a chat for this connection so we can run the SQL
-      const { chats } = await chatApi.list(String(org.id), { connectionId });
+      const { chats } = await chatApi.list({ connectionId });
       let execChatId: string;
       if (chats.length > 0) {
         execChatId = chats[0].id;
       } else {
-        const { chat } = await chatApi.create(String(org.id), { connectionId });
+        const { chat } = await chatApi.create({ connectionId });
         execChatId = chat.id;
       }
 
-      const result = await chatApi.executeDraft(String(org.id), execChatId, '', sql);
+      const result = await chatApi.executeDraft(execChatId, '', sql);
       const exec = result.execution ?? result;
       const rows: Record<string, unknown>[] = (exec?.rows || []).slice(0, 100);
       const cols: string[] = exec?.columns || [];
 
       if (rows.length > 0 || cols.length > 0) {
         // Persist results to the widget so a page reload also shows data
-        await dashboardApi.updateWidget(String(org.id), dashId, pageId, widgetId, {
+        await dashboardApi.updateWidget(dashId, pageId, widgetId, {
           title: widgetTitle,
           query_prompt: widgetTitle,
           result_rows: rows,
@@ -2476,7 +2880,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
   }
 
   async function handleCardClick(card: any) {
-    if (!org || !activePage) return;
+    if (!activePage) return;
     const slot = findNextSlot(widgets);
     try {
       const cardQd = typeof card.query_definition === 'string'
@@ -2493,7 +2897,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       }
       if (Array.isArray(card.last_result_columns)) initCols = card.last_result_columns;
 
-      const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
+      const res = await dashboardApi.addWidget(dashId, activePage, {
         title: card.name,
         widget_type: widgetType,
         cardId: card.id,
@@ -2534,9 +2938,37 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     } catch (e) { console.error(e); }
   }
 
+  // Free Text / Image cards aren't query-driven, so the prompt-based
+  // AddWidgetDialog doesn't apply to them — create an empty card directly
+  // (same as the drag-and-drop path already does for every template type)
+  // and let the user fill it in via the click-to-configure flow afterward.
+  async function addStaticWidget(type: 'text' | 'image', slot: { x: number; y: number }) {
+    if (!activePage) return;
+    const tempId = 'temp-' + Date.now();
+    const template = WIDGET_TEMPLATES.find(t => t.type === type);
+    setWidgets(prev => [...prev, {
+      id: tempId, title: template?.name || type, widget_type: type,
+      query_prompt: '', position_x: slot.x, position_y: slot.y,
+      width: WIDGET_W, height: WIDGET_H, isLoading: true,
+    }]);
+    try {
+      const res = await dashboardApi.addWidget(dashId, activePage, {
+        title: template?.name || type, widget_type: type,
+        gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
+        datasourceScopeType: 'connection',
+        sql: '', queryPrompt: '', resultRows: [], resultColumns: [], uiHint: type,
+      });
+      setWidgets(ws => ws.map(w => w.id === tempId ? { ...w, id: String(res.widget.id), isLoading: false } : w));
+    } catch (e) { console.error(e); }
+  }
+
   function handleTemplateClick(type: string) {
     if (!activePage) return;
     const slot = findNextSlot(widgets);
+    if (type === 'text' || type === 'image') {
+      addStaticWidget(type, slot);
+      return;
+    }
     setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
     setDefaultHint(type);
     setShowAddWidget(true);
@@ -2674,7 +3106,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
     if (isZone || isWidget || isCell) {
       const activeData = active.data?.current;
-      if (!activeData || !org || !activePage) return;
+      if (!activeData || !activePage) return;
 
       let slot: { x: number; y: number };
 
@@ -2711,7 +3143,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         ]);
 
         try {
-          const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
+          const res = await dashboardApi.addWidget(dashId, activePage, {
             title: activeData.template.name, widget_type: activeData.template.type,
             gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
             datasourceScopeType: 'connection',
@@ -2741,7 +3173,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         ]);
 
         try {
-          const res = await dashboardApi.addWidget(String(org.id), dashId, activePage, {
+          const res = await dashboardApi.addWidget(dashId, activePage, {
             title: card.name, widget_type: widgetType, cardId: card.id,
             gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
             datasourceScopeType: contextType, datasourceContextId: card.datasource_context_id || undefined,
@@ -2756,7 +3188,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         } catch (e) { console.error(e); }
       }
     }
-  }, [activePage, widgets, org, dashId]);
+  }, [activePage, widgets, dashId]);
 
   const layout = useMemo(() => widgets.map(w => ({
     i: String(w.id),
@@ -2869,7 +3301,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               {backLabel || 'Back'}
             </Link>
           ) : (
-            <Link href={`/orgs/${orgSlug}/dashboards`} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+            <Link href={`/dashboards`} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
             </Link>
           ))}
@@ -2919,8 +3351,8 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             {/* Refresh All */}
             <button
               onClick={() => {
-                if (!org || !activePage) return;
-                refreshAllWidgets(String((org as any).id), activePage, widgets, true);
+                if (!activePage) return;
+                refreshAllWidgets(activePage, widgets, true);
               }}
               disabled={refreshingAll}
               title="Re-execute all widgets against the live database"
@@ -3147,7 +3579,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           </div>
 
           {/* Widget sidebar (edit mode only) */}
-          {isEditing && <WidgetSidebar orgId={String(org?.id)} onCardClick={handleCardClick} onTemplateClick={handleTemplateClick} />}
+          {isEditing && <WidgetSidebar onCardClick={handleCardClick} onTemplateClick={handleTemplateClick} />}
 
           {/* Version history panel */}
           {showVersions && (
@@ -3174,12 +3606,11 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                     <button
                       disabled={restoringVersionId === v.id}
                       onClick={async () => {
-                        if (!org) return;
                         setRestoringVersionId(v.id);
                         try {
-                          await dashboardApi.restoreVersion(String(org.id), dashId, v.id);
+                          await dashboardApi.restoreVersion(dashId, v.id);
                           // Reload pages + widgets from server
-                          const data = await dashboardApi.get(String(org.id), dashId);
+                          const data = await dashboardApi.get(dashId);
                           setPages(data.pages || []);
                           const first = data.pages?.[0];
                           if (first) { setActivePage(String(first.id)); buildWidgets(first as any); }
@@ -3199,9 +3630,9 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         </div>
 
         {/* ── Modals ─────────────────────────────────────────── */}
-        {showAddWidget && org && activePage && (
+        {showAddWidget && activePage && (
           <AddWidgetDialog
-            orgId={String(org.id)} dashId={dashId} pageId={activePage}
+            dashId={dashId} pageId={activePage}
             chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
             onChatCreated={setActiveChatId}
             defaultHint={defaultHint} defaultPosition={defaultPosition || undefined}
@@ -3216,9 +3647,9 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           />
         )}
 
-        {showGenerate && org && activePage && (
+        {showGenerate && activePage && (
           <GenerateDialog
-            orgId={String(org.id)} dashId={dashId} pageId={activePage}
+            dashId={dashId} pageId={activePage}
             chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
             onChatCreated={setActiveChatId}
             onWidgetAdded={handleWidgetAdded}
@@ -3228,18 +3659,28 @@ Based on the above data context, suggest a highly relevant dashboard card title.
 
         {inspectWidgetId && (
           <QueryInspectorModal
-            widgetId={inspectWidgetId} orgId={String(org?.id)} dashId={dashId} pageId={activePage!}
+            widgetId={inspectWidgetId} dashId={dashId} pageId={activePage!}
             onClose={() => setInspectWidgetId(null)}
           />
         )}
 
-        {editQueryWidgetId && org && (() => {
+        {editQueryWidgetId && (() => {
           const w = widgets.find(x => x.id === editQueryWidgetId);
           if (!w) return null;
+          if (w.widget_type === 'text' || w.widget_type === 'image') {
+            return (
+              <TextImageEditDialog
+                widget={w}
+                dashId={dashId}
+                pageId={activePage!}
+                onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
+                onClose={() => setEditQueryWidgetId(null)}
+              />
+            );
+          }
           return (
             <EditQueryDialog
               widget={w}
-              orgId={String(org.id)}
               dashId={dashId}
               pageId={activePage!}
               chatId={activeChatId}

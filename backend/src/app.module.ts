@@ -16,15 +16,14 @@ import { CacheModule } from './cache/cache.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { AccountModule } from './account/account.module';
+import { EmailModule } from './email/email.module';
+import { UserModule } from './user/user.module';
 
 // ── Core Infrastructure (Global) ───────────────
 import { MCPModule } from './mcp/mcp.module';
 import { SchemaModule } from './schema/schema.module';
 import { ValidationModule } from './validation/validation.module';
 import { MemoryModule } from './memory/memory.module';
-
-// ── Organization Domain ─────────────────────────
-import { OrgModule } from './org/org.module';
 
 // ── Datasource Domain ───────────────────────────
 import { ConnectionModule } from './connection/connection.module';
@@ -78,17 +77,16 @@ import { DashboardGenerationModule } from './dashboard-generation/dashboard-gene
     DatabaseModule,
     CacheModule,
     AuditModule,
+    EmailModule,
     AuthModule,
     AccountModule,
+    UserModule,
 
     // ── Core Infrastructure Modules (Global) ──────────
     MCPModule,
     SchemaModule,
     ValidationModule,
     MemoryModule,
-
-    // ── Organization Domain ──────────────────────────
-    OrgModule,          // Global (exports OrgPermissionsService for guards)
 
     // ── Datasource Domain ────────────────────────────
     ConnectionModule,

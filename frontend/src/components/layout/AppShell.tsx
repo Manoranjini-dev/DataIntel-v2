@@ -2,11 +2,13 @@
 
 import { Sidebar } from './Sidebar';
 import { useAuthStore } from '@/lib/auth-store';
+import { usePathname } from 'next/navigation';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore();
+  const pathname = usePathname();
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || pathname === '/') {
     return <>{children}</>;
   }
 

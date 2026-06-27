@@ -5,7 +5,6 @@
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { OrgService } from '../org/org.service';
 import { SafeAccount } from '../auth/auth.service';
 
 @Injectable()
@@ -15,22 +14,18 @@ export class ChatService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly orgService: OrgService,
   ) {}
 
-  /** List chats for an org, optionally filtered by connection or combo */
+  /** List chats owned by the requester, optionally filtered by connection or combo */
   async list(
-    orgId: string,
     accountId: string,
     filter: { connectionId?: string; comboId?: string; isArchived?: boolean } = {},
   ) {
-    await this.orgService.requireMember(orgId, accountId);
-
     let sql = `SELECT c.*, COUNT(m.id) AS message_count
                FROM chats c
                LEFT JOIN chat_messages m ON m.chat_id = c.id
-               WHERE c.org_id = $1 AND c.created_by = $2 AND c.deleted_at IS NULL`;
-    const params: any[] = [orgId, accountId];
+               WHERE c.created_by = $1 AND c.deleted_at IS NULL`;
+    const params: any[] = [accountId];
 
     if (filter.isArchived !== undefined) {
       params.push(filter.isArchived);
@@ -54,26 +49,23 @@ export class ChatService {
 
   /** Create a new chat thread */
   async create(
-    orgId: string,
     user: SafeAccount,
     data: { connectionId?: string; comboId?: string; title?: string },
   ) {
-    await this.orgService.requireMember(orgId, user.id);
-
     if (!data.connectionId && !data.comboId) {
       throw new ForbiddenException('Chat must be scoped to a connection or combo');
     }
 
     const chat = await this.db.queryOne(
-      `INSERT INTO chats (org_id, connection_id, combo_id, title, created_by)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO chats (connection_id, combo_id, title, created_by)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [orgId, data.connectionId || null, data.comboId || null,
+      [data.connectionId || null, data.comboId || null,
        data.title || 'New Chat', user.id],
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'chat_created',
       resourceType: 'chat', resourceId: chat!.id,
     });
@@ -82,20 +74,21 @@ export class ChatService {
   }
 
   /** Get a single chat with messages */
-  async get(orgId: string, chatId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
-
-    const chat = await this.db.queryOne(
-      'SELECT * FROM chats WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL',
-      [chatId, orgId],
+  async get(chatId: string, accountId: string) {
+    const chat = await this.db.queryOne<any>(
+      'SELECT * FROM chats WHERE id = $1 AND deleted_at IS NULL',
+      [chatId],
     );
     if (!chat) throw new NotFoundException('Chat not found');
+    if (chat.created_by !== accountId) {
+      throw new ForbiddenException('You do not have access to this chat');
+    }
     return chat;
   }
 
   /** Get messages for a chat */
-  async getMessages(orgId: string, chatId: string, accountId: string) {
-    await this.get(orgId, chatId, accountId);
+  async getMessages(chatId: string, accountId: string) {
+    await this.get(chatId, accountId);
     return this.db.queryMany(
       `SELECT m.*, qe.generated_query, qe.status AS exec_status,
               qe.row_count, qe.execution_time_ms, qe.error_message,
@@ -133,11 +126,8 @@ export class ChatService {
   }
 
   /** Archive a chat */
-  async archive(orgId: string, chatId: string, user: SafeAccount) {
-    const chat = await this.get(orgId, chatId, user.id);
-    if ((chat as any).created_by !== user.id) {
-      await this.orgService.requireRole(orgId, user.id, 'admin');
-    }
+  async archive(chatId: string, user: SafeAccount) {
+    await this.get(chatId, user.id);
 
     await this.db.query(
       'UPDATE chats SET is_archived = true, updated_at = NOW() WHERE id = $1',
@@ -145,18 +135,15 @@ export class ChatService {
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'chat_archived',
       resourceType: 'chat', resourceId: chatId,
     });
   }
 
   /** Unarchive a chat */
-  async unarchive(orgId: string, chatId: string, user: SafeAccount) {
-    const chat = await this.get(orgId, chatId, user.id);
-    if ((chat as any).created_by !== user.id) {
-      await this.orgService.requireRole(orgId, user.id, 'admin');
-    }
+  async unarchive(chatId: string, user: SafeAccount) {
+    await this.get(chatId, user.id);
 
     await this.db.query(
       'UPDATE chats SET is_archived = false, updated_at = NOW() WHERE id = $1',
@@ -164,18 +151,15 @@ export class ChatService {
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'chat_unarchived',
       resourceType: 'chat', resourceId: chatId,
     });
   }
 
   /** Delete a chat (soft-delete) */
-  async delete(orgId: string, chatId: string, user: SafeAccount) {
-    const chat = await this.get(orgId, chatId, user.id);
-    if ((chat as any).created_by !== user.id) {
-      await this.orgService.requireRole(orgId, user.id, 'admin');
-    }
+  async delete(chatId: string, user: SafeAccount) {
+    await this.get(chatId, user.id);
 
     await this.db.query(
       'UPDATE chats SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1',
@@ -183,15 +167,15 @@ export class ChatService {
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'chat_deleted',
       resourceType: 'chat', resourceId: chatId,
     });
   }
 
   /** Update chat title */
-  async updateTitle(orgId: string, chatId: string, accountId: string, title: string) {
-    await this.get(orgId, chatId, accountId);
+  async updateTitle(chatId: string, accountId: string, title: string) {
+    await this.get(chatId, accountId);
     return this.db.queryOne(
       'UPDATE chats SET title = $2, updated_at = NOW() WHERE id = $1 RETURNING *',
       [chatId, title],

@@ -9,7 +9,7 @@ import { SafeAccount } from '../auth/auth.service';
 
 import { DashboardBuilderService, CreateWidgetDto } from '../dashboard/dashboard-builder.service';
 import { LayoutEngineService } from './layout-engine.service';
-import { WidgetRecommendationService, WidgetRecommendation } from './widget-recommendation.service';
+import { WidgetRecommendationService, WidgetRecommendation, RichSchemaContext } from './widget-recommendation.service';
 
 @Injectable()
 export class DashboardGenerationService {
@@ -26,20 +26,20 @@ export class DashboardGenerationService {
 
   /** Enqueue a dashboard generation job */
   async queueGenerationJob(
-    orgId: string, user: SafeAccount, 
+    user: SafeAccount,
     data: { intent: string; contextType: string; contextId: string; templateId?: string }
   ) {
     const jobRecord = await this.db.queryOne(
       `INSERT INTO dashboard_generation_jobs
-         (org_id, requested_by, context, template_id, status)
-       VALUES ($1, $2, $3, $4, 'queued')
+         (requested_by, context, template_id, status)
+       VALUES ($1, $2, $3, 'queued')
        RETURNING *`,
-      [orgId, user.id, JSON.stringify({ intent: data.intent, contextType: data.contextType, contextId: data.contextId }), data.templateId || null]
+      [user.id, JSON.stringify({ intent: data.intent, contextType: data.contextType, contextId: data.contextId }), data.templateId || null]
     );
 
     // Execute asynchronously instead of using BullMQ
     setTimeout(() => {
-      this.processGenerationJob(jobRecord!.id, orgId, user.id, data.intent, data.contextType, data.contextId)
+      this.processGenerationJob(jobRecord!.id, user.id, data.intent, data.contextType, data.contextId)
         .catch(err => this.logger.error(`Dashboard generation failed for job ${jobRecord!.id}`, err));
     }, 100);
 
@@ -47,12 +47,12 @@ export class DashboardGenerationService {
   }
 
   /** Retrieve job status for polling */
-  async getJobStatus(jobId: string, orgId: string) {
+  async getJobStatus(jobId: string, requesterId: string) {
     const job = await this.db.queryOne(
-      `SELECT id, status, progress, dashboard_id, error 
-       FROM dashboard_generation_jobs 
-       WHERE id = $1 AND org_id = $2`,
-      [jobId, orgId]
+      `SELECT id, status, progress, dashboard_id, error
+       FROM dashboard_generation_jobs
+       WHERE id = $1 AND requested_by = $2`,
+      [jobId, requesterId]
     );
     if (!job) throw new NotFoundException('Job not found');
     return job;
@@ -62,23 +62,23 @@ export class DashboardGenerationService {
    * Actual worker execution payload (called by BullMQ processor).
    * Generates dashboard, pages, and widgets, then calculates layout.
    */
-  async processGenerationJob(jobId: string, orgId: string, userId: string, intent: string, contextType: any, contextId: string) {
+  async processGenerationJob(jobId: string, userId: string, intent: string, contextType: any, contextId: string) {
     // 1. Update status
     await this.db.query(`UPDATE dashboard_generation_jobs SET status = 'running', progress = 10, started_at = NOW() WHERE id = $1`, [jobId]);
 
     try {
-      // 2. Fetch schema context from the connection/combo
+      // 2. Fetch schema context from the connection/combo (full column detail)
       const schemaContext = await this.fetchSchemaContext(contextType, contextId);
 
       await this.db.query(`UPDATE dashboard_generation_jobs SET progress = 30 WHERE id = $1`, [jobId]);
 
-      // 3. Get widget recommendations from LLM
-      const recommendations = await this.recommender.recommendWidgets(orgId, intent, schemaContext);
-      
+      // 3. Get widget recommendations from LLM — pass empty existing prompts since this is a new dashboard
+      const recommendations = await this.recommender.recommendWidgets(intent, schemaContext, []);
+
       await this.db.query(`UPDATE dashboard_generation_jobs SET progress = 60 WHERE id = $1`, [jobId]);
 
       // 4. Create actual dashboard via builder service
-      const dash = await this.builder.createDashboard(orgId, { id: userId } as SafeAccount, {
+      const dash = await this.builder.createDashboard({ id: userId } as SafeAccount, {
         name: `Generated: ${intent.substring(0, 30)}...`,
         contextType,
         contextId,
@@ -88,7 +88,7 @@ export class DashboardGenerationService {
       });
 
       // 5. Get default page created by builder
-      const pages = await this.builder.listPages(dash.id, orgId, userId);
+      const pages = await this.builder.listPages(dash.id, userId);
       const pageId = pages[0].id;
 
       await this.db.query(`UPDATE dashboard_generation_jobs SET progress = 80 WHERE id = $1`, [jobId]);
@@ -109,7 +109,7 @@ export class DashboardGenerationService {
 
       // 7. Persist widgets
       for (const widget of laidOutWidgets) {
-        await this.builder.addWidget(pageId, orgId, { id: userId } as SafeAccount, widget);
+        await this.builder.addWidget(pageId, { id: userId } as SafeAccount, widget);
       }
 
       // 8. Mark job completed
@@ -129,7 +129,7 @@ export class DashboardGenerationService {
     }
   }
 
-  private async fetchSchemaContext(contextType: string, contextId: string): Promise<{ tables: string[] }> {
+  private async fetchSchemaContext(contextType: string, contextId: string): Promise<RichSchemaContext> {
     if (contextType === 'combo') {
       const members = await this.db.queryMany<any>(
         `SELECT dc.id as connection_id
@@ -138,29 +138,41 @@ export class DashboardGenerationService {
          WHERE dcm.combo_id = $1`,
         [contextId],
       );
+      const schemaLines: string[] = [];
       const allTables: string[] = [];
       for (const m of members) {
-        const tables = await this.getConnectionTables(m.connection_id);
+        const { lines, tables } = await this.getConnectionSchema(m.connection_id);
+        schemaLines.push(...lines);
         allTables.push(...tables);
       }
-      return { tables: allTables };
+      return { schema: schemaLines.join('\n'), tables: allTables };
     }
 
-    const tables = await this.getConnectionTables(contextId);
-    return { tables };
+    const { lines, tables } = await this.getConnectionSchema(contextId);
+    return { schema: lines.join('\n'), tables };
   }
 
-  private async getConnectionTables(connectionId: string): Promise<string[]> {
+  private async getConnectionSchema(connectionId: string): Promise<{ lines: string[]; tables: string[] }> {
     const rows = await this.db.queryMany<any>(
-      `SELECT ct.table_name
+      `SELECT ct.table_name, string_agg(
+         cc.column_name || ' ' || cc.data_type ||
+         CASE WHEN cc.is_primary_key THEN ' PK' ELSE '' END ||
+         CASE WHEN NOT cc.is_nullable THEN ' NOT NULL' ELSE '' END,
+         ', ' ORDER BY cc.ordinal_position
+       ) AS columns
        FROM connection_schemas cs
        JOIN connection_tables ct ON ct.schema_id = cs.id
+       JOIN connection_columns cc ON cc.table_id = ct.id
        WHERE cs.connection_id = $1
          AND cs.deleted_at IS NULL
          AND ct.deleted_at IS NULL
+         AND cc.deleted_at IS NULL
+       GROUP BY ct.table_name
        ORDER BY ct.table_name`,
       [connectionId],
     );
-    return rows.map((r: any) => r.table_name);
+    const lines = rows.map((r: any) => `${r.table_name}(${r.columns})`);
+    const tables = rows.map((r: any) => r.table_name);
+    return { lines, tables };
   }
 }

@@ -78,7 +78,7 @@ CHART SELECTION PRIORITY RULES:
 
 INTENT-BASED EXAMPLES:
 - "Top 5 customers by revenue" / "Top selling products" / "Most profitable products" / "Top countries by orders" → horizontal_bar
-- "Orders by category" / "Revenue by customer" / "How many records are in each table?" / "Customer count by city" → bar_chart
+- "Orders by category" / "Revenue by customer" / "Customer count by city" → bar_chart
 - "Sales by month" / "Revenue trend over time" → line_chart
 - "Market share by category" → pie_chart / donut_chart
 
@@ -175,7 +175,7 @@ FALLBACK (confidence < 0.5):
   "tables_used": [],
   "confidence": 0,
   "ui_hint": "data_table",
-  "follow_up_questions": ["Show me all available tables", "How many records are in each table?", "What data do we have?"]
+  "follow_up_questions": ["Show me all available tables", "What columns are in these tables?", "What data do we have?"]
 }`;
   }
 
@@ -407,7 +407,7 @@ You MUST NOT generate a data query. Instead, return a "schema_query" response ty
   "confidence": 0,
   "intent": "search",
   "ui_hint": "data_table",
-  "follow_up_questions": ["Show me all available indices", "How many documents are in each index?", "What data do we have?"]
+  "follow_up_questions": ["Show me all available indices", "What fields are in these indices?", "What data do we have?"]
 }`;
   }
 
@@ -458,7 +458,7 @@ CHART SELECTION PRIORITY RULES:
 
 INTENT-BASED EXAMPLES:
 - "Top 5 customers by revenue" / "Top selling products" / "Most profitable products" / "Top countries by orders" → horizontal_bar
-- "Orders by category" / "Revenue by customer" / "How many records are in each collection?" / "Customer count by city" → bar_chart
+- "Orders by category" / "Revenue by customer" / "Customer count by city" → bar_chart
 - "Sales by month" / "Revenue trend over time" → line_chart
 - "Market share by category" → pie_chart / donut_chart
 
@@ -523,7 +523,7 @@ FALLBACK:
   "tables_used": [],
   "confidence": 0,
   "ui_hint": "data_table",
-  "follow_up_questions": ["Show me all collections", "How many documents are in each collection?", "What data do we have?"]
+  "follow_up_questions": ["Show me all collections", "What fields are in these collections?", "What data do we have?"]
 }`;
   }
 

@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────
-// Chat Controller — /orgs/:orgId/chats
+// Chat Controller — /chats
 // ──────────────────────────────────────────────
 
 import {
@@ -33,7 +33,7 @@ class SuggestTitleDto {
   @IsString() @IsNotEmpty() prompt!: string;
 }
 
-@Controller('orgs/:orgId/chats')
+@Controller('chats')
 export class ChatController {
   private readonly logger = new Logger(ChatController.name);
 
@@ -46,23 +46,21 @@ export class ChatController {
   @Get()
   async list(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Query('connectionId') connectionId?: string,
     @Query('comboId') comboId?: string,
     @Query('isArchived') isArchived?: string,
   ) {
     const isArchivedBool = isArchived === 'true' ? true : isArchived === 'false' ? false : undefined;
-    const chats = await this.chatService.list(orgId, user.id, { connectionId, comboId, isArchived: isArchivedBool });
+    const chats = await this.chatService.list(user.id, { connectionId, comboId, isArchived: isArchivedBool });
     return { chats };
   }
 
   @Post()
   async create(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Body() dto: CreateChatDto,
   ) {
-    const chat = await this.chatService.create(orgId, user, dto);
+    const chat = await this.chatService.create(user, dto);
     return { chat };
   }
 
@@ -72,7 +70,6 @@ export class ChatController {
   @HttpCode(HttpStatus.OK)
   async suggestTitle(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Body() dto: SuggestTitleDto,
   ) {
     const systemPrompt = `You are an expert Data Analyst and UI Designer. Your task is to generate high-quality, professional, and concise titles for dashboard cards based on the provided context (business intent, SQL logic, visualization type, and columns).
@@ -157,20 +154,18 @@ Rules:
   @Get(':chatId')
   async get(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
   ) {
-    const chat = await this.chatService.get(orgId, chatId, user.id);
+    const chat = await this.chatService.get(chatId, user.id);
     return { chat };
   }
 
   @Get(':chatId/messages')
   async getMessages(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
   ) {
-    const messages = await this.chatService.getMessages(orgId, chatId, user.id);
+    const messages = await this.chatService.getMessages(chatId, user.id);
     return { messages };
   }
 
@@ -178,11 +173,10 @@ Rules:
   @Post(':chatId/ask')
   async ask(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
     @Body() dto: AskDto,
   ) {
-    return this.chatQueryService.query(orgId, chatId, user, dto.prompt);
+    return this.chatQueryService.query(chatId, user, dto.prompt);
   }
 
   /** Re-execute a (possibly user-edited) SQL draft */
@@ -190,11 +184,10 @@ Rules:
   @HttpCode(HttpStatus.OK)
   async executeDraft(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
     @Body() dto: ExecuteDraftDto,
   ) {
-    return this.chatQueryService.executeDraft(orgId, chatId, user, dto.executionId || '', dto.sql);
+    return this.chatQueryService.executeDraft(chatId, user, dto.executionId || '', dto.sql);
   }
 
   /**
@@ -205,14 +198,13 @@ Rules:
   @HttpCode(HttpStatus.OK)
   async refreshMessages(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
     @Body('executionIds') executionIds: string[],
   ) {
     if (!Array.isArray(executionIds) || executionIds.length === 0) {
       return { results: [] };
     }
-    const results = await this.chatQueryService.refreshMessages(orgId, chatId, user, executionIds);
+    const results = await this.chatQueryService.refreshMessages(chatId, user, executionIds);
     return { results };
   }
 
@@ -224,14 +216,13 @@ Rules:
   @HttpCode(HttpStatus.OK)
   async refreshComboMessages(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
     @Body('executionIds') executionIds: string[],
   ) {
     if (!Array.isArray(executionIds) || executionIds.length === 0) {
       return { results: [] };
     }
-    const results = await this.chatQueryService.refreshComboMessages(orgId, chatId, user, executionIds);
+    const results = await this.chatQueryService.refreshComboMessages(chatId, user, executionIds);
     return { results };
   }
 
@@ -239,11 +230,10 @@ Rules:
   @Patch(':chatId/title')
   async updateTitle(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
     @Body() body: { title: string },
   ) {
-    const chat = await this.chatService.updateTitle(orgId, chatId, user.id, body.title);
+    const chat = await this.chatService.updateTitle(chatId, user.id, body.title);
     return { chat };
   }
 
@@ -251,10 +241,9 @@ Rules:
   @HttpCode(HttpStatus.OK)
   async archive(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
   ) {
-    await this.chatService.archive(orgId, chatId, user);
+    await this.chatService.archive(chatId, user);
     return { success: true };
   }
 
@@ -262,10 +251,9 @@ Rules:
   @HttpCode(HttpStatus.OK)
   async unarchive(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
   ) {
-    await this.chatService.unarchive(orgId, chatId, user);
+    await this.chatService.unarchive(chatId, user);
     return { success: true };
   }
 
@@ -273,9 +261,8 @@ Rules:
   @HttpCode(HttpStatus.NO_CONTENT)
   async delete(
     @CurrentUser() user: SafeAccount,
-    @Param('orgId') orgId: string,
     @Param('chatId') chatId: string,
   ) {
-    await this.chatService.delete(orgId, chatId, user);
+    await this.chatService.delete(chatId, user);
   }
 }

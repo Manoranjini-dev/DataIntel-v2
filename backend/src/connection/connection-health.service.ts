@@ -40,11 +40,10 @@ export class ConnectionHealthService {
   ): Promise<HealthStatus> {
     const conn = await this.db.queryOne<{
       id: string;
-      org_id: string;
       connector_type: string;
       consecutive_failures: number;
     }>(
-      `SELECT id, org_id, connector_type, consecutive_failures
+      `SELECT id, connector_type, consecutive_failures
        FROM datasource_connections
        WHERE id = $1 AND deleted_at IS NULL`,
       [connectionId],
@@ -86,11 +85,10 @@ export class ConnectionHealthService {
 
     // Log to health log table
     await this.db.query(
-      `INSERT INTO connection_health_logs (connection_id, org_id, is_healthy, latency_ms, error_message, error_code, checked_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      `INSERT INTO connection_health_logs (connection_id, is_healthy, latency_ms, error_message, error_code, checked_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
       [
         connectionId,
-        conn.org_id,
         isHealthy,
         isHealthy ? latencyMs : null,
         errorMessage || null,
@@ -114,7 +112,6 @@ export class ConnectionHealthService {
     if (previousHealth && previousHealth.isHealthy !== isHealthy) {
       this.events.emit('connection.health_changed', {
         connectionId,
-        orgId: conn.org_id,
         isHealthy,
         previousIsHealthy: previousHealth.isHealthy,
         consecutiveFailures,
@@ -132,22 +129,21 @@ export class ConnectionHealthService {
   /** Get health history from DB (paginated) */
   async getHealthHistory(
     connectionId: string,
-    orgId: string,
     limit = 100,
     offset = 0,
   ) {
     return this.db.queryMany(
       `SELECT id, is_healthy, latency_ms, error_message, checked_at, checked_by
        FROM connection_health_logs
-       WHERE connection_id = $1 AND org_id = $2
+       WHERE connection_id = $1
        ORDER BY checked_at DESC
-       LIMIT $3 OFFSET $4`,
-      [connectionId, orgId, limit, offset],
+       LIMIT $2 OFFSET $3`,
+      [connectionId, limit, offset],
     );
   }
 
-  /** Get aggregate health summary for an org's connections */
-  async getOrgHealthSummary(orgId: string) {
+  /** Get aggregate health summary for the connections a user owns or was shared */
+  async getHealthSummary(accountId: string) {
     return this.db.queryMany(
       `SELECT
          dc.id,
@@ -159,9 +155,15 @@ export class ConnectionHealthService {
          dc.consecutive_failures,
          dc.error_count
        FROM datasource_connections dc
-       WHERE dc.org_id = $1 AND dc.deleted_at IS NULL
+       WHERE dc.deleted_at IS NULL
+         AND ( dc.created_by = $1
+               OR EXISTS (
+                 SELECT 1 FROM datasource_permissions p
+                 WHERE p.connection_id = dc.id AND p.account_id = $1
+                   AND (p.expires_at IS NULL OR p.expires_at > NOW())
+               ) )
        ORDER BY dc.consecutive_failures DESC, dc.name`,
-      [orgId],
+      [accountId],
     );
   }
 
@@ -169,9 +171,9 @@ export class ConnectionHealthService {
    * Get all connections due for a health check.
    * Used by the HealthCheck background processor.
    */
-  async getDueForHealthCheck(limit = 100): Promise<Array<{ id: string; org_id: string }>> {
+  async getDueForHealthCheck(limit = 100): Promise<Array<{ id: string }>> {
     return this.db.queryMany(
-      `SELECT id, org_id
+      `SELECT id
        FROM datasource_connections
        WHERE deleted_at IS NULL
          AND status IN ('active', 'error')

@@ -1,17 +1,14 @@
 'use client';
 
 import { useAuthStore } from '@/lib/auth-store';
-import { useOrgStore } from '../../store/org';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { LogOut, User } from 'lucide-react';
 
 export function UserDropdown() {
   const { user, clearUser } = useAuthStore();
-  const { clearOrg } = useOrgStore();
 
   const handleLogout = () => {
     clearUser();
-    clearOrg();
     window.location.href = '/login';
   };
 

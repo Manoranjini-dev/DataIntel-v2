@@ -24,6 +24,10 @@ interface AreaChartCardProps {
   execution: QueryExecutionResult;
   title?: string;
   compact?: boolean;
+  /** Stack all measure series so each sits atop the previous, showing cumulative volume. */
+  stacked?: boolean;
+  /** Defaults to true (existing behavior) when unset. */
+  showLegend?: boolean;
 }
 
 function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
@@ -84,7 +88,7 @@ const CustomTick = (props: any) => {
   );
 };
 
-export function AreaChartCard({ execution, title, compact }: AreaChartCardProps) {
+export function AreaChartCard({ execution, title, compact, stacked, showLegend = true }: AreaChartCardProps) {
   const { rows, columns } = execution;
 
   const schema = useMemo(() => {
@@ -142,7 +146,7 @@ export function AreaChartCard({ execution, title, compact }: AreaChartCardProps)
             />
             <YAxis tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={yAxisWidth} />
             <Tooltip content={<CustomTooltip />} />
-            {schema.numericCols.length > 1 && (
+            {showLegend && schema.numericCols.length > 1 && (
               <Legend wrapperStyle={{ fontSize: 11, color: '#71717a', paddingTop: '10px' }} />
             )}
             {schema.numericCols.map((col, i) => (
@@ -153,6 +157,7 @@ export function AreaChartCard({ execution, title, compact }: AreaChartCardProps)
                 stroke={COLORS[i % COLORS.length].stroke}
                 fill={COLORS[i % COLORS.length].fill}
                 strokeWidth={2}
+                stackId={stacked ? 'stack' : undefined}
               />
             ))}
           </AreaChart>

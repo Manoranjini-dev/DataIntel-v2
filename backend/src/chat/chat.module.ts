@@ -10,13 +10,12 @@ import { QueryExecutionService } from './query-execution.service';
 import { DatabaseModule } from '../database/database.module';
 import { AuditModule } from '../audit/audit.module';
 
-import { OrgModule } from '../org/org.module';
 import { CardModule } from '../card/card.module';
 import { LLMModule } from '../llm/llm.module';
 import { MCPModule } from '../mcp/mcp.module';
 
 @Module({
-  imports: [DatabaseModule, AuditModule, OrgModule, LLMModule, CardModule, QueryModule, MCPModule],
+  imports: [DatabaseModule, AuditModule, LLMModule, CardModule, QueryModule, MCPModule],
   controllers: [ChatController, ChatStreamController],
   providers: [ChatService, ChatQueryService, QueryExecutionService, ChatPromotionService],
   exports: [ChatService, ChatQueryService, QueryExecutionService, ChatPromotionService],

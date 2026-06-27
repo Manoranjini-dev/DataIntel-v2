@@ -5,12 +5,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { SafeAccount } from '../auth/auth.service';
 
 export type ExecutionStatus = 'pending' | 'running' | 'success' | 'failed' | 'timeout' | 'cancelled';
 
 export interface CreateExecutionParams {
-  orgId: string;
   chatId?: string;
   messageId?: string;
   connectionId?: string;
@@ -51,13 +49,12 @@ export class QueryExecutionService {
   async create(params: CreateExecutionParams) {
     const exec = await this.db.queryOne(
       `INSERT INTO query_executions
-         (org_id, chat_id, message_id, connection_id, combo_id, executed_by,
+         (chat_id, message_id, connection_id, combo_id, executed_by,
           prompt, generated_query, query_explanation, tables_used,
           confidence, validation_verdict, validation_reasons, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')
        RETURNING *`,
       [
-        params.orgId,
         params.chatId || null,
         params.messageId || null,
         params.connectionId || null,
@@ -74,7 +71,6 @@ export class QueryExecutionService {
     );
 
     await this.audit.log({
-      orgId: params.orgId,
       accountId: params.executedBy,
       eventType: 'query_generated',
       resourceType: 'query_execution',
@@ -94,7 +90,7 @@ export class QueryExecutionService {
   }
 
   /** Complete an execution with results or error */
-  async complete(execId: string, orgId: string, accountId: string, params: CompleteExecutionParams) {
+  async complete(execId: string, accountId: string, params: CompleteExecutionParams) {
     const exec = await this.db.queryOne(
       `UPDATE query_executions SET
          status = $2,
@@ -126,7 +122,7 @@ export class QueryExecutionService {
 
     const eventType = params.status === 'success' ? 'query_executed' : 'query_failed';
     await this.audit.log({
-      orgId, accountId,
+      accountId,
       eventType,
       resourceType: 'query_execution',
       resourceId: execId,
@@ -150,25 +146,21 @@ export class QueryExecutionService {
     );
   }
 
-  /** Get execution history for an org with filters */
-  async getByOrg(
-    orgId: string,
-    filter: { connectionId?: string; accountId?: string; limit?: number; offset?: number } = {},
+  /** Get execution history for an account with filters */
+  async getByAccount(
+    accountId: string,
+    filter: { connectionId?: string; limit?: number; offset?: number } = {},
   ) {
     const { limit = 100, offset = 0 } = filter;
-    const params: any[] = [orgId];
+    const params: any[] = [accountId];
     let sql = `SELECT qe.*, a.display_name AS executor_name, a.email AS executor_email
                FROM query_executions qe
                JOIN accounts a ON a.id = qe.executed_by
-               WHERE qe.org_id = $1`;
+               WHERE qe.executed_by = $1`;
 
     if (filter.connectionId) {
       params.push(filter.connectionId);
       sql += ` AND qe.connection_id = $${params.length}`;
-    }
-    if (filter.accountId) {
-      params.push(filter.accountId);
-      sql += ` AND qe.executed_by = $${params.length}`;
     }
 
     params.push(limit, offset);

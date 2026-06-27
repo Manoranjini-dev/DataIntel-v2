@@ -13,9 +13,8 @@ import type {
   DashboardWidget,
 } from './types';
 
-import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosError } from 'axios';
 import { useAuthStore } from './auth-store';
-import { useOrgStore } from '../store/org';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -32,18 +31,14 @@ class APIError extends Error {
 export const apiClient = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
+  // Bound every request so a hung backend/LLM call surfaces as a clear
+  // timeout error instead of leaving the UI spinning forever. Sits above
+  // the backend's own 30s LLM timeout, leaving headroom for SQL execution
+  // and result interpretation.
+  timeout: 60_000,
   headers: {
     'Content-Type': 'application/json',
   },
-});
-
-apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const currentOrgId = useOrgStore.getState().currentOrgId;
-  if (currentOrgId) {
-    config.headers['App-Current-Org'] = currentOrgId;
-  }
-
-  return config;
 });
 
 apiClient.interceptors.response.use(
@@ -133,147 +128,267 @@ export const authApi = {
     const r = await apiFetch('/auth/me');
     return handleResponse<{ success: boolean; account: any }>(r);
   },
-};
 
-// ── Org API ─────────────────────────────────
-
-export const orgApi = {
-  list: async () => {
-    const r = await apiFetch('/orgs');
-    return handleResponse<{ orgs: any[] }>(r);
+  activateAccount: async (token: string, password: string) => {
+    const r = await apiFetch('/auth/activate-account', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    });
+    return handleResponse<{ success: boolean; account: any }>(r);
   },
 
-  create: async (data: { name: string; slug: string; description?: string }) => {
-    const r = await apiFetch('/orgs', {
+  forgotPassword: async (email: string) => {
+    const r = await apiFetch('/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+    return handleResponse<{ success: boolean; message: string }>(r);
+  },
+
+  resetPassword: async (token: string, password: string) => {
+    const r = await apiFetch('/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, password }),
+    });
+    return handleResponse<{ success: boolean; message: string }>(r);
+  },
+};
+
+// ── User Management API (ADMIN only) ─────────
+
+export interface ManagedUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'ADMIN' | 'ANALYST' | 'VIEWER';
+  status: 'PENDING_INVITATION' | 'ACTIVE' | 'INACTIVE' | 'DELETED';
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+}
+
+export interface ListUsersParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  role?: string;
+  status?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface ListUsersResult {
+  users: ManagedUser[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export const userApi = {
+  list: async (params: ListUsersParams = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') qs.append(k, String(v));
+    });
+    const r = await apiFetch(`/users?${qs.toString()}`);
+    return handleResponse<ListUsersResult>(r);
+  },
+
+  get: async (id: string) => {
+    const r = await apiFetch(`/users/${id}`);
+    return handleResponse<{ user: ManagedUser }>(r);
+  },
+
+  create: async (data: { name: string; email: string; role: string }) => {
+    const r = await apiFetch('/users', {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    return handleResponse<{ org: any }>(r);
+    return handleResponse<{ success: boolean; message: string; user: ManagedUser }>(r);
   },
 
-  get: async (slug: string) => {
-    const r = await apiFetch(`/orgs/${slug}`);
-    return handleResponse<{ org: any }>(r);
-  },
-
-  update: async (id: string, data: any) => {
-    const r = await apiFetch(`/orgs/${id}`, {
+  update: async (
+    id: string,
+    data: { name?: string; email?: string; role?: string; status?: string },
+  ) => {
+    const r = await apiFetch(`/users/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
-    return handleResponse<{ org: any }>(r);
+    return handleResponse<{ success: boolean; user: ManagedUser }>(r);
   },
 
-  getMembers: async (orgId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/members`);
-    return handleResponse<{ members: any[] }>(r);
-  },
-
-  inviteMember: async (orgId: string, email: string, role: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/members`, {
-      method: 'POST',
-      body: JSON.stringify({ email, role }),
+  setStatus: async (id: string, status: 'ACTIVE' | 'INACTIVE') => {
+    const r = await apiFetch(`/users/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
     });
-    return handleResponse<{ member: any }>(r);
+    return handleResponse<{ success: boolean; user: ManagedUser }>(r);
   },
 
-  removeMember: async (orgId: string, accountId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/members/${accountId}`, { method: 'DELETE' });
-    return handleResponse<{ success: boolean }>(r);
+  remove: async (id: string) => {
+    const r = await apiFetch(`/users/${id}`, { method: 'DELETE' });
+    return handleResponse<{ success: boolean; message: string }>(r);
   },
 
-  getOverview: async (orgId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/overview`);
-    return handleResponse<any>(r);
+  resendInvitation: async (id: string) => {
+    const r = await apiFetch(`/users/${id}/resend-invitation`, { method: 'POST' });
+    return handleResponse<{ success: boolean; message: string; user: ManagedUser }>(r);
+  },
+
+  auditLogs: async (page = 1, limit = 50) => {
+    const r = await apiFetch(`/users/audit-logs?page=${page}&limit=${limit}`);
+    return handleResponse<{ logs: any[]; page: number; limit: number }>(r);
   },
 };
 
 // ── Connection API ────────────────────────
 
 export const connectionApi = {
-  list: async (orgId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections`);
+  list: async () => {
+    const r = await apiFetch(`/connections`);
     return handleResponse<{ connections: any[] }>(r);
   },
 
-  create: async (orgId: string, data: any) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections`, {
+  create: async (data: any) => {
+    const r = await apiFetch(`/connections`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
     return handleResponse<{ connection: any }>(r);
   },
 
-  get: async (orgId: string, connId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections/${connId}`);
+  get: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}`);
     return handleResponse<{ connection: any }>(r);
   },
 
-  update: async (orgId: string, connId: string, data: any) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections/${connId}`, {
+  update: async (connId: string, data: any) => {
+    const r = await apiFetch(`/connections/${connId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
     return handleResponse<{ connection: any }>(r);
   },
 
-  delete: async (orgId: string, connId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections/${connId}`, { method: 'DELETE' });
+  delete: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  test: async (orgId: string, connId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections/${connId}/test`, { method: 'POST' });
+  test: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/test`, { method: 'POST' });
     return handleResponse<{ success: boolean; latencyMs: number }>(r);
   },
 
-  getSchema: async (orgId: string, connId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections/${connId}/schema`);
+  getSchema: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/schema`);
     return handleResponse<{ tables: any[] }>(r);
   },
 
-  syncSchema: async (orgId: string, connId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/connections/${connId}/schema/sync`, { method: 'POST' });
+  syncSchema: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/schema/sync`, { method: 'POST' });
     return handleResponse<{ success: boolean }>(r);
+  },
+
+  // ── Sharing ──────────────────────────────
+
+  /** Search Admins/Analysts that a connection can be shared with (excludes Viewers and the caller). */
+  searchShareTargets: async (q: string) => {
+    const r = await apiFetch(`/connections/share-targets?q=${encodeURIComponent(q)}`);
+    return handleResponse<{ users: any[] }>(r);
+  },
+
+  listShares: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/share`);
+    return handleResponse<{ shares: any[] }>(r);
+  },
+
+  share: async (connId: string, data: { email: string; accessLevel: 'view' | 'edit'; expiresAt?: string }) => {
+    const r = await apiFetch(`/connections/${connId}/share`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  updateShare: async (connId: string, accountId: string, data: { accessLevel: 'view' | 'edit'; expiresAt?: string }) => {
+    const r = await apiFetch(`/connections/${connId}/share/${accountId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  revokeShare: async (connId: string, accountId: string) => {
+    const r = await apiFetch(`/connections/${connId}/share/${accountId}`, { method: 'DELETE' });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  /** Remove a connection that was shared with the caller from their own workspace (does not delete it). */
+  leaveShared: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/share/me`, { method: 'DELETE' });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  // ── Auto-refresh ─────────────────────────
+
+  getRefreshSchedule: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/refresh-schedule`);
+    return handleResponse<{ schedule: any }>(r);
+  },
+
+  setRefreshSchedule: async (connId: string, data: { enabled: boolean; intervalMinutes?: number }) => {
+    const r = await apiFetch(`/connections/${connId}/refresh-schedule`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ schedule: any }>(r);
+  },
+
+  triggerRefresh: async (connId: string) => {
+    const r = await apiFetch(`/connections/${connId}/refresh-schedule/trigger`, { method: 'POST' });
+    return handleResponse<{ success: boolean; error?: string }>(r);
   },
 };
 
 // ── Chat API ──────────────────────────────
 
 export const chatApi = {
-  list: async (orgId: string, params: { connectionId?: string; comboId?: string; isArchived?: boolean }) => {
+  list: async (params: { connectionId?: string; comboId?: string; isArchived?: boolean }) => {
     // Strip undefined/null so they never appear as "key=undefined" in the URL
     const filtered: Record<string, string> = {};
     if (params.connectionId) filtered.connectionId = params.connectionId;
     if (params.comboId)      filtered.comboId      = params.comboId;
     if (params.isArchived !== undefined) filtered.isArchived = String(params.isArchived);
     const qs = new URLSearchParams(filtered).toString();
-    const r = await apiFetch(`/orgs/${orgId}/chats${qs ? `?${qs}` : ''}`);
+    const r = await apiFetch(`/chats${qs ? `?${qs}` : ''}`);
     return handleResponse<{ chats: any[] }>(r);
   },
 
-  create: async (orgId: string, data: { connectionId?: string; comboId?: string; title?: string }) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats`, {
+  create: async (data: { connectionId?: string; comboId?: string; title?: string }) => {
+    const r = await apiFetch(`/chats`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
     return handleResponse<{ chat: any }>(r);
   },
 
-  getMessages: async (orgId: string, chatId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/messages`);
+  getMessages: async (chatId: string) => {
+    const r = await apiFetch(`/chats/${chatId}/messages`);
     return handleResponse<{ messages: any[] }>(r);
   },
 
-  ask: async (orgId: string, chatId: string, prompt: string, autoExecute: boolean = true) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/ask`, {
+  ask: async (chatId: string, prompt: string, autoExecute: boolean = true) => {
+    const r = await apiFetch(`/chats/${chatId}/ask`, {
       method: 'POST',
       body: JSON.stringify({ prompt, autoExecute }),
     });
     return handleResponse<any>(r);
   },
-  executeDraft: async (orgId: string, chatId: string, executionId: string, sql: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/execute-draft`, {
+  executeDraft: async (chatId: string, executionId: string, sql: string) => {
+    const r = await apiFetch(`/chats/${chatId}/execute-draft`, {
       method: 'POST',
       body: JSON.stringify({ executionId, sql }),
     });
@@ -284,8 +399,8 @@ export const chatApi = {
    * Re-execute stored SQL for a list of execution IDs against the live DB.
    * Returns fresh rows without overwriting the stored result_preview snapshots.
    */
-  refreshMessages: async (orgId: string, chatId: string, executionIds: string[]) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/refresh-messages`, {
+  refreshMessages: async (chatId: string, executionIds: string[]) => {
+    const r = await apiFetch(`/chats/${chatId}/refresh-messages`, {
       method: 'POST',
       body: JSON.stringify({ executionIds }),
     });
@@ -304,8 +419,8 @@ export const chatApi = {
    * Re-execute stored sub-queries for a COMBO chat and return merged live rows.
    * Returns fresh rows without overwriting the stored result_preview snapshots.
    */
-  refreshComboMessages: async (orgId: string, chatId: string, executionIds: string[]) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/refresh-combo-messages`, {
+  refreshComboMessages: async (chatId: string, executionIds: string[]) => {
+    const r = await apiFetch(`/chats/${chatId}/refresh-combo-messages`, {
       method: 'POST',
       body: JSON.stringify({ executionIds }),
     });
@@ -320,31 +435,31 @@ export const chatApi = {
     }> }>(r);
   },
 
-  suggestTitle: async (orgId: string, prompt: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/suggest-title`, {
+  suggestTitle: async (prompt: string) => {
+    const r = await apiFetch(`/chats/suggest-title`, {
       method: 'POST',
       body: JSON.stringify({ prompt }),
     });
     return handleResponse<{ title: string; fallback?: boolean }>(r);
   },
 
-  archive: async (orgId: string, chatId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/archive`, { method: 'POST' });
+  archive: async (chatId: string) => {
+    const r = await apiFetch(`/chats/${chatId}/archive`, { method: 'POST' });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  unarchive: async (orgId: string, chatId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/unarchive`, { method: 'POST' });
+  unarchive: async (chatId: string) => {
+    const r = await apiFetch(`/chats/${chatId}/unarchive`, { method: 'POST' });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  delete: async (orgId: string, chatId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}`, { method: 'DELETE' });
+  delete: async (chatId: string) => {
+    const r = await apiFetch(`/chats/${chatId}`, { method: 'DELETE' });
     return handleResponse<any>(r);
   },
 
-  updateTitle: async (orgId: string, chatId: string, title: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/chats/${chatId}/title`, {
+  updateTitle: async (chatId: string, title: string) => {
+    const r = await apiFetch(`/chats/${chatId}/title`, {
       method: 'PATCH',
       body: JSON.stringify({ title }),
     });
@@ -355,13 +470,13 @@ export const chatApi = {
 // ── Dashboard API ─────────────────────────
 
 export const dashboardApi = {
-  list: async (orgId: string, params: { origin?: 'manual' | 'datasource'; contextType?: string; contextId?: string } = {}) => {
+  list: async (params: { origin?: 'manual' | 'datasource'; contextType?: string; contextId?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.origin) qs.set('origin', params.origin);
     if (params.contextType) qs.set('contextType', params.contextType);
     if (params.contextId) qs.set('contextId', params.contextId);
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
-    const r = await apiFetch(`/orgs/${orgId}/dashboards${suffix}`);
+    const r = await apiFetch(`/dashboards${suffix}`);
     const data = await handleResponse<{ dashboards: any[] }>(r);
     data.dashboards.forEach(d => {
       if (d.context_type === 'connection') d.connection_id = d.context_id;
@@ -370,7 +485,7 @@ export const dashboardApi = {
     return data;
   },
 
-  create: async (orgId: string, data: any) => {
+  create: async (data: any) => {
     let contextType = 'org_overview';
     let contextId = null;
 
@@ -390,15 +505,15 @@ export const dashboardApi = {
       // 'manual' = Dashboards module; 'datasource' = data source / combo workflow.
       origin: data.origin || 'manual',
     };
-    const r = await apiFetch(`/orgs/${orgId}/dashboards`, {
+    const r = await apiFetch(`/dashboards`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
     return handleResponse<{ dashboard: any }>(r);
   },
 
-  get: async (orgId: string, dashId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`);
+  get: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}`);
     const data = await handleResponse<{ dashboard: any; pages: any[] }>(r);
     if (data.dashboard) {
       if (data.dashboard.context_type === 'connection') {
@@ -411,48 +526,48 @@ export const dashboardApi = {
     return data;
   },
 
-  update: async (orgId: string, dashId: string, data: { name?: string; description?: string }) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`, {
+  update: async (dashId: string, data: { name?: string; description?: string }) => {
+    const r = await apiFetch(`/dashboards/${dashId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
     return handleResponse<{ dashboard: any }>(r);
   },
 
-  delete: async (orgId: string, dashId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}`, { method: 'DELETE' });
+  delete: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}`, { method: 'DELETE' });
     return handleResponse<any>(r);
   },
 
-  save: async (orgId: string, dashId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/publish`, { method: 'POST' });
+  save: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/publish`, { method: 'POST' });
     return handleResponse<{ dashboard: any }>(r);
   },
 
-  updateLayout: async (orgId: string, dashId: string, layout: any[]) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/layout`, {
+  updateLayout: async (dashId: string, layout: any[]) => {
+    const r = await apiFetch(`/dashboards/${dashId}/layout`, {
       method: 'POST',
       body: JSON.stringify({ layout }),
     });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  addPage: async (orgId: string, dashId: string, name: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages`, {
+  addPage: async (dashId: string, name: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages`, {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
     return handleResponse<{ page: any }>(r);
   },
 
-  deletePage: async (orgId: string, dashId: string, pageId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}`, { method: 'DELETE' });
+  deletePage: async (dashId: string, pageId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);
   },
 
   // Rename a page (or set default). Backend validates non-empty + uniqueness.
-  updatePage: async (orgId: string, dashId: string, pageId: string, data: { name?: string; isDefault?: boolean }) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}`, {
+  updatePage: async (dashId: string, pageId: string, data: { name?: string; isDefault?: boolean }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     });
@@ -461,15 +576,15 @@ export const dashboardApi = {
 
   // Persist a new page order. `order` is the full array of page IDs in the
   // desired sequence.
-  reorderPages: async (orgId: string, dashId: string, order: string[]) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/reorder`, {
+  reorderPages: async (dashId: string, order: string[]) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/reorder`, {
       method: 'PUT',
       body: JSON.stringify({ order }),
     });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  addWidget: async (orgId: string, dashId: string, pageId: string, data: any) => {
+  addWidget: async (dashId: string, pageId: string, data: any) => {
     const payload = {
       widgetType: data.widget_type || 'table',
       title: data.title,
@@ -486,17 +601,21 @@ export const dashboardApi = {
         result_rows: data.resultRows,
         result_columns: data.resultColumns,
         ui_hint: data.uiHint,
+        // Static content for non-query widgets (Free Text / Image cards) — optional, additive.
+        ...(data.textContent !== undefined ? { text_content: data.textContent } : {}),
+        ...(data.imageUrl !== undefined ? { image_url: data.imageUrl } : {}),
+        ...(data.imageCaption !== undefined ? { image_caption: data.imageCaption } : {}),
       }
     };
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets`, {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
     return handleResponse<{ widget: any }>(r);
   },
 
-  deleteWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, { method: 'DELETE' });
+  deleteWidget: async (dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);
   },
 
@@ -504,15 +623,15 @@ export const dashboardApi = {
    * Re-execute a widget's query against the live database via the backend's
    * WidgetExecutionService. Pass forceRefresh=true to bypass the Redis cache.
    */
-  executeWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string, forceRefresh = false) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/execute`, {
+  executeWidget: async (dashId: string, pageId: string, widgetId: string, forceRefresh = false) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/execute`, {
       method: 'POST',
       body: JSON.stringify({ forceRefresh }),
     });
     return handleResponse<{ rows: any[]; columns: string[]; executionTimeMs: number; status: string; isCached?: boolean }>(r);
   },
 
-  updateWidget: async (orgId: string, dashId: string, pageId: string, widgetId: string, data: any) => {
+  updateWidget: async (dashId: string, pageId: string, widgetId: string, data: any) => {
     const payload = {
       title: data.title,
       widget_type: data.widget_type,
@@ -523,22 +642,30 @@ export const dashboardApi = {
         result_rows: data.result_rows,
         result_columns: data.result_columns,
         ui_hint: data.ui_hint,
+        // Static content for non-query widgets (Free Text / Image cards) — optional, additive.
+        ...(data.text_content !== undefined ? { text_content: data.text_content } : {}),
+        ...(data.image_url !== undefined ? { image_url: data.image_url } : {}),
+        ...(data.image_caption !== undefined ? { image_caption: data.image_caption } : {}),
       },
+      // Client-side chart/aggregation settings — omitted entirely (not even `{}`)
+      // unless explicitly provided, so saves that don't touch it leave the
+      // stored config untouched (backend treats a missing key as "no change").
+      ...(data.visualization_config !== undefined ? { visualizationConfig: data.visualization_config } : {}),
     };
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}`, {
       method: 'PUT', body: JSON.stringify(payload),
     });
     return handleResponse<{ widget: any }>(r);
   },
 
-  inspect: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/inspect`);
+  inspect: async (dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/inspect`);
     return handleResponse<{ execution: any }>(r);
   },
 
   // AI assist — suggest an analytics question for an empty widget prompt.
-  suggestQuestion: async (orgId: string, dashId: string, pageId: string, widgetId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/suggest-question`, {
+  suggestQuestion: async (dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/suggest-question`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
@@ -546,47 +673,47 @@ export const dashboardApi = {
   },
 
   // AI assist — rephrase a user prompt into a clearer analytical request.
-  improvePrompt: async (orgId: string, dashId: string, pageId: string, widgetId: string, prompt: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/improve-prompt`, {
+  improvePrompt: async (dashId: string, pageId: string, widgetId: string, prompt: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/improve-prompt`, {
       method: 'POST',
       body: JSON.stringify({ prompt }),
     });
     return handleResponse<{ prompt: string }>(r);
   },
 
-  listFilters: async (orgId: string, dashId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/filters`);
+  listFilters: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/filters`);
     return handleResponse<{ filters: any[] }>(r);
   },
 
-  addFilter: async (orgId: string, dashId: string, data: any) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/filters`, {
+  addFilter: async (dashId: string, data: any) => {
+    const r = await apiFetch(`/dashboards/${dashId}/filters`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
     return handleResponse<{ filter: any }>(r);
   },
 
-  removeFilter: async (orgId: string, dashId: string, filterId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/filters/${filterId}`, { method: 'DELETE' });
+  removeFilter: async (dashId: string, filterId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/filters/${filterId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  listVersions: async (orgId: string, dashId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/versions`);
+  listVersions: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/versions`);
     return handleResponse<{ versions: any[] }>(r);
   },
 
-  saveVersion: async (orgId: string, dashId: string, message?: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/versions`, {
+  saveVersion: async (dashId: string, message?: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/versions`, {
       method: 'POST',
       body: JSON.stringify({ message }),
     });
     return handleResponse<{ version: any }>(r);
   },
 
-  restoreVersion: async (orgId: string, dashId: string, versionId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/dashboards/${dashId}/versions/${versionId}/restore`, {
+  restoreVersion: async (dashId: string, versionId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/versions/${versionId}/restore`, {
       method: 'POST',
     });
     return handleResponse<{ success: boolean }>(r);
@@ -596,39 +723,39 @@ export const dashboardApi = {
 // ── Combo API ──────────────────────────────
 
 export const comboApi = {
-  list: async (orgId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/combos`);
+  list: async () => {
+    const r = await apiFetch(`/combos`);
     return handleResponse<{ combos: any[] }>(r);
   },
 
-  get: async (orgId: string, comboId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/combos/${comboId}`);
+  get: async (comboId: string) => {
+    const r = await apiFetch(`/combos/${comboId}`);
     return handleResponse<{ combo: any }>(r);
   },
 
-  create: async (orgId: string, data: { name: string; description?: string; connectionIds: string[] }) => {
-    const r = await apiFetch(`/orgs/${orgId}/combos`, {
+  create: async (data: { name: string; description?: string; connectionIds: string[] }) => {
+    const r = await apiFetch(`/combos`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
     return handleResponse<{ combo: any }>(r);
   },
 
-  delete: async (orgId: string, comboId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/combos/${comboId}`, { method: 'DELETE' });
+  delete: async (comboId: string) => {
+    const r = await apiFetch(`/combos/${comboId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);
   },
 
-  query: async (orgId: string, comboId: string, prompt: string, chatId?: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/combos/${comboId}/query`, {
+  query: async (comboId: string, prompt: string, chatId?: string) => {
+    const r = await apiFetch(`/combos/${comboId}/query`, {
       method: 'POST',
       body: JSON.stringify({ prompt, chatId }),
     });
     return handleResponse<any>(r);
   },
 
-  getMergedSchema: async (orgId: string, comboId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/combos/${comboId}/schema`);
+  getMergedSchema: async (comboId: string) => {
+    const r = await apiFetch(`/combos/${comboId}/schema`);
     return handleResponse<{ schema: any[] }>(r);
   },
 };
@@ -768,31 +895,31 @@ export async function executeDashboardWidget(sessionId: string, prompt: string):
 // ── Card API ─────────────────────────────────
 
 export const cardApi = {
-  list: async (orgId: string, params?: Record<string, any>) => {
+  list: async (params?: Record<string, any>) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-    const r = await apiFetch(`/orgs/${orgId}/cards${qs}`);
+    const r = await apiFetch(`/cards${qs}`);
     return handleResponse<{ cards: any[], total: number }>(r);
   },
-  create: async (orgId: string, data: any) => {
-    const r = await apiFetch(`/orgs/${orgId}/cards`, {
+  create: async (data: any) => {
+    const r = await apiFetch(`/cards`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
     return handleResponse<{ card: any }>(r);
   },
-  get: async (orgId: string, cardId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/cards/${cardId}`);
+  get: async (cardId: string) => {
+    const r = await apiFetch(`/cards/${cardId}`);
     return handleResponse<{ card: any }>(r);
   },
-  update: async (orgId: string, cardId: string, data: any) => {
-    const r = await apiFetch(`/orgs/${orgId}/cards/${cardId}`, {
+  update: async (cardId: string, data: any) => {
+    const r = await apiFetch(`/cards/${cardId}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
     return handleResponse<{ card: any }>(r);
   },
-  publish: async (orgId: string, cardId: string) => {
-    const r = await apiFetch(`/orgs/${orgId}/cards/${cardId}/publish`, {
+  publish: async (cardId: string) => {
+    const r = await apiFetch(`/cards/${cardId}/publish`, {
       method: 'POST',
     });
     return handleResponse<{ card: any }>(r);

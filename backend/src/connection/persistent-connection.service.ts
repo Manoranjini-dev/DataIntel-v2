@@ -1,18 +1,19 @@
 // ──────────────────────────────────────────────
 // Persistent Connection Service
-// Org-scoped CRUD + schema sync + health checks
+// Account-scoped CRUD + schema sync + health checks
 // ──────────────────────────────────────────────
 
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
-import { OrgService } from '../org/org.service';
 import { MCPService } from '../mcp/mcp.service';
 import { encrypt, decrypt } from '../common/utils/encryption';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/persistent-connection.dto';
 import { SafeAccount } from '../auth/auth.service';
 import { ConnectorType } from '../common/types';
+import { ConnectionPermissionsService } from './connection-permissions.service';
+import { CacheService, CacheKeys } from '../cache/cache.service';
 
 @Injectable()
 export class PersistentConnectionService {
@@ -22,47 +23,77 @@ export class PersistentConnectionService {
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
-    private readonly orgService: OrgService,
     private readonly mcpService: MCPService,
     private readonly config: ConfigService,
+    private readonly connectionPermissions: ConnectionPermissionsService,
+    private readonly cache: CacheService,
   ) {
     this.encKey = this.config.getOrThrow('CREDENTIAL_ENCRYPTION_KEY');
   }
 
-  /** List all connections for an org (user must be a member) */
-  async list(orgId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
+  /**
+   * List the connections a user can access: ones they own, ones shared with
+   * them, or — for platform Admins — every connection (Admin always has
+   * full visibility regardless of ownership).
+   */
+  async list(user: SafeAccount) {
+    if (user.role === 'ADMIN') {
+      return this.db.queryMany(
+        `SELECT id, name, description, connector_type, host, port,
+                database_name, username, ssl_enabled, connection_options,
+                status, last_health_check, last_health_ok, schema_synced_at,
+                created_by, created_at, updated_at,
+                (created_by = $1) AS is_owner, 'owner' AS access_level
+         FROM datasource_connections
+         ORDER BY created_at DESC`,
+        [user.id],
+      );
+    }
+
     return this.db.queryMany(
-      `SELECT id, org_id, name, description, connector_type, host, port,
-              database_name, username, ssl_enabled, connection_options,
-              status, last_health_check, last_health_ok, schema_synced_at,
-              created_by, created_at, updated_at
-       FROM datasource_connections
-       WHERE org_id = $1
-       ORDER BY created_at DESC`,
-      [orgId],
+      `SELECT dc.id, dc.name, dc.description, dc.connector_type, dc.host, dc.port,
+              dc.database_name, dc.username, dc.ssl_enabled, dc.connection_options,
+              dc.status, dc.last_health_check, dc.last_health_ok, dc.schema_synced_at,
+              dc.created_by, dc.created_at, dc.updated_at,
+              (dc.created_by = $1) AS is_owner,
+              CASE
+                WHEN dc.created_by = $1 THEN 'owner'
+                WHEN p.can_edit THEN 'edit'
+                ELSE 'view'
+              END AS access_level
+       FROM datasource_connections dc
+       LEFT JOIN datasource_permissions p
+         ON p.connection_id = dc.id AND p.account_id = $1
+            AND (p.expires_at IS NULL OR p.expires_at > NOW())
+       WHERE dc.created_by = $1 OR p.account_id = $1
+       ORDER BY dc.created_at DESC`,
+      [user.id],
     );
   }
 
-  /** Get a single connection */
-  async get(orgId: string, connId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
-    const conn = await this.db.queryOne(
-      `SELECT id, org_id, name, description, connector_type, host, port,
+  /** Get a single connection, annotated with the caller's access level */
+  async get(connId: string, accountId: string) {
+    const level = await this.connectionPermissions.getAccessLevel(connId, accountId);
+    if (!level) throw new ForbiddenException('You do not have access to this connection');
+
+    const conn = await this.db.queryOne<any>(
+      `SELECT id, name, description, connector_type, host, port,
               database_name, username, ssl_enabled, connection_options,
               status, last_health_check, last_health_ok, schema_synced_at,
               created_by, created_at, updated_at
        FROM datasource_connections
-       WHERE id = $1 AND org_id = $2`,
-      [connId, orgId],
+       WHERE id = $1`,
+      [connId],
     );
     if (!conn) throw new NotFoundException('Connection not found');
-    return conn;
+    return { ...conn, access_level: level, is_owner: conn.created_by === accountId };
   }
 
   /** Create a persisted connection with encrypted password */
-  async create(orgId: string, user: SafeAccount, dto: CreateConnectionDto) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
+  async create(user: SafeAccount, dto: CreateConnectionDto) {
+    if (user.role === 'VIEWER') {
+      throw new ForbiddenException('Viewers cannot create data source connections');
+    }
 
     const encryptedPassword = dto.password ? encrypt(dto.password, this.encKey) : encrypt('', this.encKey);
 
@@ -74,24 +105,30 @@ export class PersistentConnectionService {
       bigqueryKeyJson: dto.bigqueryKeyJson,
     };
 
+    const nextRefreshAt = new Date(Date.now() + 60 * 60_000);
+
     const conn = await this.db.queryOne(
       `INSERT INTO datasource_connections
-         (org_id, name, description, connector_type, host, port, database_name,
-          username, encrypted_password, ssl_enabled, connection_options, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       RETURNING id, org_id, name, description, connector_type, host, port,
-                 database_name, username, ssl_enabled, status, created_at`,
+         (name, description, connector_type, host, port, database_name,
+          username, encrypted_password, ssl_enabled, connection_options, created_by,
+          refresh_enabled, refresh_interval_minutes, next_refresh_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       RETURNING id, name, description, connector_type, host, port,
+                 database_name, username, ssl_enabled, status, created_by, created_at`,
       [
-        orgId, dto.name, dto.description || null, dto.connectorType,
+        dto.name, dto.description || null, dto.connectorType,
         dto.host || '', dto.port || 0, dto.databaseName || '', dto.username || '', encryptedPassword,
         dto.sslEnabled ?? dto.ssl ?? false,
         JSON.stringify(connectionOptions),
         user.id,
+        true,
+        60,
+        nextRefreshAt,
       ],
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'connection_created',
       resourceType: 'connection', resourceId: conn!.id,
       details: { name: dto.name, connectorType: dto.connectorType, host: dto.host },
@@ -101,9 +138,9 @@ export class PersistentConnectionService {
   }
 
   /** Update connection (partial) */
-  async update(orgId: string, connId: string, user: SafeAccount, dto: UpdateConnectionDto) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
-    const existing = await this.get(orgId, connId, user.id);
+  async update(connId: string, user: SafeAccount, dto: UpdateConnectionDto) {
+    await this.connectionPermissions.requireAction(connId, user.id, 'edit');
+    const existing = await this.get(connId, user.id);
 
     const encryptedPassword = dto.password
       ? encrypt(dto.password, this.encKey)
@@ -111,10 +148,10 @@ export class PersistentConnectionService {
 
     let mergedOptions = undefined;
     if (dto.connectionOptions || dto.databricksHttpPath || dto.bigqueryProjectId || dto.bigqueryDatasetId || dto.bigqueryKeyJson) {
-      const currentOptions = typeof existing.connection_options === 'string' 
-        ? JSON.parse(existing.connection_options) 
+      const currentOptions = typeof existing.connection_options === 'string'
+        ? JSON.parse(existing.connection_options)
         : (existing.connection_options || {});
-      
+
       mergedOptions = JSON.stringify({
         ...currentOptions,
         ...(dto.connectionOptions || {}),
@@ -127,23 +164,23 @@ export class PersistentConnectionService {
 
     const conn = await this.db.queryOne(
       `UPDATE datasource_connections SET
-         name = COALESCE($3, name),
-         description = COALESCE($4, description),
-         host = COALESCE($5, host),
-         port = COALESCE($6, port),
-         username = COALESCE($7, username),
-         encrypted_password = COALESCE($8, encrypted_password),
-         ssl_enabled = COALESCE($9, ssl_enabled),
-         connection_options = COALESCE($10, connection_options),
+         name = COALESCE($2, name),
+         description = COALESCE($3, description),
+         host = COALESCE($4, host),
+         port = COALESCE($5, port),
+         username = COALESCE($6, username),
+         encrypted_password = COALESCE($7, encrypted_password),
+         ssl_enabled = COALESCE($8, ssl_enabled),
+         connection_options = COALESCE($9, connection_options),
          updated_at = NOW()
-       WHERE id = $1 AND org_id = $2
+       WHERE id = $1
        RETURNING id, name, host, port, status, updated_at`,
-      [connId, orgId, dto.name, dto.description, dto.host, dto.port,
+      [connId, dto.name, dto.description, dto.host, dto.port,
        dto.username, encryptedPassword, dto.sslEnabled ?? dto.ssl, mergedOptions],
     );
 
     await this.audit.log({
-      orgId, accountId: user.id, eventType: 'connection_updated',
+      accountId: user.id, eventType: 'connection_updated',
       resourceType: 'connection', resourceId: connId, details: { name: dto.name },
     });
 
@@ -167,19 +204,19 @@ export class PersistentConnectionService {
    * are intentionally preserved — they are independent assets owned by the
    * Dashboards module and are not synchronized with this connection.
    *
-   * Permission: editors and above may disconnect/delete a connection.
+   * Permission: only the connection owner may disconnect/delete it.
    */
-  async delete(orgId: string, connId: string, user: SafeAccount) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
-    await this.get(orgId, connId, user.id);
+  async delete(connId: string, user: SafeAccount) {
+    await this.connectionPermissions.requireAction(connId, user.id, 'manage');
+    await this.get(connId, user.id);
 
     await this.db.transaction(async (query) => {
       // 1. Identify the data-source dashboards owned by this connection.
       const dashRows = await query(
         `SELECT id FROM dashboards
-         WHERE org_id = $1 AND origin = 'datasource'
-           AND context_type = 'connection' AND context_id = $2`,
-        [orgId, connId],
+         WHERE origin = 'datasource'
+           AND context_type = 'connection' AND context_id = $1`,
+        [connId],
       );
       const dashIds: string[] = dashRows.rows.map((r: any) => r.id);
 
@@ -188,11 +225,10 @@ export class PersistentConnectionService {
       //    deleted dashboards and those addressed at the connection directly.
       await query(
         `DELETE FROM dashboard_generation_jobs
-         WHERE org_id = $1
-           AND ( (context->>'contextId') = $2
-                 OR (context->>'datasourceContextId') = $2
-                 OR dashboard_id = ANY($3::uuid[]) )`,
-        [orgId, connId, dashIds],
+         WHERE ( (context->>'contextId') = $1
+                 OR (context->>'datasourceContextId') = $1
+                 OR dashboard_id = ANY($2::uuid[]) )`,
+        [connId, dashIds],
       );
 
       // 3. Remove widget execution logs for those dashboards (no FK cascade).
@@ -214,34 +250,44 @@ export class PersistentConnectionService {
       //    chk_chat_scope CHECK constraint — so chats must be deleted explicitly
       //    BEFORE the connection row is removed.)
       await query(
-        `DELETE FROM query_executions WHERE org_id = $1 AND connection_id = $2`,
-        [orgId, connId],
+        `DELETE FROM query_executions WHERE connection_id = $1`,
+        [connId],
       );
       await query(
-        `DELETE FROM chats WHERE org_id = $1 AND connection_id = $2`,
-        [orgId, connId],
+        `DELETE FROM chats WHERE connection_id = $1`,
+        [connId],
       );
 
       // 6. Finally remove the connection itself. Schemas, tables, columns,
       //    health logs and credential rotations cascade via their FK.
       await query(
-        `DELETE FROM datasource_connections WHERE id = $1 AND org_id = $2`,
-        [connId, orgId],
+        `DELETE FROM datasource_connections WHERE id = $1`,
+        [connId],
       );
     });
 
+    // Drop any cached state keyed by this connection so deleted connections
+    // never resurface via stale health/session/schema entries.
+    await this.cache.del(
+      CacheKeys.connHealth(connId),
+      CacheKeys.connSession(connId),
+      CacheKeys.connSchema(connId),
+      CacheKeys.schemaSyncLock(connId),
+      CacheKeys.schemaSyncStatus(connId),
+    );
+
     await this.audit.log({
-      orgId, accountId: user.id, eventType: 'connection_deleted',
+      accountId: user.id, eventType: 'connection_deleted',
       resourceType: 'connection', resourceId: connId,
     });
   }
 
   /** Test connection health and update status */
-  async testConnection(orgId: string, connId: string, user: SafeAccount) {
-    await this.orgService.requireMember(orgId, user.id);
+  async testConnection(connId: string, user: SafeAccount) {
+    await this.connectionPermissions.requireAction(connId, user.id, 'view');
     const conn = await this.db.queryOne<any>(
-      'SELECT * FROM datasource_connections WHERE id = $1 AND org_id = $2',
-      [connId, orgId],
+      'SELECT * FROM datasource_connections WHERE id = $1',
+      [connId],
     );
     if (!conn) throw new NotFoundException('Connection not found');
 
@@ -250,6 +296,8 @@ export class PersistentConnectionService {
       host: conn.host, port: conn.port, username: conn.username,
       password, database: conn.database_name,
       connectorType: conn.connector_type as ConnectorType,
+      ssl: conn.ssl_enabled,
+      connectionOptions: typeof conn.connection_options === 'string' ? JSON.parse(conn.connection_options) : (conn.connection_options || {}),
     };
 
     const start = Date.now();
@@ -268,13 +316,13 @@ export class PersistentConnectionService {
 
     await this.db.query(
       `UPDATE datasource_connections
-       SET status = $3, last_health_check = NOW(), last_health_ok = $4, updated_at = NOW()
-       WHERE id = $1 AND org_id = $2`,
-      [connId, orgId, newStatus, success],
+       SET status = $2, last_health_check = NOW(), last_health_ok = $3, updated_at = NOW()
+       WHERE id = $1`,
+      [connId, newStatus, success],
     );
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: success ? 'connection_test_success' : 'connection_test_failed',
       resourceType: 'connection', resourceId: connId,
       details: { latencyMs, error: errorMsg },
@@ -284,11 +332,40 @@ export class PersistentConnectionService {
   }
 
   /** Sync schema from live datasource into normalized tables */
-  async syncSchema(orgId: string, connId: string, user: SafeAccount) {
-    await this.orgService.requireRole(orgId, user.id, 'editor');
+  async syncSchema(connId: string, user: SafeAccount) {
+    await this.connectionPermissions.requireAction(connId, user.id, 'edit');
+    await this.performSchemaSync(connId);
+
+    await this.audit.log({
+      accountId: user.id,
+      eventType: 'connection_schema_synced',
+      resourceType: 'connection', resourceId: connId,
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * Re-sync schema for a connection without an authenticated user — used by
+   * the auto-refresh scheduler. Returns a status instead of throwing so the
+   * caller can update refresh bookkeeping regardless of outcome.
+   */
+  async refreshNow(connId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.performSchemaSync(connId);
+      return { success: true };
+    } catch (err: any) {
+      const message = err?.message || 'Refresh failed';
+      this.logger.warn(`Auto-refresh failed for connection ${connId}: ${message}`);
+      return { success: false, error: message };
+    }
+  }
+
+  /** Core schema-sync logic shared by syncSchema() and refreshNow() */
+  private async performSchemaSync(connId: string): Promise<void> {
     const conn = await this.db.queryOne<any>(
-      'SELECT * FROM datasource_connections WHERE id = $1 AND org_id = $2',
-      [connId, orgId],
+      'SELECT * FROM datasource_connections WHERE id = $1 AND deleted_at IS NULL',
+      [connId],
     );
     if (!conn) throw new NotFoundException('Connection not found');
 
@@ -298,6 +375,8 @@ export class PersistentConnectionService {
       host: conn.host, port: conn.port, username: conn.username,
       password, database: conn.database_name,
       connectorType: conn.connector_type as ConnectorType,
+      ssl: conn.ssl_enabled,
+      connectionOptions: typeof conn.connection_options === 'string' ? JSON.parse(conn.connection_options) : (conn.connection_options || {}),
     });
 
     // Persist schema into normalized tables
@@ -343,15 +422,15 @@ export class PersistentConnectionService {
 
         const colValues: any[] = [];
         const colPlaceholders: string[] = [];
-        
+
         for (const table of tables) {
           const tableId = tableIdMap.get(table.name);
           if (!tableId) continue;
-          
+
           for (let i = 0; i < (table.columns || []).length; i++) {
             const col = table.columns[i];
             const fk = (table.foreignKeys || []).find(f => f.columnName === col.name);
-            
+
             colPlaceholders.push(''); // placeholder to maintain array length
             colValues.push(
               tableId, connId, col.name, col.type, col.nullable ?? true,
@@ -364,11 +443,11 @@ export class PersistentConnectionService {
         if (colValues.length > 0) {
           const colsPerChunk = 5000;
           const paramsPerCol = 11;
-          
+
           for (let i = 0; i < colPlaceholders.length; i += colsPerChunk) {
             const chunkEnd = Math.min(i + colsPerChunk, colPlaceholders.length);
             const chunkValues = colValues.slice(i * paramsPerCol, chunkEnd * paramsPerCol);
-            
+
             const chunkPlaceholders = [];
             for (let j = 0; j < chunkEnd - i; j++) {
               const base = j * paramsPerCol;
@@ -395,12 +474,11 @@ export class PersistentConnectionService {
     });
 
     this.logger.log(`Schema synced for connection ${connId}`);
-    return { success: true };
   }
 
   /** Get persisted schema for a connection */
-  async getSchema(orgId: string, connId: string, accountId: string) {
-    await this.orgService.requireMember(orgId, accountId);
+  async getSchema(connId: string, accountId: string) {
+    await this.connectionPermissions.requireAction(connId, accountId, 'view');
 
     const schemas = await this.db.queryMany(
       'SELECT * FROM connection_schemas WHERE connection_id = $1',
@@ -442,8 +520,10 @@ export class PersistentConnectionService {
       username: string;
       database_name: string;
       connector_type: string;
+      ssl_enabled: boolean;
+      connection_options: string;
     }>(
-      'SELECT encrypted_password, host, port, username, database_name, connector_type FROM datasource_connections WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT encrypted_password, host, port, username, database_name, connector_type, ssl_enabled, connection_options FROM datasource_connections WHERE id = $1 AND deleted_at IS NULL',
       [connId],
     );
     if (!conn) throw new Error('Connection not found');
@@ -451,6 +531,7 @@ export class PersistentConnectionService {
     const { decrypt } = await import('../common/utils/encryption');
     const password = decrypt(conn.encrypted_password, this.encKey);
 
+    const connOptions = typeof conn.connection_options === 'string' ? JSON.parse(conn.connection_options) : (conn.connection_options || {});
     await this.mcpService.testConnection({
       host: conn.host,
       port: conn.port,
@@ -458,14 +539,16 @@ export class PersistentConnectionService {
       password,
       database: conn.database_name,
       connectorType: conn.connector_type as ConnectorType,
+      ssl: conn.ssl_enabled,
+      connectionOptions: connOptions,
     });
   }
 
-  /** Rotate connection credentials */
-  async rotateCredentials(orgId: string, connId: string, user: SafeAccount, newPassword?: string): Promise<void> {
-    await this.orgService.requireRole(orgId, user.id, 'admin');
+  /** Rotate connection credentials (owner only — sensitive) */
+  async rotateCredentials(connId: string, user: SafeAccount, newPassword?: string): Promise<void> {
+    await this.connectionPermissions.requireAction(connId, user.id, 'manage');
 
-    const conn = await this.get(orgId, connId, user.id);
+    await this.get(connId, user.id);
 
     // If newPassword is provided, encrypt and update it.
     // If not, we might re-encrypt the existing password with a new encryption key,
@@ -478,8 +561,8 @@ export class PersistentConnectionService {
 
     await this.db.transaction(async (query) => {
       await query(
-        'UPDATE datasource_connections SET encrypted_password = $1, updated_at = NOW() WHERE id = $2 AND org_id = $3',
-        [encryptedPassword, connId, orgId]
+        'UPDATE datasource_connections SET encrypted_password = $1, updated_at = NOW() WHERE id = $2',
+        [encryptedPassword, connId]
       );
 
       await query(
@@ -490,7 +573,7 @@ export class PersistentConnectionService {
     });
 
     await this.audit.log({
-      orgId, accountId: user.id,
+      accountId: user.id,
       eventType: 'connection_credentials_rotated',
       resourceType: 'connection', resourceId: connId,
     });
