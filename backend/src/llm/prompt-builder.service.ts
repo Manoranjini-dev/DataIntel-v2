@@ -49,7 +49,7 @@ ABSOLUTE RULES — VIOLATION MEANS REJECTION:
 4. No SQL comments (—, /*, #)
 5. No UNION, INTERSECT, or EXCEPT
 6. No subquery depth > 2 levels
-7. All table/column names MUST exist in the provided schema
+7. All table/column names MUST exist in the provided schema EXACTLY as spelled. Do NOT pluralize, singularize, or alter table names. If the schema says "appointment", you MUST use "appointment".
 8. All JOINs need explicit ON clauses aligned to schema foreign keys
 9. No Cartesian joins
 10. For MySQL, NEVER use LIMIT inside IN, ALL, ANY, or SOME subqueries. Use JOINs or derived tables instead.

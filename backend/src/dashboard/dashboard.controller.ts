@@ -34,7 +34,7 @@ export class DashboardController {
     @Query('status') status?: string,
     @Query('origin') origin?: string,
   ) {
-    const dashboards = await this.builder.listDashboards(user.id, { contextType, contextId, status, origin });
+    const dashboards = await this.builder.listDashboards(user.id, { contextType, contextId, status, origin, requesterRole: user.role });
     return { dashboards };
   }
 
@@ -46,23 +46,19 @@ export class DashboardController {
   ) {
     const dashboard = await this.builder.createDashboard(user, dto);
 
-    // Fully-automated dashboard scaffolding: seed Page 1 with 5 intelligent
-    // default analytical cards (KPI, trend, comparison, distribution,
-    // correlation) based on the connected datasource. Each widget is validated
-    // with a live query before creation — no widget is created unless it returns
-    // real data. Layout is saved automatically. Best-effort: failure here never
-    // blocks dashboard creation.
     if (dto.origin === 'manual' && (dto.contextType === 'connection' || dto.contextType === 'combo') && dto.contextId) {
+      // Datasource dashboard: seed placeholder cards synchronously so the user
+      // immediately sees a populated dashboard, then fire AI card generation in
+      // the background. Previously this awaited seedDefaultCards which blocked
+      // for 30-60s (LLM + live queries), causing the create request to time out
+      // and the user to see an empty dashboard.
       const pages = await this.builder.listPages(dashboard.id, user.id);
       const pageId = pages[0]?.id;
       if (pageId) {
-        const seeded = await this.defaultCards.seedDefaultCards(
-          user, dashboard.id, pageId, dto.contextType, dto.contextId,
-        );
-
-        if (seeded.length > 0) {
-          // Save the layout so positions are persisted
-          const layoutItems = (seeded as any[]).map((w: any) => ({
+        // Step 1 — synchronous: create 4 placeholder cards so the UI is not empty.
+        const placeholders = await this.defaultCards.seedPlaceholderCards(user, dashboard.id, pageId);
+        if (placeholders && placeholders.length > 0) {
+          const layoutItems = (placeholders as any[]).map((w: any) => ({
             widgetId: w.id,
             gridX: w.grid_x ?? 0,
             gridY: w.grid_y ?? 0,
@@ -70,28 +66,60 @@ export class DashboardController {
             gridH: w.grid_h ?? 4,
           }));
           await this.builder.updateLayout(dashboard.id, user, layoutItems).catch(() => undefined);
-
-          // Save an initial version so the dashboard is ready without any user action
-          await this.builder
-            .saveVersion(dashboard.id, user, 'Initial auto-generated dashboard')
-            .catch(() => undefined);
-
-          // Fire async re-execution for any widget that may still have no pre-loaded data
-          // (best-effort background refresh — does not block the API response)
-          for (const w of seeded as any[]) {
-            this.executionService
-              .executeSync(w.id, user, false)
-              .catch(() => undefined);
-          }
         }
+
+        // Step 2 — background: replace placeholders with AI-generated insight cards.
+        // We capture the placeholder IDs so the AI seeding can clean them up first.
+        const placeholderIds = (placeholders as any[]).map((w: any) => w.id);
+
+        setImmediate(async () => {
+          try {
+            // Remove the placeholder widgets before seeding AI cards so we don't
+            // end up with 8 widgets (4 placeholders + 4 AI cards).
+            for (const widgetId of placeholderIds) {
+              await this.builder
+                .removeWidget(widgetId, pageId, user)
+                .catch(() => undefined);
+            }
+
+            const seeded = await this.defaultCards.seedDefaultCards(
+              user, dashboard.id, pageId, dto.contextType as 'connection' | 'combo', dto.contextId!,
+            );
+
+            if (seeded.length > 0) {
+              const layoutItems = (seeded as any[]).map((w: any) => ({
+                widgetId: w.id,
+                gridX: w.grid_x ?? 0,
+                gridY: w.grid_y ?? 0,
+                gridW: w.grid_w ?? 6,
+                gridH: w.grid_h ?? 4,
+              }));
+              await this.builder.updateLayout(dashboard.id, user, layoutItems).catch(() => undefined);
+              await this.builder
+                .saveVersion(dashboard.id, user, 'Initial auto-generated dashboard')
+                .catch(() => undefined);
+
+              // Background widget refresh to pre-populate results
+              for (const w of seeded as any[]) {
+                this.executionService.executeSync(w.id, user, false).catch(() => undefined);
+              }
+            }
+          } catch (e: any) {
+            // Log but never crash — dashboard was already created and user is on the page
+            const { Logger } = await import('@nestjs/common');
+            new Logger('DashboardController').error(
+              `Background AI card seeding failed for dashboard ${dashboard.id}: ${e?.message}`,
+              e?.stack,
+            );
+          }
+        });
       }
     } else if (dto.origin === 'manual') {
+      // No data source — seed static placeholders synchronously (fast, no LLM).
       const pages = await this.builder.listPages(dashboard.id, user.id);
       const pageId = pages[0]?.id;
       if (pageId) {
-        const seeded = await this.defaultCards.seedPlaceholderCards(
-          user, dashboard.id, pageId
-        );
+        const seeded = await this.defaultCards.seedPlaceholderCards(user, dashboard.id, pageId);
         if (seeded && seeded.length > 0) {
           const layoutItems = (seeded as any[]).map((w: any) => ({
             widgetId: w.id,
@@ -111,6 +139,7 @@ export class DashboardController {
     return { dashboard };
   }
 
+
   // ── Sharing (share-targets must be before :dashId to avoid param collision) ──
 
   @Get('share-targets')
@@ -124,13 +153,13 @@ export class DashboardController {
   }
 
   @Get(':dashId/shares')
-  @ApiOperation({ summary: 'List users a dashboard is shared with' })
+  @ApiOperation({ summary: 'List users a dashboard is shared with (includes owner)' })
   async listShares(
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const shares = await this.permissions.listShares(dashId, user.id);
-    return { shares };
+    const { shares, owner } = await this.permissions.listShares(dashId, user.id);
+    return { shares, owner };
   }
 
   @Post(':dashId/shares')
@@ -175,7 +204,7 @@ export class DashboardController {
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
   ) {
-    const dashboard = await this.builder.getDashboard(dashId, user.id);
+    const dashboard = await this.builder.getDashboard(dashId, user.id, user.role);
     const pages = await this.builder.listPages(dashId, user.id);
     const pagesWithWidgets = await Promise.all(pages.map(async p => {
       const widgets = await this.builder.listWidgets(p.id, user.id);
@@ -205,6 +234,18 @@ export class DashboardController {
     const dashboard = await this.builder.publishDashboard(dashId, user);
     return { dashboard };
   }
+
+  @Post(':dashId/unpublish')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revert published dashboard back to draft status' })
+  async unpublish(
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    const dashboard = await this.builder.unpublishDashboard(dashId, user);
+    return { dashboard };
+  }
+
 
   @Delete(':dashId')
   @HttpCode(HttpStatus.NO_CONTENT)

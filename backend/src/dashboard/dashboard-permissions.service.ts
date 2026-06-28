@@ -31,19 +31,45 @@ export class DashboardPermissionsService {
     }
   }
 
-  /** List all active shares for a dashboard (owner only) */
-  async listShares(dashId: string, requesterId: string) {
-    await this.requireOwner(dashId, requesterId);
-    return this.db.queryMany(
+  /**
+   * List all active shares for a dashboard.
+   * Returns the owner details plus all shared users.
+   * Only the owner or admins can see this full list.
+   */
+  async listShares(dashId: string, requesterId: string): Promise<{ shares: any[]; owner: any }> {
+    const dash = await this.db.queryOne<{ created_by: string; id: string }>(
+      `SELECT created_by, id FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
+      [dashId],
+    );
+    if (!dash) throw new NotFoundException('Dashboard not found');
+
+    const isOwner = dash.created_by === requesterId;
+    if (!isOwner) {
+      // Non-owners must at least have a share record to see the list
+      const share = await this.db.queryOne(
+        `SELECT id FROM dashboard_shares WHERE dashboard_id = $1 AND shared_with = $2`,
+        [dashId, requesterId],
+      );
+      if (!share) throw new ForbiddenException('You do not have access to this dashboard');
+    }
+
+    const owner = await this.db.queryOne<{ id: string; email: string; display_name: string; role: string }>(
+      `SELECT id, email, display_name, role FROM accounts WHERE id = $1`,
+      [dash.created_by],
+    );
+
+    const shares = await this.db.queryMany<any>(
       `SELECT ds.id, ds.dashboard_id, ds.shared_with AS account_id,
               ds.can_edit, ds.shared_by, ds.created_at,
-              a.email, a.display_name
+              a.email, a.display_name, a.role
        FROM dashboard_shares ds
        JOIN accounts a ON a.id = ds.shared_with
        WHERE ds.dashboard_id = $1
        ORDER BY ds.created_at ASC`,
       [dashId],
     );
+
+    return { shares, owner };
   }
 
   /** Share a dashboard by looking up the target by email — upserts on conflict */
@@ -180,8 +206,24 @@ export class DashboardPermissionsService {
         `SELECT id FROM dashboard_shares WHERE dashboard_id = $1 AND shared_with = $2`,
         [dashId, accountId],
       );
-      if (!share) throw new ForbiddenException('You do not have access to this dashboard');
-      return;
+      if (share) return;
+
+      // Admins may view ANY published dashboard, even without an explicit share —
+      // this backs the "Admin sees all published dashboards" visibility rule and
+      // covers every view path (get/pages/widgets/execute) that funnels here.
+      const acct = await this.db.queryOne<{ role: string }>(
+        `SELECT role FROM accounts WHERE id = $1`,
+        [accountId],
+      );
+      if (acct?.role === 'ADMIN') {
+        const published = await this.db.queryOne(
+          `SELECT 1 FROM dashboards WHERE id = $1 AND status = 'published' AND deleted_at IS NULL`,
+          [dashId],
+        );
+        if (published) return;
+      }
+
+      throw new ForbiddenException('You do not have access to this dashboard');
     }
 
     // For edit/publish/delete — require can_edit

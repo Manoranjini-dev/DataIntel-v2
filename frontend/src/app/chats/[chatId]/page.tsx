@@ -437,7 +437,7 @@ export default function ChatPage() {
 
     try {
       const connId = chat?.connection_id || connectionId;
-      await cardApi.create({
+      const { card } = await cardApi.create({
         name,
         description: message.content,
         datasourceContextType: 'connection',
@@ -448,6 +448,11 @@ export default function ChatPage() {
         chartType: message.ui_hint || 'table',
         visualizationConfig: {},
       });
+      // Save as a complete visualization (published), not a draft — matches the
+      // Cards page behavior. Best-effort publish.
+      if (card?.id) {
+        try { await cardApi.publish(card.id); } catch (e) { console.warn('[save-card] publish failed (card still saved):', e); }
+      }
       alert('Card saved successfully!');
     } catch (e) {
       console.error(e);

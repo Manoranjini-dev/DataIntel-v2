@@ -45,9 +45,16 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
     if (error.response?.status === 401) {
-      useAuthStore.getState().clearUser();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+      const url = error.config?.url || '';
+      // Don't redirect on logout — it handles navigation itself
+      const isLogout = url.includes('/auth/logout');
+      if (!isLogout && typeof window !== 'undefined') {
+        const isAlreadyOnPublic = ['/login', '/register', '/activate', '/forgot-password', '/reset-password']
+          .some(p => window.location.pathname.startsWith(p));
+        if (!isAlreadyOnPublic) {
+          useAuthStore.getState().clearUser();
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(error);
@@ -539,10 +546,27 @@ export const dashboardApi = {
     return handleResponse<any>(r);
   },
 
+  // Save current layout as a new version snapshot
   save: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    return handleResponse<{ version: any }>(r);
+  },
+
+  // Publish the dashboard (sets status = 'published')
+  publish: async (dashId: string) => {
     const r = await apiFetch(`/dashboards/${dashId}/publish`, { method: 'POST' });
     return handleResponse<{ dashboard: any }>(r);
   },
+
+  // Revert a published dashboard back to draft status
+  unpublish: async (dashId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/unpublish`, { method: 'POST' });
+    return handleResponse<{ dashboard: any }>(r);
+  },
+
 
   updateLayout: async (dashId: string, layout: any[]) => {
     const r = await apiFetch(`/dashboards/${dashId}/layout`, {
@@ -723,7 +747,7 @@ export const dashboardApi = {
 
   listShares: async (dashId: string) => {
     const r = await apiFetch(`/dashboards/${dashId}/shares`);
-    return handleResponse<{ shares: any[] }>(r);
+    return handleResponse<{ shares: any[]; owner: any }>(r);
   },
 
   share: async (dashId: string, data: { email: string; accessLevel: 'view' | 'edit' }) => {

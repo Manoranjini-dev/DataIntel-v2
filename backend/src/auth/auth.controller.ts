@@ -147,6 +147,7 @@ export class AuthController {
     return { success: true, account };
   }
 
+  @Public()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(

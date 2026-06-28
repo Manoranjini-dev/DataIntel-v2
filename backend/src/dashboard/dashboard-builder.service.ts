@@ -75,15 +75,28 @@ export class DashboardBuilderService {
   // ── Dashboard CRUD ────────────────────────────────────
 
   /** List dashboards the user owns or that were shared with them */
-  async listDashboards(requesterId: string, opts: { contextType?: string; contextId?: string; status?: string; origin?: string } = {}) {
-    const conditions = [
-      'd.deleted_at IS NULL',
-      `( d.created_by = $1
-         OR EXISTS (
-           SELECT 1 FROM dashboard_shares ds
-           WHERE ds.dashboard_id = d.id AND ds.shared_with = $1
-         ) )`,
-    ];
+  async listDashboards(
+    requesterId: string,
+    opts: { contextType?: string; contextId?: string; status?: string; origin?: string; requesterRole?: string } = {},
+  ) {
+    // Visibility model:
+    //   • everyone: dashboards they own or that are shared with them.
+    //   • Admin (additional): every PUBLISHED dashboard across the project,
+    //     regardless of owner or share — Admins oversee all published content.
+    const isAdmin = opts.requesterRole === 'ADMIN';
+    const visibility = isAdmin
+      ? `( d.created_by = $1
+           OR d.status = 'published'
+           OR EXISTS (
+             SELECT 1 FROM dashboard_shares ds
+             WHERE ds.dashboard_id = d.id AND ds.shared_with = $1
+           ) )`
+      : `( d.created_by = $1
+           OR EXISTS (
+             SELECT 1 FROM dashboard_shares ds
+             WHERE ds.dashboard_id = d.id AND ds.shared_with = $1
+           ) )`;
+    const conditions = ['d.deleted_at IS NULL', visibility];
     const params: unknown[] = [requesterId];
     let p = 2;
 
@@ -103,9 +116,9 @@ export class DashboardBuilderService {
     );
   }
 
-  async getDashboard(dashId: string, requesterId: string) {
+  async getDashboard(dashId: string, requesterId: string, requesterRole?: string) {
     await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
-    const dash = await this.db.queryOne(
+    const dash = await this.db.queryOne<any>(
       `SELECT d.*, a.display_name AS created_by_name
        FROM dashboards d
        JOIN accounts a ON a.id = d.created_by
@@ -113,7 +126,27 @@ export class DashboardBuilderService {
       [dashId],
     );
     if (!dash) throw new NotFoundException('Dashboard not found');
-    return dash;
+
+    // Annotate with the caller's access level so the UI can render read-only vs
+    // editable and gate the Publish action — never trust the client to decide.
+    const isOwner = dash.created_by === requesterId;
+    let canEdit = isOwner;
+    if (!canEdit) {
+      const share = await this.db.queryOne<{ can_edit: boolean }>(
+        `SELECT can_edit FROM dashboard_shares WHERE dashboard_id = $1 AND shared_with = $2`,
+        [dashId, requesterId],
+      );
+      canEdit = !!share?.can_edit;
+    }
+    const canPublish = (requesterRole === 'ADMIN' || requesterRole === 'ANALYST') && canEdit;
+
+    return {
+      ...dash,
+      access_level: isOwner ? 'owner' : canEdit ? 'edit' : 'view',
+      is_owner: isOwner,
+      can_edit: canEdit,
+      can_publish: canPublish,
+    };
   }
 
   async createDashboard(creator: SafeAccount, dto: CreateDashboardDto) {
@@ -184,21 +217,49 @@ export class DashboardBuilderService {
   }
 
   async publishDashboard(dashId: string, publisher: SafeAccount) {
+    // Only Admins and Analysts may publish — Viewers can never publish, even on
+    // a dashboard they somehow own or have edit access to. Enforced here (not
+    // just the UI) so the API itself rejects unauthorized publishes.
+    if (publisher.role !== 'ADMIN' && publisher.role !== 'ANALYST') {
+      throw new ForbiddenException('Only Admins and Analysts can publish dashboards.');
+    }
     await this.dashboardPermissions.requireAction(dashId, publisher.id, 'can_publish');
 
-    const dash = await this.db.queryOne<{ id: string; draft_layout: unknown }>(
+    const dash = await this.db.queryOne<{ id: string; draft_layout: any }>(
       `SELECT id, draft_layout FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
       [dashId],
     );
     if (!dash) throw new NotFoundException('Dashboard not found');
 
-    await this.db.query(
-      `UPDATE dashboards
-       SET status = 'published', draft_layout = NULL, published_at = NOW(), published_by = $2,
-           version = version + 1, updated_at = NOW(), updated_by = $2
-       WHERE id = $1`,
-      [dashId, publisher.id],
-    );
+    // Fix: actually promote the draft_layout positions to the live widget rows
+    // inside a transaction before flipping the status flag. Previously draft_layout
+    // was fetched but never applied — the publish only changed the status field,
+    // leaving widget grid positions unchanged and the draft_layout silently discarded.
+    await this.db.transaction(async (query) => {
+      // If a draft layout snapshot exists, apply it to the widget rows so the
+      // published state reflects exactly what the editor last arranged.
+      const draftItems: Array<{ widgetId: string; gridX: number; gridY: number; gridW: number; gridH: number }> =
+        Array.isArray(dash.draft_layout) ? dash.draft_layout : [];
+
+      for (const item of draftItems) {
+        await query(
+          `UPDATE dashboard_widgets_v2
+           SET grid_x = $2, grid_y = $3, grid_w = $4, grid_h = $5,
+               updated_at = NOW(), updated_by = $6
+           WHERE id = $1 AND deleted_at IS NULL`,
+          [item.widgetId, item.gridX, item.gridY, item.gridW, item.gridH, publisher.id],
+        );
+      }
+
+      // Promote to published: clear the draft snapshot and bump the version.
+      await query(
+        `UPDATE dashboards
+         SET status = 'published', draft_layout = NULL, published_at = NOW(), published_by = $2,
+             version = version + 1, updated_at = NOW(), updated_by = $2
+         WHERE id = $1`,
+        [dashId, publisher.id],
+      );
+    });
 
     // Invalidate all cached layouts for this dashboard
     await this.invalidateDashboardCache(dashId);
@@ -211,7 +272,37 @@ export class DashboardBuilderService {
       eventType: 'dashboard_published', resourceType: 'dashboard', resourceId: dashId,
     });
 
-    return this.getDashboard(dashId, publisher.id);
+    return this.getDashboard(dashId, publisher.id, publisher.role);
+  }
+
+  async unpublishDashboard(dashId: string, requester: SafeAccount) {
+    // Only Admins and Analysts may unpublish — same permission bar as publish.
+    if (requester.role !== 'ADMIN' && requester.role !== 'ANALYST') {
+      throw new ForbiddenException('Only Admins and Analysts can unpublish dashboards.');
+    }
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_publish');
+
+    const dash = await this.db.queryOne<{ id: string; status: string }>(
+      `SELECT id, status FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
+      [dashId],
+    );
+    if (!dash) throw new NotFoundException('Dashboard not found');
+
+    await this.db.query(
+      `UPDATE dashboards
+       SET status = 'draft', updated_at = NOW(), updated_by = $2
+       WHERE id = $1`,
+      [dashId, requester.id],
+    );
+
+    await this.invalidateDashboardCache(dashId);
+
+    await this.audit.log({
+      accountId: requester.id,
+      eventType: 'dashboard_unpublished', resourceType: 'dashboard', resourceId: dashId,
+    });
+
+    return this.getDashboard(dashId, requester.id, requester.role);
   }
 
   async softDeleteDashboard(dashId: string, deleter: SafeAccount) {
@@ -632,7 +723,9 @@ export class DashboardBuilderService {
   // ── Versioning ───────────────────────────────────────────
 
   async saveVersion(dashId: string, requester: SafeAccount, message?: string) {
-    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
+    // Require can_edit — read-only (view-only) users must not be able to create
+    // version snapshots. Previously this was can_view which was too permissive.
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
 
       return this.db.transaction(async (query) => {
       // Get current max version

@@ -10,7 +10,7 @@ import 'react-resizable/css/styles.css';
 import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
   MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
-  MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical
+  MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical, Share2
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
@@ -25,6 +25,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { GenerativeUIRenderer } from '../generative-ui';
 import { TextCard } from '../generative-ui/text-card';
 import { ImageCard } from '../generative-ui/image-card';
+import { useAuthStore } from '@/lib/auth-store';
+import { ShareDashboardModal } from './ShareDashboardModal';
 import {
   applyVisualizationConfig, AGGREGATION_OPTIONS, NUMERIC_ONLY_AGGREGATIONS, isNumericColumn,
   type VisualizationConfig, type AggregationFn,
@@ -456,7 +458,7 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
 
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
-  widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage, isGeneral,
+  widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage, isGeneral, onFocus,
 }: {
   widget: WidgetData;
   isEditing: boolean;
@@ -470,6 +472,8 @@ function Widget({
   otherPages?: { id: string; name: string }[];
   onMoveToPage?: (pageId: string) => void;
   isGeneral?: boolean;
+  /** Open this widget in full-screen focus mode (view mode only). */
+  onFocus?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -722,7 +726,71 @@ function Widget({
 
 
 
+      {/* Full-screen focus — view mode only (avoids clashing with the edit
+          drag-handle/menu). Available to anyone viewing the dashboard. */}
+      {!isEditing && onFocus && (rows.length > 0 || widget.widget_type === 'text' || widget.widget_type === 'image') && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onFocus(); }}
+          title="Expand to full screen"
+          className="absolute top-2 right-2 z-30 w-7 h-7 rounded-lg bg-card/80 border border-border text-muted-foreground hover:text-foreground hover:bg-muted flex items-center justify-center transition-all opacity-0 group-hover/card:opacity-100"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        </button>
+      )}
+
       <div className="h-full">{renderContent()}</div>
+    </div>
+  );
+}
+
+// ── Full-screen widget focus overlay ───────────────────────────
+// Read-only expanded view of a single widget. Re-runs the same client-side
+// visualization transform + renderer (non-compact) so the chart/table looks
+// identical, just larger. Available in published/view mode to all roles.
+function WidgetFocusOverlay({ widget, onClose }: { widget: WidgetData; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const rawRows = widget.result_rows || [];
+  const rawColumns = widget.result_columns || [];
+  const { rows, columns } = applyVisualizationConfig(rawRows, rawColumns, widget.visualization_config);
+  const hint = widget.visualization_config?.vizType || widget.ui_hint || widget.widget_type || 'table';
+  const qd = typeof widget.query_definition === 'string' ? JSON.parse(widget.query_definition) : (widget.query_definition || {});
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 sm:p-8" onClick={onClose}>
+      <div
+        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-6xl h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+          <h2 className="text-sm font-semibold text-foreground truncate">{widget.title || 'Widget'}</h2>
+          <button onClick={onClose} title="Close (Esc)" className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 p-4 overflow-auto">
+          {widget.widget_type === 'text' ? (
+            <TextCard content={String(widget.text_content ?? qd.text_content ?? '')} title={widget.title} />
+          ) : widget.widget_type === 'image' ? (
+            <ImageCard imageUrl={String(widget.image_url ?? qd.image_url ?? '')} caption={String(widget.image_caption ?? qd.image_caption ?? '')} title={widget.title} />
+          ) : rows.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-sm text-muted-foreground">No data to display.</div>
+          ) : (
+            <div className="h-full">
+              <GenerativeUIRenderer
+                execution={{ rows, columns, rowCount: rows.length, executionTimeMs: 0 } as any}
+                uiHint={hint as any}
+                title={widget.title}
+                showLegend={widget.visualization_config?.showLegend}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -2259,19 +2327,41 @@ function ExportPdfModal({
 }
 
 export function DashboardBuilder({
-  dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav,
+  dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav, isNew,
 }: {
   dashId: string; backUrl?: string; backLabel?: string;
   titleOverride?: string; subtitleOverride?: string;
   // When true, hides the in-header back link + Chat/Dashboard buttons because
   // the surrounding layout already provides that navigation (single data source).
   hideContextNav?: boolean;
+  // When true (newly created datasource dashboard), auto-reload after a short
+  // delay to replace placeholder cards with AI-generated insight cards seeded
+  // in the background.
+  isNew?: boolean;
 }) {
+  const currentUser = useAuthStore(s => s.user);
   const [dashboard, setDashboard] = useState<Record<string, unknown> | null>(null);
   const [pages, setPages] = useState<Record<string, unknown>[]>([]);
   const [activePage, setActivePage] = useState<string | null>(null);
   const [widgets, setWidgets] = useState<WidgetData[]>([]);
   const [isEditing, setIsEditing] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+
+  // Caller's access level on this dashboard, returned by the backend
+  // (getDashboard). Drives read-only mode and the Publish action — the backend
+  // enforces the same rules, so the UI just mirrors them. Defensive default:
+  // only an explicit `false` locks editing, so owners are never accidentally
+  // locked out if the field is ever absent.
+  const canEdit = (dashboard as any)?.can_edit !== false;
+  const canPublish = Boolean((dashboard as any)?.can_publish);
+  // isPublished: use `status` field from backend (status enum: 'draft' | 'published' | 'archived')
+  const isPublished = (dashboard as any)?.status === 'published';
+  const canShare = Boolean(dashboard && (dashboard.created_by === currentUser?.id || currentUser?.role === 'ADMIN'));
+
+  // Force read-only users out of edit mode if a load ever flips the flag.
+  useEffect(() => {
+    if (dashboard && (dashboard as any).can_edit === false) setIsEditing(false);
+  }, [dashboard]);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -2279,6 +2369,8 @@ export function DashboardBuilder({
   const pageSeqRef = useRef(0);
   const [deletedWidgetIds, setDeletedWidgetIds] = useState<string[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | undefined>();
+  const [focusedWidget, setFocusedWidget] = useState<WidgetData | null>(null);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
 
   let chatUrl = '';
   if (dashboard?.combo_id) {
@@ -2295,7 +2387,6 @@ export function DashboardBuilder({
   const [versions, setVersions] = useState<any[]>([]);
   const [showVersions, setShowVersions] = useState(false);
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
-  const isDroppingRef = useRef(false);
   
   const isGeneral = dashboard?.context_type === 'org_overview' || (!dashboard?.connection_id && !dashboard?.combo_id);
   const [showAddWidget, setShowAddWidget] = useState(false);
@@ -2391,16 +2482,10 @@ export function DashboardBuilder({
       if (first) {
         setActivePage(first.id);
         const builtWidgets = buildWidgets(first);
-        // Smart conditional refresh:
-        // - Widgets that already have pre-seeded result_rows show data IMMEDIATELY
-        // - Only widgets with no pre-loaded data are refreshed against the live DB
-        // This eliminates the race condition where refreshAllWidgets tramples pre-loaded data.
         const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
         if (emptyWidgets.length > 0) {
-          // Refresh only the empty widgets; pre-seeded widgets keep showing their data
           refreshWidgets(String(first.id), emptyWidgets);
         }
-        // If ALL widgets have data, no refresh needed — dashboard is immediately ready
       }
       if (data.dashboard?.connection_id) {
         const { chats } = await chatApi.list({ connectionId: data.dashboard.connection_id as string });
@@ -2416,24 +2501,31 @@ export function DashboardBuilder({
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  /**
-   * Refresh ONLY a specific subset of widgets against the live database.
-   * Pre-seeded widgets that already have data are NOT touched — they show
-   * their data immediately without a loading flash.
-   * Used on initial load so that auto-generated dashboards appear fully
-   * populated the moment they open.
-   */
+  // Auto-reload for new datasource dashboards: AI card seeding runs in the
+  // background and takes ~15-30s. We poll twice (at 10s and 25s) to refresh
+  // widgets once the real cards have replaced the placeholders.
+  const [seedingBanner, setSeedingBanner] = useState(!!isNew);
+  useEffect(() => {
+    if (!isNew) return;
+    const t1 = setTimeout(async () => {
+      try { await loadData(); } catch {}
+    }, 12000); // first reload at 12s
+    const t2 = setTimeout(async () => {
+      try { await loadData(); } catch {}
+      setSeedingBanner(false);
+    }, 28000); // second reload at 28s, dismiss banner
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew]);
+
   async function refreshWidgets(
     pageId: string,
     widgetList: WidgetData[],
     forceRefresh = false,
   ) {
-    // Never execute query-less (empty drag-and-drop) widgets — they must stay
-    // empty until the user explicitly generates a chart in the editor.
     widgetList = widgetList.filter(widgetHasQuery);
     if (!widgetList.length) return;
 
-    // Mark ONLY the empty widgets as loading — pre-seeded widgets keep their data
     const emptyIds = new Set(widgetList.map(w => w.id));
     setWidgets(prev => prev.map(w => emptyIds.has(w.id) ? { ...w, isLoading: true } : w));
 
@@ -2471,25 +2563,15 @@ export function DashboardBuilder({
     await Promise.all(Array.from({ length: CONCURRENCY }, runNext));
   }
 
-  /**
-   * Re-execute ALL widget queries for a page against the live database.
-   * Uses the backend's WidgetExecutionService (which handles LLM + MCP + Redis cache).
-   * Runs up to 4 widgets concurrently to avoid connection pool exhaustion.
-   * Used by the manual Refresh button (forceRefresh=true) and page switching.
-   */
   async function refreshAllWidgets(
     pageId: string,
     widgetList: WidgetData[],
     forceRefresh = false,
   ) {
-    // Only re-run widgets that already have a query — empty drag-and-drop
-    // widgets carry no prompt/SQL and must never auto-generate a chart, even
-    // when the user hits "Refresh all".
     widgetList = widgetList.filter(widgetHasQuery);
     if (!widgetList.length) { setRefreshingAll(false); return; }
     setRefreshingAll(true);
 
-    // Mark the executable widgets as loading
     const execIds = new Set(widgetList.map(w => w.id));
     setWidgets(prev => prev.map(w => execIds.has(w.id) ? { ...w, isLoading: true } : w));
 
@@ -2511,13 +2593,11 @@ export function DashboardBuilder({
               ));
               succeeded = true;
             } else if (attempt === 1) {
-              // Second attempt still no data — clear loading
               setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
               succeeded = true;
             }
           } catch {
             if (attempt === 1) {
-              // Both attempts failed — clear loading state gracefully
               setWidgets(prev => prev.map(w => w.id === widget.id ? { ...w, isLoading: false } : w));
               succeeded = true;
             }
@@ -2526,7 +2606,6 @@ export function DashboardBuilder({
       }
     }
 
-    // Run CONCURRENCY lanes in parallel
     await Promise.all(Array.from({ length: CONCURRENCY }, runNext));
     setRefreshingAll(false);
   }
@@ -2534,8 +2613,6 @@ export function DashboardBuilder({
   function buildWidgets(page: Record<string, unknown>): WidgetData[] {
     const widgetList = ((page?.widgets as Record<string, unknown>[]) || []).map(w => {
       const qd = w.query_definition as Record<string, unknown> || {};
-      // For card-based widgets, fall back to the card's last-execution cached data
-      // (card_result_preview is a JSON string of rows; card_result_columns is a string[])
       let cardRows: Record<string, unknown>[] = [];
       let cardCols: string[] = [];
       if (w.card_id) {
@@ -2577,22 +2654,17 @@ export function DashboardBuilder({
 
   function switchPage(id: string) {
     setActivePage(id);
-    setSelectedWidgetId(null); // Clear widget selection when changing pages
-    setDeletedWidgetIds([]); // Clear unsaved deletions for the previous page
+    setSelectedWidgetId(null);
+    setDeletedWidgetIds([]);
     const p = pages.find(p => p.id === id);
     if (p) {
       const builtWidgets = buildWidgets(p as Record<string, unknown>);
       {
         const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
-        if (emptyWidgets.length === 0) {
-          // All widgets have data — nothing to refresh
-          return;
-        }
+        if (emptyWidgets.length === 0) return;
         if (emptyWidgets.length === builtWidgets.length) {
-          // All widgets are empty — full refresh with spinner
           refreshAllWidgets(id, builtWidgets);
         } else {
-          // Some widgets are empty — targeted refresh preserves seeded data
           refreshWidgets(id, emptyWidgets);
         }
       }
@@ -2600,9 +2672,6 @@ export function DashboardBuilder({
   }
 
   async function addPage() {
-    // Sequential, duplicate-free naming: take the highest existing "Page N"
-    // and the highest number reserved by in-flight clicks, then +1. The ref
-    // guarantees rapid successive clicks each get a unique increasing number.
     const next = Math.max(highestPageNumber(pages), pageSeqRef.current) + 1;
     pageSeqRef.current = next;
     try {
@@ -2625,18 +2694,16 @@ export function DashboardBuilder({
     finally { setConfirmDeletePageId(null); }
   }
 
-  // Rename a page with validation (non-empty + unique within the dashboard).
-  // Optimistically updates locally, then persists; reverts on server error.
   async function commitPageRename(pageId: string, rawName: string) {
     const name = (rawName || '').trim();
     const current = pages.find(p => String(p.id) === String(pageId));
     if (!name) {
       setPageNote({ kind: 'error', msg: 'Page name cannot be empty' });
-      return; // keep editing
+      return;
     }
     if (current && String(current.name).trim() === name) {
       setRenamingPage(null);
-      return; // no change
+      return;
     }
     const dupe = pages.some(p =>
       String(p.id) !== String(pageId) &&
@@ -2644,7 +2711,7 @@ export function DashboardBuilder({
     );
     if (dupe) {
       setPageNote({ kind: 'error', msg: `A page named “${name}” already exists` });
-      return; // keep editing so the user can fix it
+      return;
     }
 
     setPages(prev => prev.map(p => String(p.id) === String(pageId) ? { ...p, name } : p));
@@ -2653,7 +2720,6 @@ export function DashboardBuilder({
       await dashboardApi.updatePage(dashId, pageId, { name });
     } catch (err: any) {
       setPageNote({ kind: 'error', msg: err?.message || 'Failed to rename page' });
-      // Reload authoritative pages to revert the optimistic change.
       try {
         const data = await dashboardApi.get(dashId);
         setPages(data.pages || []);
@@ -2661,7 +2727,6 @@ export function DashboardBuilder({
     }
   }
 
-  // Persist a new page order after a drag-reorder.
   const handlePageReorder = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -2703,6 +2768,46 @@ export function DashboardBuilder({
     finally { setSaving(false); }
   }
 
+  async function handlePublish() {
+    if (publishing) return;
+    setPublishing(true);
+    try {
+      // Always flush the current layout before publishing so no unsaved changes
+      // are silently dropped. Previously this was guarded by `isEditing` which
+      // meant exiting edit mode without saving and then publishing would discard
+      // the last layout edits.
+      await handleSave();
+      // Then publish: promotes draft_layout to live widget positions and sets
+      // status = 'published' on the backend (all in one transaction).
+      const result = await dashboardApi.publish(dashId);
+      // Update local state immediately — no need for a separate GET call
+      // since publishDashboard returns the full annotated dashboard object.
+      if (result?.dashboard) {
+        setDashboard(result.dashboard);
+      } else {
+        // Fallback: reload if publish didn't return the dashboard
+        const data = await dashboardApi.get(dashId);
+        setDashboard(data.dashboard);
+      }
+    } catch (e) { console.error('[dashboard] publish failed:', e); }
+    finally { setPublishing(false); }
+  }
+
+  async function handleUnpublish() {
+    if (publishing) return;
+    setPublishing(true);
+    try {
+      const result = await dashboardApi.unpublish(dashId);
+      if (result?.dashboard) {
+        setDashboard(result.dashboard);
+      } else {
+        const data = await dashboardApi.get(dashId);
+        setDashboard(data.dashboard);
+      }
+    } catch (e) { console.error('[dashboard] unpublish failed:', e); }
+    finally { setPublishing(false); }
+  }
+
   function handleWidgetAdded(raw: Record<string, unknown>) {
     const qd = raw.query_definition as Record<string, unknown> || {};
     const w: WidgetData = {
@@ -2727,7 +2832,6 @@ export function DashboardBuilder({
     if (raw.is_dropped) {
       setWidgets(ws => [...ws, w]);
     } else {
-      // Place widget in the next available 2-col grid slot
       setWidgets(ws => {
         const slot = findNextSlot(ws);
         return [...ws, { ...w, position_x: slot.x, position_y: slot.y }];
@@ -2747,7 +2851,6 @@ export function DashboardBuilder({
     const widget = widgets.find(w => w.id === widgetId);
     if (!widget) return;
     try {
-      // Add to target page
       const res = await dashboardApi.addWidget(dashId, targetPageId, {
         title: widget.title, widget_type: widget.widget_type,
         queryPrompt: widget.query_prompt, sql: widget.sql,
@@ -2758,10 +2861,8 @@ export function DashboardBuilder({
       });
       const newWidget = res.widget;
       
-      // Remove from current page backend
       await dashboardApi.deleteWidget?.(dashId, activePage, widgetId).catch(() => { });
       
-      // Update the pages array so the target page has the new widget
       setPages(ps => ps.map(p => {
         if (p.id === targetPageId) {
           const currentWidgets = Array.isArray(p.widgets) ? p.widgets : [];
@@ -2770,7 +2871,6 @@ export function DashboardBuilder({
         return p;
       }));
       
-      // Remove from local state of current page
       removeWidget(widgetId);
     } catch (e) { console.error(e); }
   }
@@ -2796,19 +2896,14 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       
       const result = await chatApi.suggestTitle(prompt);
       const title = (result.title || '').trim().replace(/^["']|["']$/g, '');
-      // The backend always returns a usable title (AI or a deterministic
-      // fallback), so we only keep the existing title if it came back blank.
       const cleanTitle = title || widget.title;
       renameWidget(widgetId, cleanTitle);
       if (result.fallback) {
-        // Recoverable AI miss — a derived title was applied. Surface a gentle,
-        // non-blocking notice instead of an error popup.
         setPageNote({ kind: 'info', msg: 'AI was busy — applied a suggested title you can edit.' });
       } else {
         setPageNote({ kind: 'success', msg: 'AI title applied' });
       }
 
-      // Persist the generated title to the backend so it survives refresh
       if (activePage) {
         await dashboardApi.updateWidget(dashId, activePage, widgetId, {
           ...widget,
@@ -2816,8 +2911,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         });
       }
     } catch (e: any) {
-      // Network/unexpected failure only — keep the current title, no blocking
-      // popup (recoverable AI failures are handled server-side via fallback).
       console.warn('Suggest title request failed; keeping current title.', e?.message || e);
       setPageNote({ kind: 'info', msg: "Couldn't reach the AI title service — kept the current title." });
     } finally {
@@ -2825,11 +2918,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     }
   }
 
-  /**
-   * Auto-execute a card widget's SQL against its connection and store the
-   * results in the widget's query_definition so the widget shows data.
-   * Called after addWidget when the card has no cached execution data.
-   */
   async function autoExecuteCardWidget(
     widgetId: string,
     sql: string,
@@ -2839,7 +2927,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     widgetType: string,
   ) {
     try {
-      // Find or create a chat for this connection so we can run the SQL
       const { chats } = await chatApi.list({ connectionId });
       let execChatId: string;
       if (chats.length > 0) {
@@ -2855,7 +2942,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       const cols: string[] = exec?.columns || [];
 
       if (rows.length > 0 || cols.length > 0) {
-        // Persist results to the widget so a page reload also shows data
         await dashboardApi.updateWidget(dashId, pageId, widgetId, {
           title: widgetTitle,
           query_prompt: widgetTitle,
@@ -2889,7 +2975,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       const widgetType = normalizeWidgetType(card.chart_type);
       const contextType = card.datasource_context_type || 'connection';
 
-      // Prefer execution data already cached on the card (from card.service list JOIN)
       let initRows: Record<string, unknown>[] = [];
       let initCols: string[] = [];
       if (card.last_result_preview) {
@@ -2928,7 +3013,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         isLoading: needsExec,
       }]);
 
-      // If the card has never been executed, run its SQL now so the widget shows data
       if (needsExec) {
         autoExecuteCardWidget(
           newWidgetId, cardSql, card.datasource_context_id,
@@ -2938,10 +3022,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     } catch (e) { console.error(e); }
   }
 
-  // Free Text / Image cards aren't query-driven, so the prompt-based
-  // AddWidgetDialog doesn't apply to them — create an empty card directly
-  // (same as the drag-and-drop path already does for every template type)
-  // and let the user fill it in via the click-to-configure flow afterward.
   async function addStaticWidget(type: 'text' | 'image', slot: { x: number; y: number }) {
     if (!activePage) return;
     const tempId = 'temp-' + Date.now();
@@ -2974,7 +3054,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     setShowAddWidget(true);
   }
 
-  // Click an empty grid cell → open Add Widget seeded to that exact slot.
   function handleCellClick(x: number, y: number) {
     if (!activePage || !isEditing) return;
     setDefaultPosition({ x, y, w: WIDGET_W, h: WIDGET_H });
@@ -2982,12 +3061,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     setShowAddWidget(true);
   }
 
-  // Download the dashboard grid (only the pages — no sidebars/header) as a PNG.
-  // ── Export engine ─────────────────────────────────────────────
-  // Capture a single page's grid as a PNG data URL. If the page isn't the
-  // active one, it is briefly made active and given time to paint before the
-  // snapshot is taken. Captures only the grid wrapper (captureRef) so no
-  // sidebars/header/chrome are included.
   const dashName = () => safeFilePart(String(dashboard?.name || titleOverride || 'Dashboard'));
 
   function triggerDownload(filename: string, dataUrl: string) {
@@ -3008,7 +3081,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
   }
 
   async function capturePage(pageId: string): Promise<{ dataUrl: string; width: number; height: number } | null> {
-    // Make the target page active and let the grid + charts paint.
     if (String(activePageRef.current) !== String(pageId)) {
       if (!showPageForCapture(pageId)) return null;
       activePageRef.current = String(pageId);
@@ -3018,7 +3090,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     }
 
     const el = captureRef.current;
-    if (!el) return null; // page has no widgets → nothing to capture
+    if (!el) return null;
 
     const { toPng } = await import('html-to-image');
     const dataUrl = await toPng(el, {
@@ -3036,7 +3108,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     return { dataUrl, width: el.offsetWidth, height: el.scrollHeight };
   }
 
-  // Export a single page as `DashboardName_PageName.png`.
   async function exportPagePng(pageId: string) {
     if (exporting) return;
     setExporting(true);
@@ -3057,7 +3128,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     }
   }
 
-  // Export selected pages (in dashboard order) as a single `DashboardName.pdf`.
   async function exportDashboardPdf(orderedSelectedIds: string[]) {
     if (exporting) return;
     setExporting(true);
@@ -3072,7 +3142,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       let added = 0;
       for (const p of ordered) {
         const cap = await capturePage(String(p.id));
-        if (!cap) continue; // skip empty pages rather than fail the whole export
+        if (!cap) continue;
         const orientation = cap.width >= cap.height ? 'landscape' : 'portrait';
         if (!pdf) {
           pdf = new jsPDF({ orientation, unit: 'px', format: [cap.width, cap.height], compress: true });
@@ -3111,7 +3181,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       let slot: { x: number; y: number };
 
       if (isWidget) {
-        // DROP ONTO EXISTING WIDGET — insert at that slot and shift others forward
         const overWidget = over.data?.current?.widget as WidgetData;
         const { slotX, slotY, shiftedWidgets } = insertAtSlot(
           widgets,
@@ -3119,13 +3188,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           overWidget.position_y ?? 0,
         );
         slot = { x: slotX, y: slotY };
-        // Apply the reflow immediately so existing widgets shift before the new one appears
         setWidgets(shiftedWidgets);
       } else if (isCell) {
-        // DROP ONTO AN EMPTY GRID CELL — place directly at that slot, no reflow
         slot = { x: Number(over.data?.current?.x) || 0, y: Number(over.data?.current?.y) || 0 };
       } else {
-        // DROP INTO EMPTY SPACE — append to next available slot
         slot = findNextSlot(widgets);
       }
 
@@ -3138,7 +3204,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         };
 
         setWidgets(prev => [
-          ...prev.filter(w => w.id !== newWidgetId), // avoid duplicate on re-render
+          ...prev.filter(w => w.id !== newWidgetId),
           newWidget,
         ]);
 
@@ -3221,17 +3287,13 @@ Based on the above data context, suggest a highly relevant dashboard card title.
   );
 
   return (
+    <>
     <DndContext
       sensors={dndSensors}
       collisionDetection={gridCollisionDetection}
-      // Re-measure droppables continuously so the grid-cell drop targets, which
-      // only mount once a drag starts, are picked up during the drag.
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      // Clear the active drag the moment a drag is cancelled (e.g. Escape key or
-      // a dropped-on-nothing cancel) so the grid overlay disappears immediately
-      // instead of lingering until the next interaction.
       onDragCancel={() => setActiveDragItem(null)}
     >
       <div className="h-full bg-background text-foreground flex flex-col min-h-0 w-full">
@@ -3293,7 +3355,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         }
       `}} />
 
-        {/* ── Top bar ──────────────────────────────────────────── */}
         <header className="border-b border-border bg-background/95 backdrop-blur-md px-4 py-2.5 flex items-center gap-3 shrink-0" style={{ boxShadow: 'var(--shadow-soft)' }}>
           {!hideContextNav && (backUrl ? (
             <Link href={backUrl} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-xs mr-1">
@@ -3313,13 +3374,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             <h1 className="text-sm font-semibold text-foreground truncate leading-tight">{titleOverride || String(dashboard?.name || '')}</h1>
             {subtitleOverride && <p className="text-[10px] text-muted-foreground">{subtitleOverride}</p>}
           </div>
-          {Boolean(dashboard?.is_published) && (
-            <span className="text-[10px] px-2 py-0.5 bg-success/10 border border-success/20 text-success rounded-full font-semibold shrink-0">Published</span>
-          )}
 
-          {/* Chat + Dashboard toggle buttons are only relevant inside a data
-              source / combo workflow. Manual dashboards (Dashboards module) omit
-              them — the user is already inside a standalone dashboard. */}
           {chatUrl && !hideContextNav && dashboard?.origin !== 'manual' && (
             <div className="flex items-center gap-2 ml-4 shrink-0">
               <Link
@@ -3339,8 +3394,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           )}
 
           <div className="ml-auto flex items-center gap-2">
-            {/* AI Generate */}
-            {!isGeneral && (
+            {!isGeneral && canEdit && (
               <button onClick={() => setShowGenerate(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
@@ -3348,7 +3402,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               </button>
             )}
 
-            {/* Refresh All */}
             <button
               onClick={() => {
                 if (!activePage) return;
@@ -3362,7 +3415,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               {refreshingAll ? 'Refreshing…' : 'Refresh'}
             </button>
 
-            {/* Export the whole dashboard as a PDF (page-selection modal first) */}
             <button
               onClick={() => setShowExportModal(true)}
               disabled={exporting || pages.length === 0}
@@ -3373,29 +3425,92 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               {exporting ? 'Exporting…' : 'Export PDF'}
             </button>
 
-            {/* History */}
             <button onClick={() => setShowVersions(v => !v)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all ${showVersions ? 'bg-muted border-border text-foreground' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
               <History className="w-3.5 h-3.5" /> History
             </button>
 
-            {/* Edit toggle */}
-            <button onClick={() => setIsEditing(v => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${isEditing ? 'bg-primary/15 border-primary/40 text-primary' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
-              <Play className={`w-3.5 h-3.5 ${isEditing ? 'rotate-0' : ''}`} />
-              {isEditing ? 'Editing' : 'Edit'}
-            </button>
+            {canEdit && (
+              <button onClick={() => setIsEditing(v => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${isEditing ? 'bg-primary/15 border-primary/40 text-primary' : 'bg-transparent border-border text-muted-foreground hover:text-foreground hover:bg-muted/60'}`}>
+                <Play className={`w-3.5 h-3.5 ${isEditing ? 'rotate-0' : ''}`} />
+                {isEditing ? 'Editing' : 'Edit'}
+              </button>
+            )}
 
-            {/* Save */}
-            <button onClick={handleSave} disabled={saving}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-all">
-              <Save className="w-3.5 h-3.5" />
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+            {canEdit && (
+              <button onClick={handleSave} disabled={saving}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground disabled:opacity-50 transition-all">
+                <Save className="w-3.5 h-3.5" />
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            )}
+
+            {canPublish && (
+              <>
+                {isPublished ? (
+                  // ── Published state: badge + recovery button ──────────
+                  <>
+                    {/* Non-clickable badge showing current status */}
+                    <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/15 border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 cursor-default">
+                      <Check className="w-3.5 h-3.5" />
+                      Published
+                    </span>
+                    {/* Revert to Draft — recovery path for premature publishes */}
+                    <button
+                      onClick={handleUnpublish}
+                      disabled={publishing}
+                      title="Revert this dashboard back to draft status"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-amber-500/10 border border-border hover:border-amber-500/40 rounded-xl text-xs font-medium text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 disabled:opacity-50 transition-all"
+                    >
+                      {publishing ? (
+                        <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                      )}
+                      {publishing ? 'Reverting…' : 'Revert to Draft'}
+                    </button>
+                  </>
+                ) : (
+                  // ── Draft state: primary Publish button ───────────────
+                  <button
+                    onClick={handlePublish}
+                    disabled={publishing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-primary hover:opacity-90 text-white disabled:opacity-50 transition-all"
+                  >
+                    {publishing ? (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    ) : (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                    )}
+                    {publishing ? 'Publishing…' : 'Publish'}
+                  </button>
+                )}
+              </>
+            )}
+
+            {canShare && (
+              <button onClick={() => setShareModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-all">
+                <Share2 className="w-3.5 h-3.5" />
+                Share
+              </button>
+            )}
           </div>
         </header>
 
-        {/* ── Page tabs (drag to reorder in edit mode) ─────────── */}
+        {/* AI seeding banner — shown only on newly created datasource dashboards
+            while background card generation is in progress (~15-30s). */}
+        {seedingBanner && (
+          <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-medium shrink-0">
+            <div className="flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              Generating AI-powered insight cards from your data source… they'll appear automatically in a moment.
+            </div>
+            <button onClick={() => setSeedingBanner(false)} className="text-amber-500 hover:text-amber-700 transition-colors shrink-0">✕</button>
+          </div>
+        )}
+
         <div className="border-b border-border px-4 flex items-center gap-0.5 bg-background shrink-0 overflow-x-auto">
           <DndContext sensors={pageSensors} collisionDetection={closestCenter} onDragEnd={handlePageReorder}>
             <SortableContext items={pages.map(p => String(p.id))} strategy={horizontalListSortingStrategy}>
@@ -3434,14 +3549,11 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           )}
         </div>
 
-        {/* ── Edit mode bar ──────────────────────────────────── */}
         {isEditing && (
           <div className="bg-primary/8 border-b border-primary/20 px-4 py-2 flex items-center gap-3 shrink-0">
             <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             <p className="text-xs text-primary/80 font-medium">Edit mode · Drag to reposition · Resize from corners</p>
             <button onClick={() => {
-                // Compute the next grid slot NOW so the dialog — and the backend —
-                // both receive the correct position. Never open with defaultPosition=null.
                 const slot = findNextSlot(widgets);
                 setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
                 setShowAddWidget(true);
@@ -3452,7 +3564,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           </div>
         )}
 
-        {/* ── Canvas + Sidebar ───────────────────────────────── */}
         <div className="flex-1 flex overflow-hidden min-h-0">
           <div className={`flex-1 overflow-auto bg-muted/10 p-4 transition-colors ${isOver ? 'bg-primary/5' : ''}`} ref={mergedRef}>
             {isOver && isEditing && (
@@ -3493,9 +3604,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                   </div>
                 )}
               </div>
-              {/* Drop-target grid for an empty page — appears while dragging a
-                  widget/card from the sidebar so there is a visible slot to drop
-                  onto, matching the behaviour of pages that already have cards. */}
               {isEditing && activeDragItem && (
                 <GridOverlay
                   containerWidth={containerWidth}
@@ -3523,7 +3631,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                   isResizable={isEditing}
                   resizeHandles={['s', 'e', 'se']}
                   onLayoutChange={(newLayout: any) => {
-                    if (isDroppingRef.current) return;
                     setWidgets(ws => {
                       let changed = false;
                       const next = ws.map(w => {
@@ -3556,17 +3663,13 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                           otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
                           onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
                           isGeneral={isGeneral}
+                          onFocus={() => setFocusedWidget(widget)}
                         />
                       </DashboardWidgetDroppable>
                     </div>
                   ))}
                 </ResponsiveGridLayout>
 
-                {/* Visible grid drop target — shown ONLY while a widget/card is
-                    actively being dragged (dnd-kit). It is hidden during normal
-                    viewing, while repositioning existing widgets, and while
-                    resizing (those use react-grid-layout, not dnd-kit), and
-                    disappears immediately once the drop completes. */}
                 {isEditing && activeDragItem && (
                   <GridOverlay
                     containerWidth={containerWidth}
@@ -3578,10 +3681,8 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             )}
           </div>
 
-          {/* Widget sidebar (edit mode only) */}
           {isEditing && <WidgetSidebar onCardClick={handleCardClick} onTemplateClick={handleTemplateClick} />}
 
-          {/* Version history panel */}
           {showVersions && (
             <div className="w-60 bg-card border-l border-border flex flex-col shrink-0 h-full overflow-hidden">
               <div className="px-4 py-3.5 border-b border-border flex items-center justify-between">
@@ -3692,6 +3793,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           );
         })()}
 
+        {focusedWidget && (
+          <WidgetFocusOverlay widget={focusedWidget} onClose={() => setFocusedWidget(null)} />
+        )}
+
         <DragOverlay>
           {activeDragItem ? (
             <div className="flex items-center gap-2 rounded-xl border bg-card px-3 py-2 shadow-2xl z-[100]">
@@ -3772,5 +3877,18 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         )}
       </div>
     </DndContext>
+
+    {/* ── Share Dashboard Modal ─────────────────────────── */}
+    {shareModalOpen && dashboard && (
+      <ShareDashboardModal
+        dashId={dashId}
+        dashName={String(dashboard.name || 'Dashboard')}
+        ownerName={String((dashboard as any).created_by_name || 'Owner')}
+        ownerId={String((dashboard as any).created_by || '')}
+        currentUserId={currentUser?.id || ''}
+        onClose={() => setShareModalOpen(false)}
+      />
+    )}
+    </>
   );
 }

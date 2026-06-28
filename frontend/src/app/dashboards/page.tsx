@@ -43,15 +43,13 @@ export default function DashboardsPage() {
 
   async function loadData() {
     try {
-      const [{ dashboards: d }, { connections: conns }] = await Promise.all([
-        // Manual dashboards belong exclusively to the Dashboards module — never
-        // show data-source dashboards here.
+      const [dashResult, connResult] = await Promise.allSettled([
         dashboardApi.list({ origin: 'manual' }),
         connectionApi.list(),
       ]);
-      setDashboards(d);
-      setConnections(conns);
-    } catch (e) { console.error(e); }
+      if (dashResult.status === 'fulfilled') setDashboards(dashResult.value?.dashboards ?? []);
+      if (connResult.status === 'fulfilled')  setConnections(connResult.value?.connections ?? []);
+    } catch (e) { console.error('[DashboardsPage] loadData failed:', e); }
     finally { setLoading(false); }
   }
 
@@ -61,7 +59,10 @@ export default function DashboardsPage() {
     setSubmitting(true);
     try {
       const { dashboard } = await dashboardApi.create({ ...form, origin: 'manual' });
-      router.push(`/dashboards/${dashboard.id}`);
+      // Add ?new=1 when a data source is selected so the dashboard page knows
+      // to auto-reload after a short delay (AI card seeding runs in background).
+      const suffix = form.connectionId ? '?new=1' : '';
+      router.push(`/dashboards/${dashboard.id}${suffix}`);
     } catch (e) { console.error(e); }
     finally { setSubmitting(false); }
   }

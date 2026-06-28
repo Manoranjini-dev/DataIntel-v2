@@ -406,6 +406,25 @@ Chart Selection Rules:
 - Examples: If the insight is a trend, use a line_chart. If the insight is a ranking, use a bar_chart. If the insight is contribution analysis, use a pie_chart or bar_chart. If the insight is correlation, use a scatter. If the insight is a key metric summary, use a metric_card.
 - The chart must serve the insight, not the other way around.
 
+Data-shape rules for the "prompt" field — violating these produces a chart that
+renders but is meaningless, which is worse than not generating the card at all:
+- TREND (line_chart/area_chart): the prompt MUST ask for exactly one combined,
+  already-aggregated chronological period label (e.g. "month" formatted as a
+  single date or "YYYY-MM" string) and exactly one aggregated numeric measure
+  for that period. NEVER ask for separate day/month/year/quarter columns side
+  by side — that produces unrelated numeric series instead of one trend line.
+  Good: "Show total revenue grouped by month for the last 12 months, ordered
+  chronologically." Bad: "Show revenue, month, and year for each order."
+- DISTRIBUTION (pie_chart/donut_chart): the grouping dimension MUST be a true
+  bounded category with a small number of distinct values — status, type,
+  category, tier, plan, region, country, gender, role, or a boolean/enum flag.
+  NEVER group by a free-text, description, biography, notes, comment, summary,
+  or any column likely to hold long prose or near-unique values per row — that
+  produces one tiny meaningless slice per row instead of a real distribution.
+  If the table has no such bounded categorical column, choose a different
+  insight or chart type (e.g. a ranking bar_chart on a foreign-key category,
+  or a metric_card) rather than forcing a pie chart on unsuitable data.
+
 Technical formatting rules — follow every one strictly:
 - Return ONLY a JSON array of exactly 4 objects. No markdown, no code fences, no prose.
 - Each object: {"title": string, "insightSummary": string, "metricContext": string, "businessSignificance": string, "widgetType": string, "prompt": string}
@@ -464,8 +483,12 @@ Technical formatting rules — follow every one strictly:
     const dates = cols.filter((c) => this.isDate(c));
     const categories = cols.filter((c) => this.isCategorical(c));
     const measure = numeric[0];
-    const cat0 = categories[0];
-    const cat1 = categories[1];
+    // Exclude free-text/description-like columns and prefer columns that look
+    // like true bounded categories — picking one of those as a pie/bar
+    // dimension is exactly what produced a meaningless "one sliver per row"
+    // chart (e.g. grouping by a free-text "about" column).
+    const cat0 = this.pickCategoricalDimension(categories);
+    const cat1 = this.pickCategoricalDimension(categories, cat0);
     const P = primary.name;
 
     const kpi: CardSpec = measure
@@ -485,13 +508,13 @@ Technical formatting rules — follow every one strictly:
       trend = {
         title: `${this.humanize(measure.name)} Over Time`,
         widgetType: 'line_chart',
-        prompt: `Show the total ${measure.name} from the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically.`,
+        prompt: `Show the total ${measure.name} from the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined year-month label and the total ${measure.name} — do not return separate day, month, and year columns.`,
       };
     } else if (dates[0]) {
       trend = {
         title: `${this.humanize(P)} Over Time`,
         widgetType: 'line_chart',
-        prompt: `Show the count of records in the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically.`,
+        prompt: `Show the count of records in the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined year-month label and the record count — do not return separate day, month, and year columns.`,
       };
     } else if (cat0) {
       trend = {
@@ -528,7 +551,13 @@ Technical formatting rules — follow every one strictly:
       };
     }
 
-    const distCol = cat1 || cat0 || cols[0];
+    // No `|| cols[0]` fallback here on purpose — falling back to an arbitrary
+    // column (which could be a free-text field, an ID, or anything else)
+    // is exactly how the dashboard ended up with a pie chart sliced by a
+    // free-text "about" column. With no genuinely categorical column
+    // available, a distribution chart cannot tell a meaningful story —
+    // fall back to a table instead of forcing a meaningless pie chart.
+    const distCol = cat1 || cat0;
     let distribution: CardSpec;
     if (distCol) {
       distribution = {
@@ -538,9 +567,9 @@ Technical formatting rules — follow every one strictly:
       };
     } else {
       distribution = {
-        title: `${this.humanize(P)} Breakdown`,
-        widgetType: 'pie_chart',
-        prompt: `Count the total number of records in the ${P} table grouped by its first categorical column, limited to the top 8 groups.`,
+        title: `Recent ${this.humanize(P)}`,
+        widgetType: 'table',
+        prompt: `Show the 10 most recent records from the ${P} table.`,
       };
     }
 
@@ -627,8 +656,15 @@ Technical formatting rules — follow every one strictly:
     };
   }
 
+  /** Raw date-FRAGMENT column names — the smoking gun for an un-aggregated time series
+   *  (e.g. separate "mo"/"yr" integer columns instead of one combined period label). */
+  private readonly DATE_FRAGMENT_NAME = /^(yrs?|years?|mos?|mons?|months?|days?|qtrs?|quarters?|wks?|weeks?)$/i;
+
   private specFromExecResult(spec: CardSpec, execResult: ExecResult): Partial<CardSpec> {
-    // After execution we may want to refine widget type based on data shape
+    // After execution we may want to refine widget type based on data shape —
+    // a chart that "renders" but tells no real story is worse than a plain
+    // table, so these checks catch shapes that look fine on paper but are
+    // meaningless once plotted.
     const { rows, columns } = execResult;
     if (!rows.length) return {};
 
@@ -643,6 +679,35 @@ Technical formatting rules — follow every one strictly:
     // Downgrade line_chart / bar_chart if only 1 row
     if ((spec.widgetType === 'line_chart' || spec.widgetType === 'area_chart') && rows.length < 3) {
       return { widgetType: 'metric_card' };
+    }
+
+    // Trend charts need ONE combined period label, not separate date-part
+    // columns (e.g. "mo" + "yr" alongside the measure) — that shape renders
+    // each fragment as its own mismatched-scale line instead of a real trend.
+    if (spec.widgetType === 'line_chart' || spec.widgetType === 'area_chart') {
+      const dateFragmentCols = columns.filter((c) => this.DATE_FRAGMENT_NAME.test(c.trim()));
+      if (dateFragmentCols.length >= 2 || (dateFragmentCols.length >= 1 && numericCols.length > 2)) {
+        return { widgetType: 'table' };
+      }
+    }
+
+    // Distribution/comparison charts need a genuinely short, bounded category
+    // label — not free-running text. The result is already GROUP-BY'd (so
+    // every returned row is necessarily a distinct label), which means
+    // distinct-value-ratio is useless as a post-aggregation signal; average
+    // label length/word-count is the reliable tell for "this is prose, not a
+    // category" (e.g. a clinic's long "about" description vs. "Active").
+    if (spec.widgetType === 'pie_chart' || spec.widgetType === 'donut_chart' || spec.widgetType === 'bar_chart') {
+      const nonNumericCols = columns.filter((c) => !numericCols.includes(c));
+      const labelCol = nonNumericCols[0] || columns[0];
+      const labelValues = rows.map((r) => String(r[labelCol] ?? '')).filter(Boolean);
+      if (labelValues.length > 0) {
+        const avgLen = labelValues.reduce((s, v) => s + v.length, 0) / labelValues.length;
+        const avgWords = labelValues.reduce((s, v) => s + v.trim().split(/\s+/).length, 0) / labelValues.length;
+        if (avgLen > 40 || avgWords > 6) {
+          return { widgetType: 'table' };
+        }
+      }
     }
 
     return {};
@@ -853,6 +918,40 @@ Technical formatting rules — follow every one strictly:
   private isCategorical(c: ColumnInfo): boolean {
     if (c.isPrimaryKey) return false;
     return /(char|text|varchar|enum|bool|uuid)/.test(c.dataType) || c.isForeignKey;
+  }
+
+  /** Column names that almost always hold free-running prose, not a bounded category. */
+  private readonly FREE_TEXT_NAME_PATTERN =
+    /(description|about|bio|notes?|comment|summary|content|message|body|details?|remarks?|narrative|overview|address)/i;
+
+  /** Column names that strongly suggest a true bounded category. */
+  private readonly CATEGORICAL_NAME_HINT =
+    /(status|type|category|kind|gender|sex|role|tier|plan|region|country|state|province|city|level|grade|segment|^group$|class|stage|priority|department|brand|channel)/i;
+
+  /**
+   * A column is "free text" — and therefore unsuitable as a pie/bar chart
+   * dimension — if its name matches common prose-field patterns, or its type
+   * is an unbounded `text` column (as opposed to a length-bounded varchar,
+   * which is far more likely to hold a real category like "active"/"pending").
+   */
+  private isFreeTextColumn(c: ColumnInfo): boolean {
+    if (this.FREE_TEXT_NAME_PATTERN.test(c.name)) return true;
+    if (c.dataType === 'text') return true;
+    return false;
+  }
+
+  /**
+   * Pick the best categorical dimension for a distribution/comparison chart:
+   * excludes free-text columns entirely (grouping by one of those is what
+   * produced a meaningless "one sliver per row" pie chart), then prefers
+   * columns whose name looks like a genuine bounded category.
+   */
+  private pickCategoricalDimension(categories: ColumnInfo[], exclude?: ColumnInfo): ColumnInfo | undefined {
+    const candidates = categories.filter((c) => c !== exclude && !this.isFreeTextColumn(c));
+    if (candidates.length === 0) return undefined;
+    const scored = candidates.map((c) => ({ c, score: this.CATEGORICAL_NAME_HINT.test(c.name) ? 1 : 0 }));
+    scored.sort((a, b) => b.score - a.score);
+    return scored[0].c;
   }
 
   private pickPrimaryTable(tables: TableInfo[]): TableInfo {

@@ -32,7 +32,24 @@ export default function LoginPage() {
         router.replace('/dashboards');
       }
     } catch (err: any) {
-      setError(err?.message || 'Login failed');
+      // Distinguish network errors from auth errors so the user knows
+      // whether the problem is a wrong password or a server issue.
+      const code = err?.code || err?.response?.code;
+      const isNetwork = code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ETIMEDOUT'
+        || err?.message?.toLowerCase().includes('network error')
+        || err?.message?.toLowerCase().includes('econnrefused');
+
+      if (isNetwork) {
+        setError('Cannot reach the server. Please wait a moment and try again.');
+      } else {
+        // Show the backend's message (e.g. "Invalid email or password") or
+        // a friendly fallback.
+        const msg = err?.response?.data?.message
+          || err?.response?.data?.structured?.message
+          || err?.message
+          || 'Login failed. Please check your credentials.';
+        setError(msg);
+      }
       setLoading(false);
     }
   }

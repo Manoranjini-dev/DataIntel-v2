@@ -999,7 +999,7 @@ function SaveCardModal({ connId, message, onClose }: {
     try {
       // Normalize ui_hint to a valid chart_type enum value (same enum as widget_type)
       const chartType = normalizeWidgetType(message.ui_hint);
-      await cardApi.create({
+      const { card } = await cardApi.create({
         name,
         description:            message.content.slice(0, 500),
         rawQuery:               message.generated_query || `-- Natural language query:\n-- ${message.content}`,
@@ -1014,6 +1014,12 @@ function SaveCardModal({ connId, message, onClose }: {
           ui_hint:   chartType,
         },
       });
+      // Save as a complete visualization (not a draft) — consistent with the
+      // Cards page, which auto-publishes on save. Best-effort: a publish failure
+      // shouldn't lose the saved card.
+      if (card?.id) {
+        try { await cardApi.publish(card.id); } catch (e) { console.warn('[save-card] publish failed (card still saved):', e); }
+      }
       setDone(true);
     } catch (e: any) {
       setError(e?.message || 'Failed to save card. Please try again.');

@@ -37,12 +37,12 @@ export function Sidebar() {
   const adminActive = pathname.startsWith('/admin/users');
 
   const handleSignOut = async () => {
-    try {
-      await authApi.logout();
-    } finally {
-      clearUser();
-      router.replace('/login');
-    }
+    // Always clear local state and navigate — even if the backend is unreachable.
+    // The backend logout endpoint is @Public() so it never 401s.
+    try { await authApi.logout(); } catch { /* ignore network errors */ }
+    clearUser();
+    // Use a full page reload to clear all in-memory React state cleanly.
+    window.location.replace('/login');
   };
 
   // ── Collapsed: thin icon-only rail with an expand button ──────────
