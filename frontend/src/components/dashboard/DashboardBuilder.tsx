@@ -508,13 +508,15 @@ function Widget({
 
   const renderContent = () => {
     if (widget.isLoading) return (
-      <div className="h-full flex flex-col p-3">
-        {widget.title && <p className="text-xs font-semibold text-foreground mb-1 truncate">{widget.title}</p>}
-        <div className="flex-1 flex items-center justify-center">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-        </div>
+      <div className="h-full flex flex-col items-center justify-center gap-3 p-4">
+        <div className="w-7 h-7 border-[3px] border-border border-t-primary rounded-full animate-spin" />
+        {widget.title && widget.title !== 'Generating insight…' && (
+          <p className="text-xs text-muted-foreground/60 font-medium">{widget.title}</p>
+        )}
       </div>
     );
+
+
     // Free Text and Image cards are static content, not query-driven — they
     // never have rows/columns, so they must bypass the rows-based branches
     // below entirely (otherwise they'd permanently show "no data").
@@ -2472,6 +2474,41 @@ export function DashboardBuilder({
     return () => window.removeEventListener('resize', measure);
   }, []);
 
+  // Tracks whether we have already injected the synthetic skeleton placeholders
+  // so we never inject them twice (important because loadData is called from
+  // the polling effect too).
+  // Standard 2x2 grid positions matching the backend DEFAULT layout
+  const SKELETON_SLOTS = [
+    { x: 0, y: 0, type: 'line_chart',  title: 'Generating insight…' },
+    { x: 6, y: 0, type: 'bar_chart',   title: 'Generating insight…' },
+    { x: 0, y: 4, type: 'bar_chart',   title: 'Generating insight…' },
+    { x: 6, y: 4, type: 'metric_card', title: 'Generating insight…' },
+  ] as const;
+
+  // Merges real widgets with synthetic skeletons for any missing slots
+  // in the default 2x2 layout, ensuring the grid stays stable while seeding.
+  const mergeSkeletons = useCallback((realWidgets: WidgetData[]) => {
+    const merged = [...realWidgets];
+    SKELETON_SLOTS.forEach((s, i) => {
+      const hasReal = realWidgets.some(w => w.position_x === s.x && w.position_y === s.y);
+      if (!hasReal) {
+        merged.push({
+          id: `__skeleton_${i}`,
+          title: s.title,
+          widget_type: s.type,
+          ui_hint: s.type,
+          query_prompt: '',
+          position_x: s.x,
+          position_y: s.y,
+          width: 6,
+          height: 4,
+          isLoading: true,
+        });
+      }
+    });
+    return merged;
+  }, []);
+
   const loadData = useCallback(async () => {
     try {
       const data = await dashboardApi.get(dashId);
@@ -2482,9 +2519,20 @@ export function DashboardBuilder({
       if (first) {
         setActivePage(first.id);
         const builtWidgets = buildWidgets(first);
-        const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
-        if (emptyWidgets.length > 0) {
-          refreshWidgets(String(first.id), emptyWidgets);
+        
+        // When this is a newly created data-source dashboard AND the backend
+        // hasn't finished seeding real widgets yet, ensure all 4 slots are
+        // filled (using skeletons for any missing ones) so the layout feels
+        // complete from the very first render. As real widgets arrive, they
+        // naturally replace the skeleton in their assigned slot.
+        if (isNew) {
+          setWidgets(mergeSkeletons(builtWidgets));
+        } else {
+          // Standard refresh for empty widgets on existing dashboards
+          const emptyWidgets = builtWidgets.filter(w => !w.result_rows?.length);
+          if (emptyWidgets.length > 0) {
+            refreshWidgets(String(first.id), emptyWidgets);
+          }
         }
       }
       if (data.dashboard?.connection_id) {
@@ -2502,19 +2550,48 @@ export function DashboardBuilder({
   useEffect(() => { loadData(); }, [loadData]);
 
   // Auto-reload for new datasource dashboards: AI card seeding runs in the
-  // background and takes ~15-30s. We poll twice (at 10s and 25s) to refresh
-  // widgets once the real cards have replaced the placeholders.
+  // background and takes ~15-30s. Poll every 5 seconds until real widgets
+  // arrive (skeletons are replaced automatically), then stop polling.
   const [seedingBanner, setSeedingBanner] = useState(!!isNew);
+  const seedingDoneRef = useRef(!isNew);
   useEffect(() => {
     if (!isNew) return;
-    const t1 = setTimeout(async () => {
-      try { await loadData(); } catch {}
-    }, 12000); // first reload at 12s
-    const t2 = setTimeout(async () => {
-      try { await loadData(); } catch {}
-      setSeedingBanner(false);
-    }, 28000); // second reload at 28s, dismiss banner
-    return () => { clearTimeout(t1); clearTimeout(t2); };
+    let cancelled = false;
+
+    async function poll() {
+      if (cancelled || seedingDoneRef.current) return;
+      try {
+        const data = await dashboardApi.get(dashId);
+        const first = data.pages?.[0];
+        const widgets = ((first?.widgets as any[]) || []);
+        const realCount = widgets.length;
+
+        if (!cancelled) {
+          setPages(data.pages || []);
+          if (first) {
+            const builtWidgets = buildWidgets(first);
+            setWidgets(mergeSkeletons(builtWidgets));
+          }
+
+          // Stop polling if we have all 4 widgets (even if some are static fallbacks)
+          if (realCount >= 4) {
+            seedingDoneRef.current = true;
+            setSeedingBanner(false);
+          } else {
+            // Not ready yet, schedule next poll
+            setTimeout(poll, 5000);
+          }
+        }
+      } catch {
+        if (!cancelled) setTimeout(poll, 8000); // back-off on error
+      }
+    }
+
+    // Start first poll after 8s (give backend time to start seeding)
+    const t = setTimeout(poll, 8000);
+    // Hard stop the banner after 60s regardless
+    const tStop = setTimeout(() => { setSeedingBanner(false); }, 60000);
+    return () => { cancelled = true; clearTimeout(t); clearTimeout(tStop); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isNew]);
 
@@ -3502,12 +3579,17 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         {/* AI seeding banner — shown only on newly created datasource dashboards
             while background card generation is in progress (~15-30s). */}
         {seedingBanner && (
-          <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-medium shrink-0">
-            <div className="flex items-center gap-2">
-              <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Generating AI-powered insight cards from your data source… they&apos;ll appear automatically in a moment.
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-gradient-to-r from-amber-500/15 to-orange-500/10 border-b border-amber-500/25 shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="flex shrink-0 items-center justify-center w-5 h-5 rounded-full bg-amber-500/20">
+                <svg className="w-3 h-3 animate-spin text-amber-600 dark:text-amber-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              </div>
+              <div>
+                <span className="text-xs font-semibold text-amber-700 dark:text-amber-300">Generating AI insights…</span>
+                <span className="text-xs text-amber-600/80 dark:text-amber-400/80 ml-1.5">Analyzing your data and building 4 meaningful charts. This takes about 15–30 seconds.</span>
+              </div>
             </div>
-            <button onClick={() => setSeedingBanner(false)} className="text-amber-500 hover:text-amber-700 transition-colors shrink-0">✕</button>
+            <button onClick={() => setSeedingBanner(false)} className="text-amber-500 hover:text-amber-700 dark:hover:text-amber-300 transition-colors shrink-0 p-1 rounded">✕</button>
           </div>
         )}
 

@@ -410,11 +410,11 @@ Data-shape rules for the "prompt" field — violating these produces a chart tha
 renders but is meaningless, which is worse than not generating the card at all:
 - TREND (line_chart/area_chart): the prompt MUST ask for exactly one combined,
   already-aggregated chronological period label (e.g. "month" formatted as a
-  single date or "YYYY-MM" string) and exactly one aggregated numeric measure
+  single date or "YYYY-MM" string, ALIASED as "period" since "year_month" is a reserved SQL keyword) and exactly one aggregated numeric measure
   for that period. NEVER ask for separate day/month/year/quarter columns side
   by side — that produces unrelated numeric series instead of one trend line.
   Good: "Show total revenue grouped by month for the last 12 months, ordered
-  chronologically." Bad: "Show revenue, month, and year for each order."
+  chronologically. Alias the month column as period." Bad: "Show revenue, month, and year for each order."
 - DISTRIBUTION (pie_chart/donut_chart): the grouping dimension MUST be a true
   bounded category with a small number of distinct values — status, type,
   category, tier, plan, region, country, gender, role, or a boolean/enum flag.
@@ -479,10 +479,12 @@ Technical formatting rules — follow every one strictly:
   private heuristicSpecs(tables: TableInfo[]): CardSpec[] {
     const primary = this.pickPrimaryTable(tables);
     const cols = primary.columns;
-    const numeric = cols.filter((c) => this.isNumeric(c) && !c.isPrimaryKey && !c.isForeignKey);
+    // Business numeric = not a PK or FK (IDs must never become chart axes)
+    const businessNumeric = cols.filter((c) => this.isBusinessNumeric(c));
     const dates = cols.filter((c) => this.isDate(c));
     const categories = cols.filter((c) => this.isCategorical(c));
-    const measure = numeric[0];
+    const measure = businessNumeric[0];
+    const measure2 = businessNumeric[1];
     // Exclude free-text/description-like columns and prefer columns that look
     // like true bounded categories — picking one of those as a pie/bar
     // dimension is exactly what produced a meaningless "one sliver per row"
@@ -491,6 +493,7 @@ Technical formatting rules — follow every one strictly:
     const cat1 = this.pickCategoricalDimension(categories, cat0);
     const P = primary.name;
 
+    // ── Slot 1: KPI metric ────────────────────────────────────────
     const kpi: CardSpec = measure
       ? {
         title: `Total ${this.humanize(measure.name)}`,
@@ -503,18 +506,19 @@ Technical formatting rules — follow every one strictly:
         prompt: `Count the total number of records in the ${P} table.`,
       };
 
+    // ── Slot 2: Trend over time or top-category ranking ───────────
     let trend: CardSpec;
     if (dates[0] && measure) {
       trend = {
         title: `${this.humanize(measure.name)} Over Time`,
         widgetType: 'line_chart',
-        prompt: `Show the total ${measure.name} from the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined year-month label and the total ${measure.name} — do not return separate day, month, and year columns.`,
+        prompt: `Show the total ${measure.name} from the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined date/month label (aliased as "period") and the total ${measure.name} — do not return separate day, month, and year columns.`,
       };
     } else if (dates[0]) {
       trend = {
         title: `${this.humanize(P)} Over Time`,
         widgetType: 'line_chart',
-        prompt: `Show the count of records in the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined year-month label and the record count — do not return separate day, month, and year columns.`,
+        prompt: `Show the count of records in the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined date/month label (aliased as "period") and the record count — do not return separate day, month, and year columns.`,
       };
     } else if (cat0) {
       trend = {
@@ -524,48 +528,90 @@ Technical formatting rules — follow every one strictly:
       };
     } else {
       trend = {
-        title: `${this.humanize(P)} Records`,
-        widgetType: 'bar_chart',
+        title: `${this.humanize(P)} Volume`,
+        widgetType: 'metric_card',
         prompt: `Count the total number of records in the ${P} table.`,
       };
     }
 
+    // ── Slot 3: Category ranking by business measure ──────────────
+    // GUARD: use only true bounded categorical columns as the grouping dimension
+    // — never a primary key, foreign key, or numeric column — to prevent
+    // charts like "total_budget by id" which have zero business value.
     let comparison: CardSpec;
     if (cat0 && measure) {
       comparison = {
-        title: `${this.humanize(measure.name)} by ${this.humanize(cat0.name)}`,
+        title: `Top ${this.humanize(cat0.name)} by ${this.humanize(measure.name)}`,
         widgetType: 'bar_chart',
-        prompt: `Show the total ${measure.name} from the ${P} table grouped by ${cat0.name}, ordered from highest to lowest, limited to the top 10.`,
+        prompt: `Show the top 10 ${cat0.name} groups from the ${P} table ranked by total ${measure.name}, ordered from highest to lowest. Group by ${cat0.name} and sum ${measure.name}.`,
+      };
+    } else if (cat1 && measure) {
+      // Try the second categorical dimension
+      comparison = {
+        title: `Top ${this.humanize(cat1.name)} by ${this.humanize(measure.name)}`,
+        widgetType: 'bar_chart',
+        prompt: `Show the top 10 ${cat1.name} groups from the ${P} table ranked by total ${measure.name}, ordered from highest to lowest. Group by ${cat1.name} and sum ${measure.name}.`,
       };
     } else if (cat0) {
+      // Category exists but no numeric measure — rank by record count
       comparison = {
         title: `Top ${this.humanize(cat0.name)}`,
         widgetType: 'bar_chart',
-        prompt: `Show the top 10 ${cat0.name} values in the ${P} table by record count, ordered from highest to lowest.`,
+        prompt: `Show the top 10 most frequent ${cat0.name} values in the ${P} table, ordered by count from highest to lowest. Return ${cat0.name} and COUNT(*).`,
+      };
+    } else if (measure2) {
+      // No categories at all — show a second metric
+      comparison = {
+        title: `Average ${this.humanize(measure.name)}`,
+        widgetType: 'metric_card',
+        prompt: `Calculate the average value of ${measure.name} across all records in the ${P} table.`,
       };
     } else {
+      // Last resort: recent records table
       comparison = {
-        title: `${this.humanize(P)} Count`,
-        widgetType: 'bar_chart',
-        prompt: `Count the total number of records in the ${P} table.`,
+        title: `Recent ${this.humanize(P)}`,
+        widgetType: 'table',
+        prompt: `Show the 10 most recent records from the ${P} table ordered by the first available date or id column descending.`,
       };
     }
 
-    // No `|| cols[0]` fallback here on purpose — falling back to an arbitrary
-    // column (which could be a free-text field, an ID, or anything else)
-    // is exactly how the dashboard ended up with a pie chart sliced by a
-    // free-text "about" column. With no genuinely categorical column
-    // available, a distribution chart cannot tell a meaningful story —
-    // fall back to a table instead of forcing a meaningless pie chart.
+    // ── Slot 4: Distribution or second insight ────────────────────
+    // Use a bounded categorical column for pie/donut distribution.
+    // For scatter: ONLY use two genuine business numeric columns — never PKs
+    // or FKs — because scatter(id, foreign_key) produces a meaningless blob.
+    // If no good scatter candidates exist, produce a second ranking or table.
     const distCol = cat1 || cat0;
     let distribution: CardSpec;
-    if (distCol) {
+    if (distCol && distCol !== cat0) {
+      // Second distinct category → pie distribution
       distribution = {
         title: `${this.humanize(P)} by ${this.humanize(distCol.name)}`,
         widgetType: 'pie_chart',
         prompt: `Show the count of records in the ${P} table grouped by ${distCol.name}, limited to the top 8 groups, ordered from highest to lowest.`,
       };
+    } else if (distCol && measure) {
+      // Use same category but as a donut for visual variety
+      distribution = {
+        title: `${this.humanize(measure.name)} Share by ${this.humanize(distCol.name)}`,
+        widgetType: 'donut_chart',
+        prompt: `Show the percentage share of total ${measure.name} grouped by ${distCol.name} in the ${P} table, limited to the top 8 groups.`,
+      };
+    } else if (businessNumeric.length >= 2 && measure && measure2) {
+      // Only produce a scatter when BOTH columns are true business measures
+      distribution = {
+        title: `${this.humanize(measure.name)} vs ${this.humanize(measure2.name)}`,
+        widgetType: 'scatter',
+        prompt: `Show the relationship between ${measure.name} and ${measure2.name} from the ${P} table, returning ${measure.name} as x and ${measure2.name} as y for up to 200 records.`,
+      };
+    } else if (measure2) {
+      // Second business metric card
+      distribution = {
+        title: `Average ${this.humanize(measure2.name)}`,
+        widgetType: 'metric_card',
+        prompt: `Calculate the average value of ${measure2.name} across all records in the ${P} table.`,
+      };
     } else {
+      // Nothing better available — show a data table of recent records
       distribution = {
         title: `Recent ${this.humanize(P)}`,
         widgetType: 'table',
@@ -573,22 +619,7 @@ Technical formatting rules — follow every one strictly:
       };
     }
 
-    let correlation: CardSpec;
-    if (numeric[0] && numeric[1]) {
-      correlation = {
-        title: `${this.humanize(numeric[0].name)} vs ${this.humanize(numeric[1].name)}`,
-        widgetType: 'scatter',
-        prompt: `Show the relationship between ${numeric[0].name} and ${numeric[1].name} from the ${P} table, returning ${numeric[0].name} as x and ${numeric[1].name} as y for up to 200 records.`,
-      };
-    } else {
-      correlation = {
-        title: `Recent ${this.humanize(P)}`,
-        widgetType: 'table',
-        prompt: `Show the 10 most recent records from the ${P} table.`,
-      };
-    }
-
-    return [kpi, trend, comparison, distribution, correlation];
+    return [kpi, trend, comparison, distribution];
   }
 
   // ── Normalization & mapping ───────────────────────────────────
@@ -705,6 +736,20 @@ Technical formatting rules — follow every one strictly:
         const avgLen = labelValues.reduce((s, v) => s + v.length, 0) / labelValues.length;
         const avgWords = labelValues.reduce((s, v) => s + v.trim().split(/\s+/).length, 0) / labelValues.length;
         if (avgLen > 40 || avgWords > 6) {
+          return { widgetType: 'table' };
+        }
+        // Detect raw numeric IDs as axis labels — all values are integers with
+        // no semantic meaning (e.g. "35699", "71228" as bar X-axis) — this
+        // produces a chart that looks like a histogram of arbitrary surrogate
+        // keys and has zero business value. Downgrade to table.
+        const allNumericLabels = labelValues.every((v) => /^-?\d+(\.\d+)?$/.test(v.trim()));
+        if (allNumericLabels && nonNumericCols.length === 0) {
+          // Every "category" label is a number and no non-numeric col exists —
+          // this is almost certainly an ID being used as a dimension.
+          return { widgetType: 'table' };
+        }
+        if (allNumericLabels && rows.length > 20) {
+          // High-cardinality purely-numeric labels are very likely IDs.
           return { widgetType: 'table' };
         }
       }
@@ -909,6 +954,15 @@ Technical formatting rules — follow every one strictly:
 
   private isNumeric(c: ColumnInfo): boolean {
     return /(int|numeric|decimal|double|real|float|money|number)/.test(c.dataType);
+  }
+
+  /**
+   * A column is a true *business* numeric measure — not a surrogate key or
+   * foreign-key reference. Only these columns should be used as scatter-plot
+   * axes or aggregation measures where IDs would produce meaningless charts.
+   */
+  private isBusinessNumeric(c: ColumnInfo): boolean {
+    return this.isNumeric(c) && !c.isPrimaryKey && !c.isForeignKey;
   }
 
   private isDate(c: ColumnInfo): boolean {
