@@ -10,7 +10,8 @@ import 'react-resizable/css/styles.css';
 import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
   MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
-  MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical, Share2
+  MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical, Share2,
+  Copy, ArrowRightLeft,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
@@ -27,6 +28,7 @@ import { TextCard } from '../generative-ui/text-card';
 import { ImageCard } from '../generative-ui/image-card';
 import { useAuthStore } from '@/lib/auth-store';
 import { ShareDashboardModal } from './ShareDashboardModal';
+import { ShareResourceModal } from './ShareResourceModal';
 import {
   applyVisualizationConfig, AGGREGATION_OPTIONS, NUMERIC_ONLY_AGGREGATIONS, isNumericColumn,
   type VisualizationConfig, type AggregationFn,
@@ -459,6 +461,7 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
   widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage, isGeneral, onFocus,
+  canShare, onShare, onCopyToDashboard, onMoveToDashboard,
 }: {
   widget: WidgetData;
   isEditing: boolean;
@@ -474,6 +477,11 @@ function Widget({
   isGeneral?: boolean;
   /** Open this widget in full-screen focus mode (view mode only). */
   onFocus?: () => void;
+  /** Card-level sharing is owner-only, mirrored from the parent's isOwner flag. */
+  canShare?: boolean;
+  onShare?: () => void;
+  onCopyToDashboard?: () => void;
+  onMoveToDashboard?: () => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -714,6 +722,29 @@ function Widget({
                       {p.name}
                     </button>
                   ))}
+                </>
+              )}
+              {(canShare || onCopyToDashboard || onMoveToDashboard) && (
+                <>
+                  <div className="mx-3 my-1 h-px bg-border shrink-0" />
+                  {canShare && onShare && (
+                    <button onClick={() => { setMenuOpen(false); onShare(); }}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                      <Share2 className="w-3.5 h-3.5 text-muted-foreground" /> Share card
+                    </button>
+                  )}
+                  {onCopyToDashboard && (
+                    <button onClick={() => { setMenuOpen(false); onCopyToDashboard(); }}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                      <Copy className="w-3.5 h-3.5 text-muted-foreground" /> Copy to dashboard…
+                    </button>
+                  )}
+                  {onMoveToDashboard && (
+                    <button onClick={() => { setMenuOpen(false); onMoveToDashboard(); }}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-muted-foreground" /> Move to dashboard…
+                    </button>
+                  )}
                 </>
               )}
               <div className="mx-3 my-1 h-px bg-border shrink-0" />
@@ -2106,8 +2137,10 @@ function TextImageEditDialog({ widget, dashId, pageId, onUpdate, onClose }: {
 // or deleted. Dragging is enabled only in edit mode.
 function SortablePageTab({
   page, active, isEditing, canDelete, renaming, draftName, confirmDelete, exporting,
+  canShare, sharedByName,
   onSwitch, onStartRename, onDraftChange, onCommitRename, onCancelRename,
   onRequestDelete, onConfirmDelete, onCancelDelete, onExportPng,
+  onShare, onMove, onCopy, onDuplicate,
 }: {
   page: { id: string; name: string };
   active: boolean;
@@ -2117,6 +2150,10 @@ function SortablePageTab({
   draftName: string;
   confirmDelete: boolean;
   exporting: boolean;
+  /** Page/card-level sharing is owner-only, mirrored from the parent's isOwner flag. */
+  canShare?: boolean;
+  /** Set when this page is visible to the current user ONLY via a page-level share (not dashboard-level). */
+  sharedByName?: string | null;
   onSwitch: () => void;
   onStartRename: () => void;
   onDraftChange: (v: string) => void;
@@ -2126,11 +2163,25 @@ function SortablePageTab({
   onConfirmDelete: (e: React.MouseEvent) => void;
   onCancelDelete: (e: React.MouseEvent) => void;
   onExportPng: () => void;
+  onShare?: () => void;
+  onMove?: () => void;
+  onCopy?: () => void;
+  onDuplicate?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: page.id,
     disabled: !isEditing || renaming,
   });
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!actionsOpen) return;
+    function close(e: MouseEvent) {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) setActionsOpen(false);
+    }
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [actionsOpen]);
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -2173,6 +2224,9 @@ function SortablePageTab({
             className={`py-2.5 text-xs font-medium whitespace-nowrap ${isEditing ? 'pr-2 pl-1' : 'px-3.5'}`}
           >
             {page.name}
+            {sharedByName && (
+              <span className="ml-1.5 text-[10px] text-muted-foreground font-normal">Shared by {sharedByName}</span>
+            )}
           </button>
           {isEditing && (
             <button
@@ -2183,6 +2237,48 @@ function SortablePageTab({
             >
               <Edit3 className="w-3 h-3" />
             </button>
+          )}
+        </div>
+      )}
+
+      {/* Share / Move / Copy / Duplicate */}
+      {!renaming && (onShare || onMove || onCopy || onDuplicate) && (
+        <div ref={actionsRef} className="relative">
+          <button
+            onPointerDown={e => e.stopPropagation()}
+            onClick={() => setActionsOpen(v => !v)}
+            title="Page actions"
+            className="opacity-0 group-hover/tab:opacity-100 ml-0.5 w-5 h-5 rounded text-muted-foreground hover:text-primary hover:bg-muted flex items-center justify-center transition-all"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+          </button>
+          {actionsOpen && (
+            <div className="absolute top-full mt-1 left-0 w-44 bg-card border border-border rounded-xl shadow-xl z-40 py-1" onPointerDown={e => e.stopPropagation()}>
+              {canShare && onShare && (
+                <button onClick={() => { setActionsOpen(false); onShare(); }}
+                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                  <Share2 className="w-3.5 h-3.5 text-muted-foreground" /> Share page
+                </button>
+              )}
+              {onDuplicate && (
+                <button onClick={() => { setActionsOpen(false); onDuplicate(); }}
+                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                  <Copy className="w-3.5 h-3.5 text-muted-foreground" /> Duplicate page
+                </button>
+              )}
+              {onCopy && (
+                <button onClick={() => { setActionsOpen(false); onCopy(); }}
+                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                  <Copy className="w-3.5 h-3.5 text-muted-foreground" /> Copy to dashboard…
+                </button>
+              )}
+              {onMove && (
+                <button onClick={() => { setActionsOpen(false); onMove(); }}
+                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                  <ArrowRightLeft className="w-3.5 h-3.5 text-muted-foreground" /> Move to dashboard…
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -2328,6 +2424,119 @@ function ExportPdfModal({
   );
 }
 
+// ── Move / Copy target picker ───────────────────────────────────
+// Shared by both pages and cards — pages only need a destination dashboard
+// (they land as a new page there); cards additionally need a destination
+// page within that dashboard.
+function MoveCopyDialog({
+  kind, mode, onClose, onConfirm,
+}: {
+  kind: 'page' | 'widget';
+  mode: 'move' | 'copy';
+  onClose: () => void;
+  onConfirm: (targetDashboardId: string, targetPageId?: string) => Promise<void>;
+}) {
+  const [dashboards, setDashboards] = useState<any[]>([]);
+  const [loadingDash, setLoadingDash] = useState(true);
+  const [selectedDash, setSelectedDash] = useState('');
+  const [pages, setPages] = useState<any[]>([]);
+  const [loadingPages, setLoadingPages] = useState(false);
+  const [selectedPage, setSelectedPage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    dashboardApi.list({ editableOnly: true })
+      .then(r => setDashboards(r.dashboards || []))
+      .catch(() => setError('Could not load your dashboards'))
+      .finally(() => setLoadingDash(false));
+  }, []);
+
+  useEffect(() => {
+    if (kind !== 'widget' || !selectedDash) { setPages([]); setSelectedPage(''); return; }
+    setLoadingPages(true);
+    dashboardApi.get(selectedDash)
+      .then(r => { setPages(r.pages || []); setSelectedPage(String(r.pages?.[0]?.id || '')); })
+      .catch(() => setError('Could not load pages for that dashboard'))
+      .finally(() => setLoadingPages(false));
+  }, [selectedDash, kind]);
+
+  async function handleConfirm() {
+    if (!selectedDash || (kind === 'widget' && !selectedPage)) return;
+    setSubmitting(true);
+    setError('');
+    try {
+      await onConfirm(selectedDash, kind === 'widget' ? selectedPage : undefined);
+      onClose();
+    } catch (e: any) {
+      setError(e?.message || `Failed to ${mode} ${kind}`);
+    } finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-card w-full max-w-sm rounded-2xl shadow-2xl border border-border overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="text-base font-semibold capitalize">{mode} {kind === 'widget' ? 'card' : kind}</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-muted rounded-lg text-muted-foreground transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block">
+              Destination dashboard
+            </label>
+            {loadingDash ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : (
+              <select
+                value={selectedDash}
+                onChange={e => setSelectedDash(e.target.value)}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              >
+                <option value="">Select a dashboard…</option>
+                {dashboards.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            )}
+          </div>
+
+          {kind === 'widget' && selectedDash && (
+            <div>
+              <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 block">
+                Destination page
+              </label>
+              {loadingPages ? (
+                <p className="text-sm text-muted-foreground">Loading…</p>
+              ) : (
+                <select
+                  value={selectedPage}
+                  onChange={e => setSelectedPage(e.target.value)}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+                >
+                  {pages.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              )}
+            </div>
+          )}
+
+          {error && <p className="text-sm text-destructive font-medium">{error}</p>}
+
+          <button
+            onClick={handleConfirm}
+            disabled={submitting || !selectedDash || (kind === 'widget' && !selectedPage)}
+            className="w-full px-4 py-2 bg-primary text-white text-sm font-semibold rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {submitting
+              ? (mode === 'move' ? 'Moving…' : 'Copying…')
+              : `${mode === 'move' ? 'Move' : 'Copy'} ${kind === 'widget' ? 'card' : kind}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardBuilder({
   dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav, isNew,
 }: {
@@ -2359,6 +2568,10 @@ export function DashboardBuilder({
   // isPublished: use `status` field from backend (status enum: 'draft' | 'published' | 'archived')
   const isPublished = (dashboard as any)?.status === 'published';
   const canShare = Boolean(dashboard && (dashboard.created_by === currentUser?.id || currentUser?.role === 'ADMIN'));
+  // Page/card-level sharing is owner-only on the backend (no admin bypass —
+  // matches DashboardPermissionsService.requireOwner), so gate those finer
+  // share affordances strictly by ownership to avoid showing a button that 403s.
+  const isOwner = Boolean(dashboard && dashboard.created_by === currentUser?.id);
 
   // Force read-only users out of edit mode if a load ever flips the flag.
   useEffect(() => {
@@ -2373,6 +2586,32 @@ export function DashboardBuilder({
   const [activeChatId, setActiveChatId] = useState<string | undefined>();
   const [focusedWidget, setFocusedWidget] = useState<WidgetData | null>(null);
   const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [pageShareTarget, setPageShareTarget] = useState<{ id: string; name: string } | null>(null);
+  const [widgetShareTarget, setWidgetShareTarget] = useState<{ id: string; title: string } | null>(null);
+  const [moveCopyTarget, setMoveCopyTarget] = useState<
+    | { kind: 'page'; id: string; mode: 'move' | 'copy' }
+    | { kind: 'widget'; id: string; pageId: string; mode: 'move' | 'copy' }
+    | null
+  >(null);
+
+  async function handleMoveCopyConfirm(targetDashboardId: string, targetPageId?: string) {
+    if (!moveCopyTarget) return;
+    if (moveCopyTarget.kind === 'page') {
+      if (moveCopyTarget.mode === 'move') {
+        await dashboardApi.movePage(dashId, moveCopyTarget.id, targetDashboardId);
+      } else {
+        await dashboardApi.copyPageTo(dashId, moveCopyTarget.id, targetDashboardId);
+      }
+    } else {
+      if (!targetPageId) throw new Error('Select a destination page');
+      if (moveCopyTarget.mode === 'move') {
+        await dashboardApi.moveWidget(dashId, moveCopyTarget.pageId, moveCopyTarget.id, targetPageId);
+      } else {
+        await dashboardApi.copyWidget(dashId, moveCopyTarget.pageId, moveCopyTarget.id, targetPageId);
+      }
+    }
+    await loadData();
+  }
 
   let chatUrl = '';
   if (dashboard?.combo_id) {
@@ -2769,6 +3008,13 @@ export function DashboardBuilder({
       if (activePage === pageId && next.length > 0) switchPage(String(next[0].id));
     } catch (e) { console.error(e); }
     finally { setConfirmDeletePageId(null); }
+  }
+
+  async function duplicatePageInPlace(pageId: string) {
+    try {
+      await dashboardApi.duplicatePage(dashId, pageId);
+      await loadData();
+    } catch (e) { console.error('duplicatePage failed:', e); }
   }
 
   async function commitPageRename(pageId: string, rawName: string) {
@@ -3618,6 +3864,12 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                     onConfirmDelete={(e) => deletePage(id, e)}
                     onCancelDelete={(e) => { e.stopPropagation(); setConfirmDeletePageId(null); }}
                     onExportPng={() => exportPagePng(id)}
+                    canShare={isOwner}
+                    sharedByName={(page as any).access_source === 'page_share' ? String((page as any).shared_by_name || '') : null}
+                    onShare={() => setPageShareTarget({ id, name: String(page.name) })}
+                    onDuplicate={() => duplicatePageInPlace(id)}
+                    onCopy={() => setMoveCopyTarget({ kind: 'page', id, mode: 'copy' })}
+                    onMove={() => setMoveCopyTarget({ kind: 'page', id, mode: 'move' })}
                   />
                 );
               })}
@@ -3746,6 +3998,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                           onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
                           isGeneral={isGeneral}
                           onFocus={() => setFocusedWidget(widget)}
+                          canShare={isOwner}
+                          onShare={() => setWidgetShareTarget({ id: String(widget.id), title: String(widget.title || 'Card') })}
+                          onCopyToDashboard={() => setMoveCopyTarget({ kind: 'widget', id: String(widget.id), pageId: String(activePage || ''), mode: 'copy' })}
+                          onMoveToDashboard={() => setMoveCopyTarget({ kind: 'widget', id: String(widget.id), pageId: String(activePage || ''), mode: 'move' })}
                         />
                       </DashboardWidgetDroppable>
                     </div>
@@ -3969,6 +4225,54 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         ownerId={String((dashboard as any).created_by || '')}
         currentUserId={currentUser?.id || ''}
         onClose={() => setShareModalOpen(false)}
+      />
+    )}
+
+    {/* ── Share Page Modal ──────────────────────────────── */}
+    {pageShareTarget && dashboard && (
+      <ShareResourceModal
+        resourceLabel="Page"
+        resourceName={pageShareTarget.name}
+        ownerName={String((dashboard as any).created_by_name || 'Owner')}
+        ownerId={String((dashboard as any).created_by || '')}
+        currentUserId={currentUser?.id || ''}
+        onClose={() => setPageShareTarget(null)}
+        api={{
+          list: () => dashboardApi.listPageShares(dashId, pageShareTarget.id),
+          share: (data) => dashboardApi.sharePage(dashId, pageShareTarget.id, data),
+          update: (accountId, data) => dashboardApi.updatePageShare(dashId, pageShareTarget.id, accountId, data),
+          revoke: (accountId) => dashboardApi.revokePageShare(dashId, pageShareTarget.id, accountId),
+          search: (q) => dashboardApi.searchShareTargets(q),
+        }}
+      />
+    )}
+
+    {/* ── Share Card Modal ──────────────────────────────── */}
+    {widgetShareTarget && dashboard && (
+      <ShareResourceModal
+        resourceLabel="Card"
+        resourceName={widgetShareTarget.title}
+        ownerName={String((dashboard as any).created_by_name || 'Owner')}
+        ownerId={String((dashboard as any).created_by || '')}
+        currentUserId={currentUser?.id || ''}
+        onClose={() => setWidgetShareTarget(null)}
+        api={{
+          list: () => dashboardApi.listWidgetShares(dashId, String(activePage || ''), widgetShareTarget.id),
+          share: (data) => dashboardApi.shareWidget(dashId, String(activePage || ''), widgetShareTarget.id, data),
+          update: (accountId, data) => dashboardApi.updateWidgetShare(dashId, String(activePage || ''), widgetShareTarget.id, accountId, data),
+          revoke: (accountId) => dashboardApi.revokeWidgetShare(dashId, String(activePage || ''), widgetShareTarget.id, accountId),
+          search: (q) => dashboardApi.searchShareTargets(q),
+        }}
+      />
+    )}
+
+    {/* ── Move / Copy Dialog ────────────────────────────── */}
+    {moveCopyTarget && (
+      <MoveCopyDialog
+        kind={moveCopyTarget.kind}
+        mode={moveCopyTarget.mode}
+        onClose={() => setMoveCopyTarget(null)}
+        onConfirm={handleMoveCopyConfirm}
       />
     )}
     </>

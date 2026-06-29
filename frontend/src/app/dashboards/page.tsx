@@ -200,7 +200,17 @@ export default function DashboardsPage() {
                       {dash.name}
                     </p>
                     <div className="flex items-center gap-1 shrink-0">
-                      {dash.created_by !== currentUser?.id && (
+                      {dash.access_source === 'page_share' && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-full font-semibold">
+                          Shared page
+                        </span>
+                      )}
+                      {dash.access_source === 'dashboard_share' && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-full font-semibold">
+                          Shared dashboard
+                        </span>
+                      )}
+                      {dash.access_source === 'admin_published' && (
                         <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-full font-semibold">
                           Shared
                         </span>
@@ -214,6 +224,9 @@ export default function DashboardsPage() {
                   </div>
                   {dash.description && (
                     <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{dash.description}</p>
+                  )}
+                  {dash.shared_by_name && (
+                    <p className="text-[11px] text-muted-foreground mb-1.5">Shared by {dash.shared_by_name}</p>
                   )}
                   <div className="flex items-center justify-between">
                     <p className="text-[11px] text-muted-foreground">
@@ -342,6 +355,8 @@ export default function DashboardsPage() {
         <ShareDashboardModal
           dashId={dashToShare.id}
           dashName={dashToShare.name}
+          ownerId={dashToShare.created_by}
+          currentUserId={currentUser?.id}
           onClose={() => setDashToShare(null)}
         />
       )}

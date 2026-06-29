@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { cardApi, connectionApi, chatApi } from '@/lib/api';
+import { useRouter } from 'next/navigation';
+import { cardApi, connectionApi, chatApi, dashboardApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/auth-store';
 import { ShareCardModal } from '@/components/cards/ShareCardModal';
 import { GenerativeUIRenderer } from '@/components/generative-ui';
@@ -9,6 +10,7 @@ import type { QueryExecutionResult, UIHint } from '@/lib/types';
 import {
   Plus, Pencil, X, Check, ChevronRight, Sparkles, MoreHorizontal,
   BarChart2, TrendingUp, PieChart, Table2, Hash, RefreshCw, Share2, Trash2,
+  LayoutDashboard,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────
@@ -799,6 +801,49 @@ function CardActionsMenu({
 }
 
 // ── Live Card Tile ─────────────────────────────────────────────
+/**
+ * A card-only share (dashboard_widget_shares) — not a standalone analytics
+ * card, so it doesn't get a live-refreshing preview like LiveCardTile.
+ * Clicking it opens the real dashboard, which is already filtered (per the
+ * dashboard sharing model) down to exactly this one card — that's where all
+ * the real functionality (charts, AI insights, refresh, filters) lives.
+ */
+function SharedWidgetTile({ widget }: { widget: any }) {
+  const router = useRouter();
+  const chartLabel = CHART_OPTIONS.find(o => o.type === widget.widget_type)?.label || widget.widget_type;
+
+  return (
+    <button
+      onClick={() => router.push(`/dashboards/${widget.dashboard_id}`)}
+      className="text-left bg-card border border-border hover:border-[#2B2B2B]/30 rounded-2xl overflow-hidden transition-all hover:shadow-md flex flex-col"
+    >
+      <div className="h-28 bg-gradient-to-br from-blue-50 to-muted flex items-center justify-center">
+        <LayoutDashboard className="w-10 h-10 text-blue-300" />
+      </div>
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-2 mb-1.5">
+          <p className="font-semibold text-foreground text-sm leading-snug line-clamp-1">
+            {widget.title || 'Untitled card'}
+          </p>
+          <span className="text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-full font-semibold shrink-0">
+            Shared card
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground line-clamp-1 mb-1">
+          {chartLabel} · {widget.dashboard_name}{widget.page_name ? ` / ${widget.page_name}` : ''}
+        </p>
+        <p className="text-[11px] text-muted-foreground mb-3">Shared by {widget.shared_by_name || widget.shared_by_email}</p>
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] text-muted-foreground">
+            {widget.updated_at ? new Date(widget.updated_at).toLocaleDateString() : ''}
+          </p>
+          <ChevronRight className="w-4 h-4 text-muted-foreground/40" />
+        </div>
+      </div>
+    </button>
+  );
+}
+
 function LiveCardTile({
   card,
   onEdit,
@@ -983,6 +1028,10 @@ export default function CardsPage() {
 
   const [cards,       setCards]       = useState<any[]>([]);
   const [total,       setTotal]       = useState(0);
+  // Dashboard cards (widgets) shared directly with the user — a card-only
+  // share. These never imply dashboard/page access, so they only ever
+  // surface here, on the Shared With Me tab — never on the Dashboards page.
+  const [sharedWidgets, setSharedWidgets] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
   const [loading,     setLoading]     = useState(true);
   const [search,      setSearch]      = useState('');
@@ -1008,6 +1057,20 @@ export default function CardsPage() {
       setCards(c);
       setTotal(t);
       setConnections(conns);
+
+      // Dashboard cards (widgets) shared directly with this user only ever
+      // belong on this tab — fetched separately since they live in a
+      // completely different table (dashboard_widget_shares) from the
+      // standalone card library (card_shares).
+      if (activeTab === 'shared_with_me') {
+        try {
+          const { cards: widgets } = await dashboardApi.listSharedCards();
+          const q = search.trim().toLowerCase();
+          setSharedWidgets(q ? widgets.filter((w: any) => String(w.title || '').toLowerCase().includes(q)) : widgets);
+        } catch (e) { console.error('listSharedCards failed:', e); setSharedWidgets([]); }
+      } else {
+        setSharedWidgets([]);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [search, activeTab]);
@@ -1074,9 +1137,9 @@ export default function CardsPage() {
               }`}
             >
               {tab === 'my_cards' ? 'My Cards' : 'Shared With Me'}
-              {activeTab === tab && total > 0 && (
+              {activeTab === tab && (total + (tab === 'shared_with_me' ? sharedWidgets.length : 0)) > 0 && (
                 <span className="ml-1.5 text-[10px] bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full">
-                  {total}
+                  {total + (tab === 'shared_with_me' ? sharedWidgets.length : 0)}
                 </span>
               )}
             </button>
@@ -1098,7 +1161,7 @@ export default function CardsPage() {
           <div className="flex justify-center py-20">
             <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : cards.length === 0 ? (
+        ) : cards.length === 0 && sharedWidgets.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-border rounded-2xl">
             <div className="text-4xl mb-3">
               {activeTab === 'my_cards' ? '📋' : '🔗'}
@@ -1138,6 +1201,9 @@ export default function CardsPage() {
                 />
               );
             })}
+            {sharedWidgets.map((widget: any) => (
+              <SharedWidgetTile key={`widget-${widget.id}`} widget={widget} />
+            ))}
           </div>
         )}
       </div>

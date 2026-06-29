@@ -33,8 +33,12 @@ export class DashboardController {
     @Query('contextId') contextId?: string,
     @Query('status') status?: string,
     @Query('origin') origin?: string,
+    @Query('editableOnly') editableOnly?: string,
   ) {
-    const dashboards = await this.builder.listDashboards(user.id, { contextType, contextId, status, origin, requesterRole: user.role });
+    const dashboards = await this.builder.listDashboards(user.id, {
+      contextType, contextId, status, origin, requesterRole: user.role,
+      editableOnly: editableOnly === 'true',
+    });
     return { dashboards };
   }
 
@@ -140,7 +144,7 @@ export class DashboardController {
   }
 
 
-  // ── Sharing (share-targets must be before :dashId to avoid param collision) ──
+  // ── Sharing (share-targets/shared-cards must be before :dashId to avoid param collision) ──
 
   @Get('share-targets')
   @ApiOperation({ summary: 'Search workspace users for sharing' })
@@ -150,6 +154,15 @@ export class DashboardController {
   ) {
     const users = await this.permissions.searchShareTargets(q, user.id);
     return { users };
+  }
+
+  @Get('shared-cards')
+  @ApiOperation({ summary: 'List dashboard cards shared directly with the current user (card-only shares — never implies dashboard/page visibility)' })
+  async listSharedCards(
+    @CurrentUser() user: SafeAccount,
+  ) {
+    const cards = await this.builder.listSharedCards(user.id);
+    return { cards };
   }
 
   @Get(':dashId/shares')
@@ -338,6 +351,78 @@ export class DashboardController {
     return { page };
   }
 
+  @Post(':dashId/pages/:pageId/copy-to')
+  @ApiOperation({ summary: 'Copy a page into a different dashboard' })
+  async copyPageTo(
+    @Param('dashId') dashId: string,
+    @Param('pageId') pageId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body('targetDashboardId') targetDashboardId: string,
+  ) {
+    const page = await this.builder.copyPage(pageId, dashId, targetDashboardId, user);
+    return { page };
+  }
+
+  @Post(':dashId/pages/:pageId/move')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Move a page into a different dashboard' })
+  async movePage(
+    @Param('dashId') dashId: string,
+    @Param('pageId') pageId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body('targetDashboardId') targetDashboardId: string,
+  ) {
+    const page = await this.builder.movePage(pageId, dashId, targetDashboardId, user);
+    return { page };
+  }
+
+  // ── Page-level sharing ────────────────────────
+
+  @Get(':dashId/pages/:pageId/shares')
+  @ApiOperation({ summary: 'List users a page is shared with (includes dashboard owner)' })
+  async listPageShares(
+    @Param('pageId') pageId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    const { shares, owner } = await this.permissions.listPageShares(pageId, user.id);
+    return { shares, owner };
+  }
+
+  @Post(':dashId/pages/:pageId/shares')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Share a single page with a user by email' })
+  async sharePage(
+    @Param('pageId') pageId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { email: string; accessLevel: 'view' | 'edit' },
+  ) {
+    const share = await this.permissions.sharePageByEmail(pageId, dto.email, dto.accessLevel === 'edit', user.id);
+    return { share };
+  }
+
+  @Put(':dashId/pages/:pageId/shares/:accountId')
+  @ApiOperation({ summary: 'Update a page share access level' })
+  async updatePageShare(
+    @Param('pageId') pageId: string,
+    @Param('accountId') accountId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { accessLevel: 'view' | 'edit' },
+  ) {
+    await this.permissions.updatePageShare(pageId, accountId, dto.accessLevel === 'edit', user.id);
+    return { success: true };
+  }
+
+  @Delete(':dashId/pages/:pageId/shares/:accountId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a user\'s access to a page' })
+  async revokePageShare(
+    @Param('pageId') pageId: string,
+    @Param('accountId') accountId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    await this.permissions.revokePageAccess(pageId, accountId, user.id);
+  }
+
   // ── Widgets ───────────────────────────────────
 
   @Get(':dashId/pages/:pageId/widgets')
@@ -384,6 +469,76 @@ export class DashboardController {
     await this.builder.removeWidget(widgetId, pageId, user);
   }
 
+  @Post(':dashId/pages/:pageId/widgets/:widgetId/copy')
+  @ApiOperation({ summary: 'Copy a card into a different page/dashboard' })
+  async copyWidget(
+    @Param('widgetId') widgetId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body('targetPageId') targetPageId: string,
+  ) {
+    const widget = await this.builder.copyWidget(widgetId, targetPageId, user);
+    return { widget };
+  }
+
+  @Post(':dashId/pages/:pageId/widgets/:widgetId/move')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Move a card to a different page/dashboard' })
+  async moveWidget(
+    @Param('widgetId') widgetId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body('targetPageId') targetPageId: string,
+  ) {
+    const widget = await this.builder.moveWidget(widgetId, targetPageId, user);
+    return { widget };
+  }
+
+  // ── Card (widget)-level sharing ───────────────
+
+  @Get(':dashId/pages/:pageId/widgets/:widgetId/shares')
+  @ApiOperation({ summary: 'List users a card is shared with (includes dashboard owner)' })
+  async listWidgetShares(
+    @Param('widgetId') widgetId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    const { shares, owner } = await this.permissions.listWidgetShares(widgetId, user.id);
+    return { shares, owner };
+  }
+
+  @Post(':dashId/pages/:pageId/widgets/:widgetId/shares')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Share a single card with a user by email' })
+  async shareWidget(
+    @Param('widgetId') widgetId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { email: string; accessLevel: 'view' | 'edit' },
+  ) {
+    const share = await this.permissions.shareWidgetByEmail(widgetId, dto.email, dto.accessLevel === 'edit', user.id);
+    return { share };
+  }
+
+  @Put(':dashId/pages/:pageId/widgets/:widgetId/shares/:accountId')
+  @ApiOperation({ summary: 'Update a card share access level' })
+  async updateWidgetShare(
+    @Param('widgetId') widgetId: string,
+    @Param('accountId') accountId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { accessLevel: 'view' | 'edit' },
+  ) {
+    await this.permissions.updateWidgetShare(widgetId, accountId, dto.accessLevel === 'edit', user.id);
+    return { success: true };
+  }
+
+  @Delete(':dashId/pages/:pageId/widgets/:widgetId/shares/:accountId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a user\'s access to a card' })
+  async revokeWidgetShare(
+    @Param('widgetId') widgetId: string,
+    @Param('accountId') accountId: string,
+    @CurrentUser() user: SafeAccount,
+  ) {
+    await this.permissions.revokeWidgetAccess(widgetId, accountId, user.id);
+  }
+
   @Post(':dashId/pages/:pageId/widgets/:widgetId/execute')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Execute widget query synchronously' })
@@ -392,6 +547,7 @@ export class DashboardController {
     @CurrentUser() user: SafeAccount,
     @Body('forceRefresh') forceRefresh?: boolean,
   ) {
+    await this.permissions.requireWidgetAction(widgetId, user.id, 'can_view');
     return this.executionService.executeSync(widgetId, user, forceRefresh);
   }
 
@@ -409,8 +565,9 @@ export class DashboardController {
   @ApiOperation({ summary: 'AI-suggest an analytics question for an empty widget prompt' })
   async suggestWidgetQuestion(
     @Param('widgetId') widgetId: string,
-    @CurrentUser() _user: SafeAccount,
+    @CurrentUser() user: SafeAccount,
   ) {
+    await this.permissions.requireWidgetAction(widgetId, user.id, 'can_view');
     const question = await this.executionService.suggestQuestion(widgetId);
     return { question };
   }
@@ -420,9 +577,10 @@ export class DashboardController {
   @ApiOperation({ summary: 'AI-rephrase a user prompt into a clearer analytical request' })
   async improveWidgetPrompt(
     @Param('widgetId') widgetId: string,
-    @CurrentUser() _user: SafeAccount,
+    @CurrentUser() user: SafeAccount,
     @Body('prompt') prompt: string,
   ) {
+    await this.permissions.requireWidgetAction(widgetId, user.id, 'can_view');
     const improved = await this.executionService.improvePrompt(prompt || '', widgetId);
     return { prompt: improved };
   }

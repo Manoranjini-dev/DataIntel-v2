@@ -26,7 +26,12 @@ export type AuditEventType =
   // Dashboard events
   | 'dashboard_created' | 'dashboard_updated' | 'dashboard_published' | 'dashboard_unpublished' | 'dashboard_deleted'
   | 'dashboard_page_created' | 'dashboard_page_deleted' | 'dashboard_generated'
+  | 'dashboard_page_copied' | 'dashboard_page_moved'
+  | 'dashboard_shared' | 'dashboard_share_revoked'
+  | 'dashboard_page_shared' | 'dashboard_page_share_revoked'
   | 'widget_added' | 'widget_removed' | 'widget_executed' | 'widget_cache_invalidated'
+  | 'widget_copied' | 'widget_moved'
+  | 'widget_shared' | 'widget_share_revoked'
   // Card events
   | 'card_created' | 'card_updated' | 'card_published' | 'card_deleted' | 'card_version_rollback'
   | 'card_shared' | 'card_share_revoked'

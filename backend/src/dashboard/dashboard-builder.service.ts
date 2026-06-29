@@ -74,15 +74,27 @@ export class DashboardBuilderService {
 
   // ── Dashboard CRUD ────────────────────────────────────
 
-  /** List dashboards the user owns or that were shared with them */
+  /**
+   * List dashboards the user owns, that were shared with them directly, or
+   * where at least one PAGE within the dashboard was shared with them.
+   * Deliberately does NOT consider dashboard_widget_shares — a card-only
+   * share must never surface a dashboard tile (it belongs only in
+   * Cards → Shared with Me; see listSharedCards).
+   */
   async listDashboards(
     requesterId: string,
-    opts: { contextType?: string; contextId?: string; status?: string; origin?: string; requesterRole?: string } = {},
+    opts: { contextType?: string; contextId?: string; status?: string; origin?: string; requesterRole?: string; editableOnly?: boolean } = {},
   ) {
     // Visibility model:
-    //   • everyone: dashboards they own or that are shared with them.
+    //   • everyone: dashboards they own, that are shared with them directly,
+    //     or that have at least one page shared with them.
     //   • Admin (additional): every PUBLISHED dashboard across the project,
     //     regardless of owner or share — Admins oversee all published content.
+    const pageShareExists = `EXISTS (
+             SELECT 1 FROM dashboard_page_shares ps
+             JOIN dashboard_pages pg ON pg.id = ps.page_id
+             WHERE pg.dashboard_id = d.id AND ps.shared_with = $1 AND pg.deleted_at IS NULL
+           )`;
     const isAdmin = opts.requesterRole === 'ADMIN';
     const visibility = isAdmin
       ? `( d.created_by = $1
@@ -90,12 +102,14 @@ export class DashboardBuilderService {
            OR EXISTS (
              SELECT 1 FROM dashboard_shares ds
              WHERE ds.dashboard_id = d.id AND ds.shared_with = $1
-           ) )`
+           )
+           OR ${pageShareExists} )`
       : `( d.created_by = $1
            OR EXISTS (
              SELECT 1 FROM dashboard_shares ds
              WHERE ds.dashboard_id = d.id AND ds.shared_with = $1
-           ) )`;
+           )
+           OR ${pageShareExists} )`;
     const conditions = ['d.deleted_at IS NULL', visibility];
     const params: unknown[] = [requesterId];
     let p = 2;
@@ -104,20 +118,99 @@ export class DashboardBuilderService {
     if (opts.contextType) { conditions.push(`d.context_type = $${p++}`); params.push(opts.contextType); }
     if (opts.contextId) { conditions.push(`d.context_id = $${p++}`); params.push(opts.contextId); }
     if (opts.status) { conditions.push(`d.status = $${p++}`); params.push(opts.status); }
+    // Move/copy target picker: only dashboards the requester can actually edit into.
+    if (opts.editableOnly) {
+      conditions.push(
+        `( d.created_by = $1
+           OR EXISTS (
+             SELECT 1 FROM dashboard_shares ds
+             WHERE ds.dashboard_id = d.id AND ds.shared_with = $1 AND ds.can_edit = TRUE
+           ) )`,
+      );
+    }
 
-    return this.db.queryMany(
+    const rows = await this.db.queryMany<any>(
       `SELECT d.*, a.display_name AS created_by_name,
-              (SELECT COUNT(*) FROM dashboard_pages WHERE dashboard_id = d.id AND deleted_at IS NULL) AS page_count
+              (SELECT COUNT(*) FROM dashboard_pages WHERE dashboard_id = d.id AND deleted_at IS NULL) AS page_count,
+              ds.shared_by AS dash_share_shared_by, ds.can_edit AS dash_share_can_edit,
+              sharer.display_name AS dash_share_shared_by_name, sharer.email AS dash_share_shared_by_email,
+              (SELECT ps.shared_by FROM dashboard_page_shares ps
+                 JOIN dashboard_pages pg ON pg.id = ps.page_id
+               WHERE pg.dashboard_id = d.id AND ps.shared_with = $1 AND pg.deleted_at IS NULL
+               LIMIT 1) AS page_share_shared_by
        FROM dashboards d
        JOIN accounts a ON a.id = d.created_by
+       LEFT JOIN dashboard_shares ds ON ds.dashboard_id = d.id AND ds.shared_with = $1
+       LEFT JOIN accounts sharer ON sharer.id = ds.shared_by
        WHERE ${conditions.join(' AND ')}
        ORDER BY d.updated_at DESC`,
       params,
     );
+
+    const sharerCache = new Map<string, { display_name: string; email: string } | null>();
+    const resolveSharer = async (accountId: string) => {
+      if (!sharerCache.has(accountId)) {
+        sharerCache.set(accountId, await this.db.queryOne(`SELECT display_name, email FROM accounts WHERE id = $1`, [accountId]));
+      }
+      return sharerCache.get(accountId) ?? null;
+    };
+
+    const annotated: any[] = [];
+    for (const row of rows) {
+      const {
+        dash_share_shared_by, dash_share_can_edit, dash_share_shared_by_name, dash_share_shared_by_email,
+        page_share_shared_by, ...rest
+      } = row;
+      const isOwner = rest.created_by === requesterId;
+      if (isOwner) {
+        annotated.push({ ...rest, access_source: 'owner', shared_by_name: null, shared_by_email: null });
+      } else if (dash_share_shared_by) {
+        annotated.push({ ...rest, access_source: 'dashboard_share', shared_by_name: dash_share_shared_by_name, shared_by_email: dash_share_shared_by_email });
+      } else if (page_share_shared_by) {
+        const sharer = await resolveSharer(page_share_shared_by);
+        annotated.push({ ...rest, access_source: 'page_share', shared_by_name: sharer?.display_name ?? null, shared_by_email: sharer?.email ?? null });
+      } else {
+        // Admin viewing a published dashboard they neither own nor were shared on.
+        annotated.push({ ...rest, access_source: 'admin_published', shared_by_name: null, shared_by_email: null });
+      }
+    }
+    return annotated;
+  }
+
+  /**
+   * Cards (dashboard widgets) shared directly with the requester — the
+   * counterpart to listDashboards' page/dashboard scope. These never imply
+   * dashboard or page visibility (listDashboards intentionally ignores
+   * dashboard_widget_shares), so this is the ONLY place a card-only share
+   * surfaces: the Cards → Shared with Me page.
+   */
+  async listSharedCards(requesterId: string) {
+    return this.db.queryMany<any>(
+      `SELECT w.id, w.title, w.widget_type, w.query_definition, w.visualization_config,
+              w.cached_result, w.cached_at, w.updated_at, w.created_at,
+              ws.can_edit, ws.shared_by, ws.created_at AS shared_at,
+              sharer.display_name AS shared_by_name, sharer.email AS shared_by_email,
+              p.id AS page_id, p.name AS page_name,
+              d.id AS dashboard_id, d.name AS dashboard_name
+       FROM dashboard_widget_shares ws
+       JOIN dashboard_widgets_v2 w ON w.id = ws.widget_id
+       JOIN dashboard_pages p ON p.id = w.page_id
+       JOIN dashboards d ON d.id = p.dashboard_id
+       JOIN accounts sharer ON sharer.id = ws.shared_by
+       WHERE ws.shared_with = $1 AND w.deleted_at IS NULL
+         AND p.deleted_at IS NULL AND d.deleted_at IS NULL
+       ORDER BY ws.created_at DESC`,
+      [requesterId],
+    );
   }
 
   async getDashboard(dashId: string, requesterId: string, requesterRole?: string) {
-    await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
+    // Loosened from a hard dashboard-level gate to "any access at all" so a
+    // user who was only granted a page-level or card-level share can open
+    // the dashboard shell — listPages/listWidgets below then filter the
+    // content down to exactly what they were granted, nothing more.
+    const hasAnyAccess = await this.dashboardPermissions.canViewDashboardAtAll(dashId, requesterId);
+    if (!hasAnyAccess) throw new ForbiddenException('You do not have access to this dashboard');
     const dash = await this.db.queryOne<any>(
       `SELECT d.*, a.display_name AS created_by_name
        FROM dashboards d
@@ -322,15 +415,103 @@ export class DashboardBuilderService {
   // ── Page Management ────────────────────────────────────
 
   async listPages(dashId: string, requesterId: string) {
-    await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
-    return this.db.queryMany(
-      `SELECT p.*,
-         (SELECT COUNT(*) FROM dashboard_widgets_v2 w WHERE w.page_id = p.id AND w.deleted_at IS NULL) AS widget_count
-       FROM dashboard_pages p
-       WHERE p.dashboard_id = $1 AND p.deleted_at IS NULL
-       ORDER BY p.order_index ASC`,
+    // Filter-not-throw: a user with full dashboard access (owner / dashboard
+    // share / admin-on-published) sees every page, unchanged from before. A
+    // user who was only granted a share on ONE page sees only that page —
+    // the hard dashboard-level gate this used to call would have rejected
+    // them outright. Reject only if nothing in the dashboard is visible.
+    const dash = await this.db.queryOne<{ created_by: string }>(
+      `SELECT created_by FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
       [dashId],
     );
+    if (!dash) throw new NotFoundException('Dashboard not found');
+    const isOwner = dash.created_by === requesterId;
+
+    let hasFullAccess = isOwner;
+    let dashboardShareSharedBy: string | null = null;
+    if (!hasFullAccess) {
+      const share = await this.db.queryOne<{ shared_by: string }>(
+        `SELECT shared_by FROM dashboard_shares WHERE dashboard_id = $1 AND shared_with = $2`,
+        [dashId, requesterId],
+      );
+      if (share) { hasFullAccess = true; dashboardShareSharedBy = share.shared_by; }
+    }
+    if (!hasFullAccess) {
+      const acct = await this.db.queryOne<{ role: string }>(`SELECT role FROM accounts WHERE id = $1`, [requesterId]);
+      if (acct?.role === 'ADMIN') {
+        const published = await this.db.queryOne(
+          `SELECT 1 FROM dashboards WHERE id = $1 AND status = 'published' AND deleted_at IS NULL`,
+          [dashId],
+        );
+        if (published) hasFullAccess = true;
+      }
+    }
+
+    const pages = await this.db.queryMany<any>(
+      `SELECT p.*,
+         (SELECT COUNT(*) FROM dashboard_widgets_v2 w WHERE w.page_id = p.id AND w.deleted_at IS NULL) AS widget_count,
+         ps.can_edit AS page_share_can_edit, ps.shared_by AS page_share_shared_by,
+         sharer.display_name AS page_share_shared_by_name, sharer.email AS page_share_shared_by_email,
+         (SELECT ws.shared_by FROM dashboard_widget_shares ws
+            JOIN dashboard_widgets_v2 w ON w.id = ws.widget_id
+          WHERE w.page_id = p.id AND ws.shared_with = $2 AND w.deleted_at IS NULL
+          LIMIT 1) AS widget_share_shared_by
+       FROM dashboard_pages p
+       LEFT JOIN dashboard_page_shares ps ON ps.page_id = p.id AND ps.shared_with = $2
+       LEFT JOIN accounts sharer ON sharer.id = ps.shared_by
+       WHERE p.dashboard_id = $1 AND p.deleted_at IS NULL
+       ORDER BY p.order_index ASC`,
+      [dashId, requesterId],
+    );
+
+    const sharerCache = new Map<string, { display_name: string; email: string } | null>();
+    const resolveSharer = async (accountId: string) => {
+      if (!sharerCache.has(accountId)) {
+        sharerCache.set(accountId, await this.db.queryOne(`SELECT display_name, email FROM accounts WHERE id = $1`, [accountId]));
+      }
+      return sharerCache.get(accountId) ?? null;
+    };
+
+    const visible: any[] = [];
+    for (const page of pages) {
+      const { page_share_can_edit, page_share_shared_by, page_share_shared_by_name, page_share_shared_by_email, widget_share_shared_by, ...rest } = page;
+      if (hasFullAccess) {
+        let accessSource: string = isOwner ? 'owner' : 'dashboard_share';
+        let sharedByName: string | null = null;
+        let sharedByEmail: string | null = null;
+        if (accessSource === 'dashboard_share' && dashboardShareSharedBy) {
+          const sharer = await resolveSharer(dashboardShareSharedBy);
+          sharedByName = sharer?.display_name ?? null;
+          sharedByEmail = sharer?.email ?? null;
+        }
+        visible.push({ ...rest, access_source: accessSource, shared_by_name: sharedByName, shared_by_email: sharedByEmail });
+      } else if (page_share_shared_by) {
+        visible.push({
+          ...rest,
+          access_source: 'page_share',
+          shared_by_name: page_share_shared_by_name,
+          shared_by_email: page_share_shared_by_email,
+        });
+      } else if (widget_share_shared_by) {
+        // No page-level share, but at least one card on this page IS shared
+        // with them — the page must still appear so that card has a
+        // route/tab to be opened from. listWidgets independently filters
+        // this page down to just the card(s) actually shared.
+        const sharer = await resolveSharer(widget_share_shared_by);
+        visible.push({
+          ...rest,
+          access_source: 'widget_share',
+          shared_by_name: sharer?.display_name ?? null,
+          shared_by_email: sharer?.email ?? null,
+        });
+      }
+      // else: not visible to this requester — omitted entirely
+    }
+
+    if (visible.length === 0) {
+      throw new ForbiddenException('You do not have access to this dashboard');
+    }
+    return visible;
   }
 
   async createPage(dashId: string, creator: SafeAccount, name: string) {
@@ -360,7 +541,9 @@ export class DashboardBuilderService {
     pageId: string, dashId: string,
     updater: SafeAccount, data: { name?: string; isDefault?: boolean },
   ) {
-    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
+    // Page-level edit share is enough to rename/retitle a SPECIFIC page —
+    // falls back through dashboard-level edit for owners/dashboard-shares.
+    await this.dashboardPermissions.requirePageAction(pageId, updater.id, 'can_edit');
 
     // Validate the new name: non-empty and unique within the dashboard.
     if (data.name !== undefined) {
@@ -438,7 +621,7 @@ export class DashboardBuilderService {
   }
 
   async duplicatePage(pageId: string, dashId: string, creator: SafeAccount) {
-    await this.dashboardPermissions.requireAction(dashId, creator.id, 'can_edit');
+    await this.dashboardPermissions.requirePageAction(pageId, creator.id, 'can_edit');
 
     const sourcePage = await this.db.queryOne<{ name: string; order_index: number }>(
       `SELECT name, order_index FROM dashboard_pages WHERE id = $1 AND dashboard_id = $2 AND deleted_at IS NULL`,
@@ -473,6 +656,110 @@ export class DashboardBuilderService {
     return newPage;
   }
 
+  /**
+   * Copy a page (and all its widgets) into a DIFFERENT dashboard, leaving the
+   * source page and dashboard untouched. Requires view access to the source
+   * page and edit access to the destination dashboard.
+   */
+  async copyPage(pageId: string, sourceDashId: string, targetDashId: string, copier: SafeAccount) {
+    await this.dashboardPermissions.requirePageAction(pageId, copier.id, 'can_view');
+    await this.dashboardPermissions.requireAction(targetDashId, copier.id, 'can_edit');
+
+    const sourcePage = await this.db.queryOne<{ name: string }>(
+      `SELECT name FROM dashboard_pages WHERE id = $1 AND dashboard_id = $2 AND deleted_at IS NULL`,
+      [pageId, sourceDashId],
+    );
+    if (!sourcePage) throw new NotFoundException('Page not found');
+
+    const maxOrder = await this.db.queryOne<{ max_order: number }>(
+      `SELECT COALESCE(MAX(order_index), -1) AS max_order FROM dashboard_pages WHERE dashboard_id = $1 AND deleted_at IS NULL`,
+      [targetDashId],
+    );
+
+    const newPage = await this.db.queryOne(
+      `INSERT INTO dashboard_pages (dashboard_id, name, order_index, is_default)
+       VALUES ($1, $2, $3, FALSE) RETURNING *`,
+      [targetDashId, sourcePage.name, (maxOrder?.max_order ?? -1) + 1],
+    );
+
+    await this.db.query(
+      `INSERT INTO dashboard_widgets_v2
+         (page_id, card_id, widget_type, title, grid_x, grid_y, grid_w, grid_h,
+          layout_desktop, layout_tablet, layout_mobile,
+          datasource_context_type, datasource_context_id,
+          query_definition, query_language, visualization_config,
+          refresh_interval_sec, cache_ttl_sec, sort_order, created_by, updated_by)
+       SELECT $2, card_id, widget_type, title, grid_x, grid_y, grid_w, grid_h,
+              layout_desktop, layout_tablet, layout_mobile,
+              datasource_context_type, datasource_context_id,
+              query_definition, query_language, visualization_config,
+              refresh_interval_sec, cache_ttl_sec, sort_order, $3, $3
+       FROM dashboard_widgets_v2
+       WHERE page_id = $1 AND deleted_at IS NULL`,
+      [pageId, newPage!.id, copier.id],
+    );
+
+    await this.audit.log({
+      accountId: copier.id,
+      eventType: 'dashboard_page_copied', resourceType: 'dashboard_page', resourceId: newPage!.id,
+      details: { sourcePageId: pageId, sourceDashId, targetDashId },
+    });
+    await this.invalidateDashboardCache(targetDashId);
+
+    return newPage;
+  }
+
+  /**
+   * Move a page (and all its widgets) to a DIFFERENT dashboard. Requires
+   * edit access to the source page and edit access to the destination
+   * dashboard. The last page of a dashboard cannot be moved away.
+   */
+  async movePage(pageId: string, sourceDashId: string, targetDashId: string, mover: SafeAccount) {
+    await this.dashboardPermissions.requirePageAction(pageId, mover.id, 'can_edit');
+    await this.dashboardPermissions.requireAction(targetDashId, mover.id, 'can_edit');
+
+    const sourcePage = await this.db.queryOne<{ id: string }>(
+      `SELECT id FROM dashboard_pages WHERE id = $1 AND dashboard_id = $2 AND deleted_at IS NULL`,
+      [pageId, sourceDashId],
+    );
+    if (!sourcePage) throw new NotFoundException('Page not found');
+
+    const pageCount = await this.db.queryOne<{ count: string }>(
+      `SELECT COUNT(*) FROM dashboard_pages WHERE dashboard_id = $1 AND deleted_at IS NULL`,
+      [sourceDashId],
+    );
+    if (parseInt(pageCount?.count || '0', 10) <= 1) {
+      throw new ForbiddenException('Cannot move the last page out of a dashboard');
+    }
+
+    const maxOrder = await this.db.queryOne<{ max_order: number }>(
+      `SELECT COALESCE(MAX(order_index), -1) AS max_order FROM dashboard_pages WHERE dashboard_id = $1 AND deleted_at IS NULL`,
+      [targetDashId],
+    );
+
+    const movedPage = await this.db.queryOne(
+      `UPDATE dashboard_pages
+       SET dashboard_id = $2, order_index = $3, is_default = FALSE, updated_at = NOW()
+       WHERE id = $1
+       RETURNING *`,
+      [pageId, targetDashId, (maxOrder?.max_order ?? -1) + 1],
+    );
+
+    // Page-level shares are scoped to the page row itself, so they travel
+    // with it automatically (no cleanup needed). Widget-level shares are
+    // likewise scoped to widget rows, which are untouched by this move.
+
+    await this.audit.log({
+      accountId: mover.id,
+      eventType: 'dashboard_page_moved', resourceType: 'dashboard_page', resourceId: pageId,
+      details: { sourceDashId, targetDashId },
+    });
+    await this.invalidateDashboardCache(sourceDashId);
+    await this.invalidateDashboardCache(targetDashId);
+
+    return movedPage;
+  }
+
   // ── Widget Management ──────────────────────────────────
 
   /** Resolve the dashboard_id that owns a page (for permission checks) */
@@ -485,9 +772,13 @@ export class DashboardBuilderService {
   }
 
   async listWidgets(pageId: string, requesterId: string) {
-    const dashId = await this.resolveDashboardIdForPage(pageId);
-    await this.dashboardPermissions.requireAction(dashId, requesterId, 'can_view');
-    return this.db.queryMany(
+    // Filter-not-throw, same approach as listPages: full dashboard or
+    // page-level access shows every card on the page (unchanged for
+    // existing owners/dashboard-shares/page-shares); a user with ONLY a
+    // share on a specific card sees just that card.
+    const hasPageAccess = await this.dashboardPermissions.canViewPage(pageId, requesterId);
+
+    const widgets = await this.db.queryMany<any>(
       `SELECT w.*,
               c.name AS card_name, c.status AS card_status,
               c.raw_query AS card_raw_query,
@@ -495,19 +786,42 @@ export class DashboardBuilderService {
               c.datasource_context_id AS card_context_id,
               c.datasource_context_type AS card_context_type,
               qe.result_preview AS card_result_preview,
-              qe.result_columns AS card_result_columns
+              qe.result_columns AS card_result_columns,
+              ws.can_edit AS widget_share_can_edit, ws.shared_by AS widget_share_shared_by,
+              sharer.display_name AS widget_share_shared_by_name, sharer.email AS widget_share_shared_by_email
        FROM dashboard_widgets_v2 w
        LEFT JOIN analytics_cards c ON c.id = w.card_id
        LEFT JOIN query_executions qe ON qe.id = c.last_execution_id
+       LEFT JOIN dashboard_widget_shares ws ON ws.widget_id = w.id AND ws.shared_with = $2
+       LEFT JOIN accounts sharer ON sharer.id = ws.shared_by
        WHERE w.page_id = $1 AND w.deleted_at IS NULL
        ORDER BY w.grid_y ASC, w.grid_x ASC`,
-      [pageId],
+      [pageId, requesterId],
     );
+
+    if (hasPageAccess) {
+      return widgets.map(({ widget_share_can_edit, widget_share_shared_by, widget_share_shared_by_name, widget_share_shared_by_email, ...rest }) => rest);
+    }
+
+    const visible = widgets
+      .filter((w) => w.widget_share_shared_by)
+      .map(({ widget_share_can_edit, widget_share_shared_by, widget_share_shared_by_name, widget_share_shared_by_email, ...rest }) => ({
+        ...rest,
+        access_source: 'widget_share',
+        shared_by_name: widget_share_shared_by_name,
+        shared_by_email: widget_share_shared_by_email,
+      }));
+
+    if (visible.length === 0) {
+      throw new ForbiddenException('You do not have access to this page');
+    }
+    return visible;
   }
 
   async addWidget(pageId: string, creator: SafeAccount, dto: CreateWidgetDto) {
     const dashId = await this.resolveDashboardIdForPage(pageId);
-    await this.dashboardPermissions.requireAction(dashId, creator.id, 'can_edit');
+    // Page-level edit share lets a recipient add cards to THEIR shared page.
+    await this.dashboardPermissions.requirePageAction(pageId, creator.id, 'can_edit');
 
     const widget = await this.db.queryOne(
       `INSERT INTO dashboard_widgets_v2
@@ -553,7 +867,8 @@ export class DashboardBuilderService {
     updater: SafeAccount, dto: Partial<CreateWidgetDto>,
   ) {
     const dashId = await this.resolveDashboardIdForPage(pageId);
-    await this.dashboardPermissions.requireAction(dashId, updater.id, 'can_edit');
+    // Widget-level edit share lets a recipient edit just the card shared with them.
+    await this.dashboardPermissions.requireWidgetAction(widgetId, updater.id, 'can_edit');
 
     const widget = await this.db.queryOne(
       `UPDATE dashboard_widgets_v2
@@ -597,7 +912,7 @@ export class DashboardBuilderService {
 
   async removeWidget(widgetId: string, pageId: string, remover: SafeAccount) {
     const dashId = await this.resolveDashboardIdForPage(pageId);
-    await this.dashboardPermissions.requireAction(dashId, remover.id, 'can_edit');
+    await this.dashboardPermissions.requireWidgetAction(widgetId, remover.id, 'can_edit');
 
     await this.db.query(
       `UPDATE dashboard_widgets_v2
@@ -612,6 +927,101 @@ export class DashboardBuilderService {
     });
 
     await this.invalidateDashboardCache(dashId);
+  }
+
+  /**
+   * Copy a single card into a DIFFERENT page (same or different dashboard),
+   * leaving the source card untouched. Requires view access to the source
+   * card and edit access to the destination page.
+   */
+  async copyWidget(widgetId: string, targetPageId: string, copier: SafeAccount) {
+    await this.dashboardPermissions.requireWidgetAction(widgetId, copier.id, 'can_view');
+    await this.dashboardPermissions.requirePageAction(targetPageId, copier.id, 'can_edit');
+
+    const source = await this.db.queryOne<any>(
+      `SELECT * FROM dashboard_widgets_v2 WHERE id = $1 AND deleted_at IS NULL`,
+      [widgetId],
+    );
+    if (!source) throw new NotFoundException('Card not found');
+
+    const maxY = await this.db.queryOne<{ max_y: number }>(
+      `SELECT COALESCE(MAX(grid_y + grid_h), 0) AS max_y FROM dashboard_widgets_v2 WHERE page_id = $1 AND deleted_at IS NULL`,
+      [targetPageId],
+    );
+
+    const copy = await this.db.queryOne(
+      `INSERT INTO dashboard_widgets_v2
+         (page_id, card_id, pinned_card_version, widget_type, title,
+          grid_x, grid_y, grid_w, grid_h,
+          layout_desktop, layout_tablet, layout_mobile,
+          datasource_context_type, datasource_context_id,
+          query_definition, query_language, visualization_config,
+          refresh_interval_sec, cache_ttl_sec, sort_order, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $20)
+       RETURNING *`,
+      [
+        targetPageId, source.card_id, source.pinned_card_version, source.widget_type, source.title,
+        maxY?.max_y ?? 0, source.grid_w, source.grid_h,
+        JSON.stringify(source.layout_desktop || {}), JSON.stringify(source.layout_tablet || {}), JSON.stringify(source.layout_mobile || {}),
+        source.datasource_context_type, source.datasource_context_id,
+        JSON.stringify(source.query_definition || {}), source.query_language, JSON.stringify(source.visualization_config || {}),
+        source.refresh_interval_sec, source.cache_ttl_sec, source.sort_order, copier.id,
+      ],
+    );
+
+    const targetDashId = await this.resolveDashboardIdForPage(targetPageId);
+    await this.audit.log({
+      accountId: copier.id,
+      eventType: 'widget_copied', resourceType: 'widget', resourceId: copy!.id,
+      details: { sourceWidgetId: widgetId, targetPageId },
+    });
+    await this.invalidateDashboardCache(targetDashId);
+
+    return copy;
+  }
+
+  /**
+   * Move a single card to a DIFFERENT page (same or different dashboard).
+   * Requires edit access to the source card and edit access to the
+   * destination page.
+   */
+  async moveWidget(widgetId: string, targetPageId: string, mover: SafeAccount) {
+    await this.dashboardPermissions.requireWidgetAction(widgetId, mover.id, 'can_edit');
+    await this.dashboardPermissions.requirePageAction(targetPageId, mover.id, 'can_edit');
+
+    const source = await this.db.queryOne<{ page_id: string }>(
+      `SELECT page_id FROM dashboard_widgets_v2 WHERE id = $1 AND deleted_at IS NULL`,
+      [widgetId],
+    );
+    if (!source) throw new NotFoundException('Card not found');
+    const sourceDashId = await this.resolveDashboardIdForPage(source.page_id);
+    const targetDashId = await this.resolveDashboardIdForPage(targetPageId);
+
+    const maxY = await this.db.queryOne<{ max_y: number }>(
+      `SELECT COALESCE(MAX(grid_y + grid_h), 0) AS max_y FROM dashboard_widgets_v2 WHERE page_id = $1 AND deleted_at IS NULL`,
+      [targetPageId],
+    );
+
+    const moved = await this.db.queryOne(
+      `UPDATE dashboard_widgets_v2
+       SET page_id = $2, grid_x = 0, grid_y = $3, updated_at = NOW(), updated_by = $4
+       WHERE id = $1
+       RETURNING *`,
+      [widgetId, targetPageId, maxY?.max_y ?? 0, mover.id],
+    );
+
+    // Widget-level shares stay attached to the widget row and travel with it.
+
+    await this.audit.log({
+      accountId: mover.id,
+      eventType: 'widget_moved', resourceType: 'widget', resourceId: widgetId,
+      details: { sourcePageId: source.page_id, targetPageId },
+    });
+    await this.cache.del(CacheKeys.widgetResult(widgetId));
+    await this.invalidateDashboardCache(sourceDashId);
+    await this.invalidateDashboardCache(targetDashId);
+
+    return moved;
   }
 
   /**
@@ -661,8 +1071,7 @@ export class DashboardBuilderService {
       [widgetId],
     );
     if (!widgetRow) throw new NotFoundException('Widget not found');
-    const dashId = await this.resolveDashboardIdForPage(widgetRow.page_id);
-    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_view');
+    await this.dashboardPermissions.requireWidgetAction(widgetId, requester.id, 'can_view');
 
     // Try the most-recent widget_execution → query_execution for the generated SQL
     const execution = await this.db.queryOne(

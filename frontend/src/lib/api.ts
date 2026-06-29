@@ -477,11 +477,12 @@ export const chatApi = {
 // ── Dashboard API ─────────────────────────
 
 export const dashboardApi = {
-  list: async (params: { origin?: 'manual' | 'datasource'; contextType?: string; contextId?: string } = {}) => {
+  list: async (params: { origin?: 'manual' | 'datasource'; contextType?: string; contextId?: string; editableOnly?: boolean } = {}) => {
     const qs = new URLSearchParams();
     if (params.origin) qs.set('origin', params.origin);
     if (params.contextType) qs.set('contextType', params.contextType);
     if (params.contextId) qs.set('contextId', params.contextId);
+    if (params.editableOnly) qs.set('editableOnly', 'true');
     const suffix = qs.toString() ? `?${qs.toString()}` : '';
     const r = await apiFetch(`/dashboards${suffix}`);
     const data = await handleResponse<{ dashboards: any[] }>(r);
@@ -774,6 +775,100 @@ export const dashboardApi = {
   searchShareTargets: async (q: string) => {
     const r = await apiFetch(`/dashboards/share-targets?q=${encodeURIComponent(q)}`);
     return handleResponse<{ users: { id: string; email: string; display_name: string; role: string }[] }>(r);
+  },
+
+  // Cards (dashboard widgets) shared directly with the current user — a
+  // card-only share, which never appears in dashboardApi.list().
+  listSharedCards: async () => {
+    const r = await apiFetch(`/dashboards/shared-cards`);
+    return handleResponse<{ cards: any[] }>(r);
+  },
+
+  // ── Page-level sharing ─────────────────────────
+
+  listPageShares: async (dashId: string, pageId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/shares`);
+    return handleResponse<{ shares: any[]; owner: any }>(r);
+  },
+
+  sharePage: async (dashId: string, pageId: string, data: { email: string; accessLevel: 'view' | 'edit' }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/shares`, {
+      method: 'POST', body: JSON.stringify(data),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  updatePageShare: async (dashId: string, pageId: string, accountId: string, data: { accessLevel: 'view' | 'edit' }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/shares/${accountId}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  revokePageShare: async (dashId: string, pageId: string, accountId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/shares/${accountId}`, { method: 'DELETE' });
+    return handleResponse<any>(r);
+  },
+
+  // ── Card (widget)-level sharing ────────────────
+
+  listWidgetShares: async (dashId: string, pageId: string, widgetId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/shares`);
+    return handleResponse<{ shares: any[]; owner: any }>(r);
+  },
+
+  shareWidget: async (dashId: string, pageId: string, widgetId: string, data: { email: string; accessLevel: 'view' | 'edit' }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/shares`, {
+      method: 'POST', body: JSON.stringify(data),
+    });
+    return handleResponse<{ share: any }>(r);
+  },
+
+  updateWidgetShare: async (dashId: string, pageId: string, widgetId: string, accountId: string, data: { accessLevel: 'view' | 'edit' }) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/shares/${accountId}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
+
+  revokeWidgetShare: async (dashId: string, pageId: string, widgetId: string, accountId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/shares/${accountId}`, { method: 'DELETE' });
+    return handleResponse<any>(r);
+  },
+
+  // ── Move / Copy ────────────────────────────────
+
+  duplicatePage: async (dashId: string, pageId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/duplicate`, { method: 'POST' });
+    return handleResponse<{ page: any }>(r);
+  },
+
+  copyPageTo: async (dashId: string, pageId: string, targetDashboardId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/copy-to`, {
+      method: 'POST', body: JSON.stringify({ targetDashboardId }),
+    });
+    return handleResponse<{ page: any }>(r);
+  },
+
+  movePage: async (dashId: string, pageId: string, targetDashboardId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/move`, {
+      method: 'POST', body: JSON.stringify({ targetDashboardId }),
+    });
+    return handleResponse<{ page: any }>(r);
+  },
+
+  copyWidget: async (dashId: string, pageId: string, widgetId: string, targetPageId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/copy`, {
+      method: 'POST', body: JSON.stringify({ targetPageId }),
+    });
+    return handleResponse<{ widget: any }>(r);
+  },
+
+  moveWidget: async (dashId: string, pageId: string, widgetId: string, targetPageId: string) => {
+    const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/move`, {
+      method: 'POST', body: JSON.stringify({ targetPageId }),
+    });
+    return handleResponse<{ widget: any }>(r);
   },
 };
 
