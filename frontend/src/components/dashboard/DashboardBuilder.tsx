@@ -3505,7 +3505,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           <div className="flex items-center justify-between gap-3 px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-amber-700 dark:text-amber-400 text-xs font-medium shrink-0">
             <div className="flex items-center gap-2">
               <svg className="w-3.5 h-3.5 animate-spin shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-              Generating AI-powered insight cards from your data source… they'll appear automatically in a moment.
+              Generating AI-powered insight cards from your data source… they&apos;ll appear automatically in a moment.
             </div>
             <button onClick={() => setSeedingBanner(false)} className="text-amber-500 hover:text-amber-700 transition-colors shrink-0">✕</button>
           </div>

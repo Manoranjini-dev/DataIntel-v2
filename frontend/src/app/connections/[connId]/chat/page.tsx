@@ -858,7 +858,7 @@ function AddToDashboardModal({ connId, message, onClose }: {
   useEffect(() => {
     // Fetch ONLY manually created dashboards, per user request
     dashboardApi.list({ origin: 'manual' }).then(res => {
-      let list = res.dashboards || [];
+      const list = res.dashboards || [];
       setDashboards(list);
       if (list.length > 0) setSelectedDash(list[0].id);
     }).catch(console.error);

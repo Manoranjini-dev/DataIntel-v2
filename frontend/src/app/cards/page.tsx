@@ -8,7 +8,7 @@ import { GenerativeUIRenderer } from '@/components/generative-ui';
 import type { QueryExecutionResult, UIHint } from '@/lib/types';
 import {
   Plus, Pencil, X, Check, ChevronRight, Sparkles, MoreHorizontal,
-  BarChart2, TrendingUp, PieChart, Table2, Hash, RefreshCw, Share2,
+  BarChart2, TrendingUp, PieChart, Table2, Hash, RefreshCw, Share2, Trash2,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────────
@@ -727,12 +727,14 @@ function CardActionsMenu({
   onEdit,
   onShare,
   onSuggestTitle,
+  onDelete,
 }: {
   canEdit: boolean;
   isOwner: boolean;
   onEdit: () => void;
   onShare: () => void;
   onSuggestTitle: () => void;
+  onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -779,6 +781,17 @@ function CardActionsMenu({
               <Share2 className="w-3.5 h-3.5 text-muted-foreground" /> Share Card
             </button>
           )}
+          {isOwner && (
+            <>
+              <div className="my-1 border-t border-border" />
+              <button
+                onClick={() => { setOpen(false); onDelete(); }}
+                className="w-full text-left px-3 py-2 text-xs hover:bg-destructive/10 flex items-center gap-2 text-destructive transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete Card
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -791,6 +804,7 @@ function LiveCardTile({
   onEdit,
   onShare,
   onSave,
+  onDelete,
   canEdit,
   isOwner,
 }: {
@@ -798,6 +812,7 @@ function LiveCardTile({
   onEdit: () => void;
   onShare: () => void;
   onSave: (updated: any) => void;
+  onDelete: () => void;
   canEdit: boolean;
   isOwner: boolean;
 }) {
@@ -912,6 +927,7 @@ function LiveCardTile({
             onEdit={onEdit}
             onShare={onShare}
             onSuggestTitle={handleSuggestTitle}
+            onDelete={onDelete}
           />
         </div>
       </div>
@@ -974,9 +990,11 @@ export default function CardsPage() {
   const [activeTab,   setActiveTab]   = useState<'my_cards' | 'shared_with_me'>(
     isViewer ? 'shared_with_me' : 'my_cards',
   );
-  const [editingCard, setEditingCard] = useState<any>(null);
-  const [sharingCard, setSharingCard] = useState<any>(null);
-  const [showNew,     setShowNew]     = useState(false);
+  const [editingCard,  setEditingCard]  = useState<any>(null);
+  const [sharingCard,  setSharingCard]  = useState<any>(null);
+  const [deletingCard, setDeletingCard] = useState<any>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [showNew,      setShowNew]      = useState(false);
 
   const loadCards = useCallback(async () => {
     setLoading(true);
@@ -1005,6 +1023,18 @@ export default function CardsPage() {
       setCards(cs => [card, ...cs]);
       setTotal(t => t + 1);
     }
+  }
+
+  async function handleDeleteCard() {
+    if (!deletingCard) return;
+    setDeleteLoading(true);
+    try {
+      await cardApi.delete(deletingCard.id);
+      setCards(cs => cs.filter(c => c.id !== deletingCard.id));
+      setTotal(t => Math.max(0, t - 1));
+      setDeletingCard(null);
+    } catch (e) { console.error(e); }
+    finally { setDeleteLoading(false); }
   }
 
   const tabCounts = activeTab === 'my_cards' ? total : undefined;
@@ -1103,6 +1133,7 @@ export default function CardsPage() {
                   canEdit={canEdit}
                   onEdit={() => setEditingCard(card)}
                   onShare={() => setSharingCard(card)}
+                  onDelete={() => setDeletingCard(card)}
                   onSave={handleCardSaved}
                 />
               );
@@ -1137,6 +1168,63 @@ export default function CardsPage() {
           onCreated={handleCardCreated}
           onClose={() => setShowNew(false)}
         />
+      )}
+
+      {/* Delete confirmation modal */}
+      {deletingCard && (
+        <div
+          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => !deleteLoading && setDeletingCard(null)}
+        >
+          <div
+            className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-5 border-b border-border">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center">
+                  <Trash2 className="w-4 h-4 text-destructive" />
+                </div>
+                <h2 className="text-base font-semibold text-foreground">Delete Card</h2>
+              </div>
+              <button
+                onClick={() => !deleteLoading && setDeletingCard(null)}
+                className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-6 py-5">
+              <p className="text-sm text-foreground">
+                Are you sure you want to delete{' '}
+                <span className="font-semibold">{deletingCard.name}</span>?
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-2 px-6 pb-6">
+              <button
+                onClick={handleDeleteCard}
+                disabled={deleteLoading}
+                className="flex-1 py-2.5 bg-destructive hover:bg-destructive/90 text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-colors flex items-center justify-center gap-2"
+              >
+                {deleteLoading ? (
+                  <><span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Deleting…</>
+                ) : (
+                  <><Trash2 className="w-4 h-4" /> Delete Card</>
+                )}
+              </button>
+              <button
+                onClick={() => setDeletingCard(null)}
+                disabled={deleteLoading}
+                className="px-5 py-2.5 bg-muted hover:bg-muted/80 rounded-xl text-sm text-muted-foreground transition-colors disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

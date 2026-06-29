@@ -987,6 +987,12 @@ export const cardApi = {
     });
     return handleResponse<{ card: any }>(r);
   },
+  delete: async (cardId: string) => {
+    const r = await apiFetch(`/cards/${cardId}`, {
+      method: 'DELETE',
+    });
+    return handleResponse<{ success: boolean }>(r);
+  },
 
   // ── Sharing ──────────────────────────────────────────────────
 
