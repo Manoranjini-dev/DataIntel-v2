@@ -320,7 +320,7 @@ Rules:
    * widget prompts already on the same page (to avoid duplicate insights).
    * Does NOT execute anything; returns a question string for the user to review.
    */
-  async suggestQuestion(widgetId: string): Promise<string> {
+  async suggestQuestion(widgetId: string, providedConnectionId?: string, providedVizType?: string): Promise<string> {
     const widget = await this.db.queryOne<any>(
       `SELECT w.*, p.id as page_id_val,
               d.context_type as dash_context_type, d.context_id as dash_context_id
@@ -332,7 +332,7 @@ Rules:
     );
     if (!widget) throw new NotFoundException('Widget not found');
 
-    const connId = await this.resolveWidgetConnectionId(widget);
+    const connId = providedConnectionId || await this.resolveWidgetConnectionId(widget);
     const schema = connId ? await this.buildSchemaContext(connId) : '-- No schema available';
 
     // Fetch sibling widgets on the same page to enable deduplication.
@@ -353,7 +353,7 @@ Rules:
       })
       .filter(Boolean);
 
-    const widgetType = String(widget.widget_type || 'table');
+    const widgetType = providedVizType || widget.widget_type || 'table';
     const guidance = this.chartTypeGuidance(widgetType);
 
     const dedupBlock = siblingPrompts.length

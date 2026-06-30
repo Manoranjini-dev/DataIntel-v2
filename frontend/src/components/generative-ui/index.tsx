@@ -63,7 +63,7 @@ function resolveComponent(
         break;
 
       case 'bar_chart':
-        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
         break;
 
       case 'line_chart':
@@ -80,12 +80,12 @@ function resolveComponent(
         break;
 
       case 'combo_chart':
-        if (numericCols.length >= 2 && rows.length >= 2) return 'combo_chart';
-        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        if (numericCols.length >= 2 && rows.length >= 1) return 'combo_chart';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
         break;
 
       case 'pie_chart':
-        if (hasNumeric && rows.length >= 2 && rows.length <= 12 && columns.length >= 2)
+        if (hasNumeric && rows.length >= 1 && rows.length <= 12 && columns.length >= 2)
           return 'pie_chart';
         break;
 
@@ -100,24 +100,24 @@ function resolveComponent(
 
       // New extended types — map to closest existing renderer
       case 'donut_chart':
-        if (hasNumeric && rows.length >= 2 && rows.length <= 12 && columns.length >= 2)
+        if (hasNumeric && rows.length >= 1 && rows.length <= 12 && columns.length >= 2)
           return 'pie_chart';
         break;
 
       case 'stacked_bar':
-        if (numericCols.length >= 2 && rows.length >= 2) return 'stacked_bar';
-        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        if (numericCols.length >= 2 && rows.length >= 1) return 'stacked_bar';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
         break;
 
       case 'horizontal_bar':
-        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
         break;
 
       case 'scatter':
       case 'scatter_plot':
         // True scatter needs two numeric axes; otherwise fall back to a bar chart.
-        if (numericCols.length >= 2 && rows.length >= 2) return 'scatter';
-        if (hasNumeric && rows.length >= 3 && columns.length >= 2) return 'bar_chart';
+        if (numericCols.length >= 2 && rows.length >= 1) return 'scatter';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
         break;
 
       case 'radar_chart':
@@ -135,7 +135,7 @@ function resolveComponent(
         break;
 
       case 'funnel_chart':
-        if (hasNumeric && rows.length >= 2 && columns.length >= 2) return 'bar_chart';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
         break;
 
       case 'timeline':

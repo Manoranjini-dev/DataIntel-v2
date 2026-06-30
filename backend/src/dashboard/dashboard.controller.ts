@@ -566,9 +566,11 @@ export class DashboardController {
   async suggestWidgetQuestion(
     @Param('widgetId') widgetId: string,
     @CurrentUser() user: SafeAccount,
+    @Body('connectionId') connectionId?: string,
+    @Body('vizType') vizType?: string,
   ) {
     await this.permissions.requireWidgetAction(widgetId, user.id, 'can_view');
-    const question = await this.executionService.suggestQuestion(widgetId);
+    const question = await this.executionService.suggestQuestion(widgetId, connectionId, vizType);
     return { question };
   }
 

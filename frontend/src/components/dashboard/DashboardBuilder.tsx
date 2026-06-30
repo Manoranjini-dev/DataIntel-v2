@@ -1720,11 +1720,15 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
       // ── Mode 1: empty prompt → suggest a question, then continue to SQL. ──
       setAssisting(true);
       try {
-        const { question } = await dashboardApi.suggestQuestion(dashId, pageId, widget.id);
+        const { question } = await dashboardApi.suggestQuestion(dashId, pageId, widget.id, localConnectionId, vizType);
         const suggested = (question || '').trim();
         if (!suggested) {
           // Backend always returns a fallback, so empty here means a real failure.
           setError('AI generation failed — could not propose a question. Please type one and try again.');
+          return;
+        }
+        if (suggested.toLowerCase().includes('unable to craft') || suggested.toLowerCase().includes('no database schema')) {
+          setError('AI cannot suggest a question because no database schema is available. Please run Schema Sync for this data source first.');
           return;
         }
         finalPrompt = suggested;

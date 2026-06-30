@@ -688,11 +688,10 @@ export const dashboardApi = {
     return handleResponse<{ execution: any }>(r);
   },
 
-  // AI assist — suggest an analytics question for an empty widget prompt.
-  suggestQuestion: async (dashId: string, pageId: string, widgetId: string) => {
+  suggestQuestion: async (dashId: string, pageId: string, widgetId: string, connectionId?: string, vizType?: string) => {
     const r = await apiFetch(`/dashboards/${dashId}/pages/${pageId}/widgets/${widgetId}/suggest-question`, {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify({ connectionId, vizType }),
     });
     return handleResponse<{ question: string }>(r);
   },
