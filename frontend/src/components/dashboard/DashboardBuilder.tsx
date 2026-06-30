@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
-import { dashboardApi, chatApi, cardApi } from '@/lib/api';
+import { dashboardApi, chatApi, cardApi, connectionApi } from '@/lib/api';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ResponsiveGridLayout = require('react-grid-layout').Responsive as React.ComponentType<any>;
 import 'react-grid-layout/css/styles.css';
@@ -1017,25 +1018,39 @@ function WidgetSidebar({ onCardClick, onTemplateClick }: {
 }
 
 // ── Add Widget Dialog ──────────────────────────────────────────
-function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, onAdd, onClose, defaultHint, defaultPosition, isGeneral }: {
+function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, onConnectionChange, onAdd, onClose, defaultHint, defaultPosition, isGeneral, availableConnections, availablePages }: {
   dashId: string; pageId: string; chatId?: string; connectionId?: string;
   onChatCreated?: (id: string) => void;
+  onConnectionChange?: (id: string) => void;
   onAdd: (widget: Record<string, unknown>) => void; onClose: () => void;
   defaultHint?: string; defaultPosition?: { x: number; y: number; w: number; h: number };
   isGeneral?: boolean;
+  availableConnections?: any[];
+  availablePages?: { id: string; name: string }[];
 }) {
   const [prompt, setPrompt] = useState('');
   const [title, setTitle] = useState('');
   const [loading, setLoading] = useState(false);
   const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  // For cards mode: user picks connection + destination page inside this dialog.
+  const [localConnectionId, setLocalConnectionId] = useState(connectionId || '');
+  const [localPageId, setLocalPageId] = useState(pageId);
+
+  const effectiveConnectionId = localConnectionId || connectionId;
+  const hasConnection = !!(chatId || effectiveConnectionId);
+
+  function handleConnectionSelect(id: string) {
+    setLocalConnectionId(id);
+    onConnectionChange?.(id);
+  }
 
   async function handleGenerate() {
     if (!prompt.trim()) return;
     setLoading(true);
     try {
       let activeChatId = chatId;
-      if (!activeChatId && connectionId) {
-        const { chat } = await chatApi.create({ connectionId });
+      if (!activeChatId && effectiveConnectionId) {
+        const { chat } = await chatApi.create({ connectionId: effectiveConnectionId });
         activeChatId = chat.id;
         onChatCreated?.(chat.id);
       }
@@ -1060,7 +1075,8 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
       // across add, save, and reload cycles.
       const posX = defaultPosition?.x ?? 0;
       const posY = defaultPosition?.y ?? 0;
-      const widget = await dashboardApi.addWidget(dashId, pageId, {
+      const targetPage = localPageId || pageId;
+      const widget = await dashboardApi.addWidget(dashId, targetPage, {
         title: title || prompt,
         widget_type: widgetType,
         queryPrompt: prompt,
@@ -1084,6 +1100,7 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
         // Always true — defaultPosition is pre-computed before the dialog opens,
         // so handleWidgetAdded should use it directly without calling findNextSlot again.
         is_dropped: true,
+        _targetPageId: targetPage,
       });
       onClose();
     } catch (e) { console.error(e); }
@@ -1093,6 +1110,7 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
   const exec = preview ? (preview as any).execution as Record<string, unknown> : null;
   const llmSuggestedHint = preview ? ((preview as any).assistantMessage?.ui_hint || exec?.ui_hint as string | undefined) : undefined;
   const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all';
+  const btnRowCls = `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm text-left transition-all`;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1106,11 +1124,49 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
         </div>
 
         <div className="p-5 space-y-4">
+          {/* Data source picker — cards mode only, shown when no connection is pre-linked */}
+          {availableConnections && !connectionId && (
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data Source</label>
+              {availableConnections.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-1">No data sources connected. Add one from Settings → Connections.</p>
+              ) : (
+                <select
+                  value={localConnectionId}
+                  onChange={e => handleConnectionSelect(e.target.value)}
+                  className="w-full px-3 py-2.5 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all text-foreground"
+                >
+                  <option value="" disabled>Select a data source…</option>
+                  {availableConnections.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.name} {c.connector_type ? `(${c.connector_type})` : ''}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
+
+          {/* Destination page picker — cards mode only, shown when multiple pages exist */}
+          {availablePages && availablePages.length > 1 && (
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Destination Page</label>
+              <div className="space-y-1.5">
+                {availablePages.map(p => (
+                  <button key={p.id} onClick={() => setLocalPageId(p.id)}
+                    className={`${btnRowCls} ${localPageId === p.id ? 'border-primary bg-primary/5 text-foreground' : 'border-border hover:border-primary/40 hover:bg-muted/40 text-foreground'}`}>
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${localPageId === p.id ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
+                    <span className="font-medium">{p.name}</span>
+                    {p.id === pageId && <span className="ml-auto text-xs text-muted-foreground">current</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1.5">Widget Title</label>
             <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g., Monthly Revenue" className={inputCls} />
           </div>
-          
+
           {!isGeneral && (
             <>
               <div>
@@ -1120,13 +1176,13 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
                   rows={3} className={`${inputCls} resize-none`} />
               </div>
 
-              {!chatId && !connectionId && (
+              {!hasConnection && !availableConnections && (
                 <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2">
                   No linked chat. Connect a data source to this dashboard first.
                 </div>
               )}
 
-              <button onClick={handleGenerate} disabled={!prompt.trim() || loading || (!chatId && !connectionId)}
+              <button onClick={handleGenerate} disabled={!prompt.trim() || loading || !hasConnection}
                 className="w-full py-2.5 bg-primary/10 border border-primary/20 hover:bg-primary/20 rounded-xl text-sm text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold">
                 {loading ? <span className="flex items-center justify-center gap-2"><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Generating…</span> : 'Preview Data'}
               </button>
@@ -1180,19 +1236,34 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
 }
 
 // ── AI Generate Dashboard Dialog ───────────────────────────────
-function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, dashId, pageId, onClose }: {
+function GenerateDialog({ chatId, connectionId, onChatCreated, onConnectionChange, onWidgetAdded, dashId, pageId, onClose, availableConnections, availablePages }: {
   chatId?: string; connectionId?: string;
   onChatCreated?: (id: string) => void;
+  onConnectionChange?: (id: string) => void;
   onWidgetAdded: (w: Record<string, unknown>) => void;
   dashId: string; pageId: string; onClose: () => void;
+  availableConnections?: any[];
+  availablePages?: { id: string; name: string }[];
 }) {
   const [description, setDescription] = useState('');
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState<string[]>([]);
   const [done, setDone] = useState(false);
+  // For cards mode: user picks connection + destination page inside this dialog.
+  const [localConnectionId, setLocalConnectionId] = useState(connectionId || '');
+  const [localPageId, setLocalPageId] = useState(pageId);
+
+  const effectiveConnectionId = localConnectionId || connectionId;
+  const hasConnection = !!(chatId || effectiveConnectionId);
+  const btnRowCls = 'w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm text-left transition-all';
+
+  function handleConnectionSelect(id: string) {
+    setLocalConnectionId(id);
+    onConnectionChange?.(id);
+  }
 
   async function handleGenerate() {
-    if (!description.trim() || (!chatId && !connectionId)) return;
+    if (!description.trim() || !hasConnection) return;
     setGenerating(true);
     setProgress([]);
 
@@ -1202,9 +1273,9 @@ function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, da
     const fallbackHints = ['bar_chart', 'line_chart', 'metric_card', 'pie_chart', 'bar_chart', 'line_chart'];
 
     let activeChatId = chatId;
-    if (!activeChatId && connectionId) {
+    if (!activeChatId && effectiveConnectionId) {
       try {
-        const { chat } = await chatApi.create({ connectionId });
+        const { chat } = await chatApi.create({ connectionId: effectiveConnectionId });
         activeChatId = chat.id;
         onChatCreated?.(chat.id);
       } catch (e) { console.error(e); setGenerating(false); return; }
@@ -1251,7 +1322,8 @@ function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, da
         const slot = findNextSlot(existingPositions);
         existingWidgetPositions.push(slot);
 
-        const widget = await dashboardApi.addWidget(dashId, pageId, {
+        const targetPage = localPageId || pageId;
+        const widget = await dashboardApi.addWidget(dashId, targetPage, {
           title: prompt.slice(0, 60),
           widget_type: resolvedHint,
           queryPrompt: prompt,
@@ -1272,6 +1344,7 @@ function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, da
           result_rows: rows,
           result_columns: columns,
           ui_hint: resolvedHint,
+          _targetPageId: targetPage,
         });
       } catch (e) {
         console.error(`Failed to add widget "${prompt}" to dashboard:`, e);
@@ -1301,6 +1374,45 @@ function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, da
         <div className="p-5 space-y-4">
           {!done ? (
             <>
+              {/* Data source picker — cards mode only */}
+              {availableConnections && !connectionId && (
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data Source</label>
+                  {availableConnections.length === 0 ? (
+                    <p className="text-xs text-muted-foreground py-1">No data sources connected. Add one from Settings → Connections.</p>
+                  ) : (
+                    <select
+                      value={localConnectionId}
+                      onChange={e => handleConnectionSelect(e.target.value)}
+                      disabled={generating}
+                      className="w-full px-3 py-2.5 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all text-foreground disabled:opacity-50"
+                    >
+                      <option value="" disabled>Select a data source…</option>
+                      {availableConnections.map((c: any) => (
+                        <option key={c.id} value={c.id}>{c.name} {c.connector_type ? `(${c.connector_type})` : ''}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              {/* Destination page picker — cards mode only */}
+              {availablePages && availablePages.length > 1 && (
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Destination Page</label>
+                  <div className="space-y-1.5">
+                    {availablePages.map(p => (
+                      <button key={p.id} onClick={() => setLocalPageId(p.id)} disabled={generating}
+                        className={`${btnRowCls} ${localPageId === p.id ? 'border-primary bg-primary/5 text-foreground' : 'border-border hover:border-primary/40 hover:bg-muted/40 text-foreground'}`}>
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${localPageId === p.id ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
+                        <span className="font-medium">{p.name}</span>
+                        {p.id === pageId && <span className="ml-auto text-xs text-muted-foreground">current</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                   Describe the widgets you want <span className="text-muted-foreground/60">(separate multiple by comma or newline)</span>
@@ -1318,7 +1430,7 @@ function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, da
                 </p>
               </div>
 
-              {!chatId && !connectionId && (
+              {!hasConnection && !availableConnections && (
                 <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2.5">
                   No data connection linked. Go to dashboard settings and connect a data source first.
                 </div>
@@ -1343,7 +1455,7 @@ function GenerateDialog({ chatId, connectionId, onChatCreated, onWidgetAdded, da
                 </div>
               )}
 
-              <button onClick={handleGenerate} disabled={!description.trim() || generating || (!chatId && !connectionId)}
+              <button onClick={handleGenerate} disabled={!description.trim() || generating || !hasConnection}
                 className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-40 disabled:cursor-not-allowed transition-opacity hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
                 {generating
@@ -1423,7 +1535,7 @@ function QueryInspectorModal({ widgetId, dashId, pageId, onClose }: {
 // ── Edit Query Dialog ──────────────────────────────────────────
 // Shows BOTH the natural-language prompt and the generated SQL so
 // the user can edit either and re-run. Apply persists to the DB.
-function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdate, onClose, isGeneral }: {
+function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdate, onClose, isGeneral, availableConnections, onConnectionChange }: {
   widget: WidgetData;
   dashId: string;
   pageId: string;
@@ -1432,8 +1544,12 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   onUpdate: (patch: Partial<WidgetData>) => void;
   onClose: () => void;
   isGeneral?: boolean;
+  availableConnections?: any[];
+  onConnectionChange?: (id: string) => void;
 }) {
   const [prompt, setPrompt] = useState(widget.query_prompt || '');
+  // For cards mode: connection picked inside this dialog.
+  const [localConnectionId, setLocalConnectionId] = useState(connectionId || '');
   // Seed from widget.sql immediately (set during addWidget / previous handleApply)
   const [sql, setSql] = useState(widget.sql || '');
   const [sqlLoading, setSqlLoading] = useState(false);
@@ -1513,12 +1629,14 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const effectiveConnectionId = localConnectionId || connectionId;
+
   // Get or create the chat needed for execution
   async function getChat(): Promise<string | null> {
     if (chatId) return chatId;
-    if (connectionId) {
+    if (effectiveConnectionId) {
       try {
-        const { chat } = await chatApi.create({ connectionId });
+        const { chat } = await chatApi.create({ connectionId: effectiveConnectionId });
         return chat.id;
       } catch { return null; }
     }
@@ -1689,7 +1807,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
     }
   }
 
-  const noConnection = !chatId && !connectionId;
+  const noConnection = !chatId && !effectiveConnectionId;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1712,10 +1830,35 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
 
-          {noConnection && (
-            <div className="text-xs text-warning bg-warning/8 border border-warning/20 rounded-xl px-3 py-2">
-              This dashboard has no datasource connected — queries cannot be run.
+          {/* Data source picker — always visible in cards mode */}
+          {availableConnections ? (
+            <div className="border border-border rounded-xl p-3.5 bg-muted/20">
+              <label className="block text-xs font-semibold text-foreground mb-2">Data Source</label>
+              {availableConnections.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No data sources connected. Add one from Settings → Connections.</p>
+              ) : (
+                <select
+                  value={localConnectionId}
+                  onChange={e => { setLocalConnectionId(e.target.value); onConnectionChange?.(e.target.value); }}
+                  disabled={running || saving || assisting}
+                  className="w-full px-3 py-2.5 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all text-foreground disabled:opacity-50"
+                >
+                  <option value="" disabled>Select a data source…</option>
+                  {availableConnections.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.name} {c.connector_type ? `(${c.connector_type})` : ''}</option>
+                  ))}
+                </select>
+              )}
+              {noConnection && availableConnections.length > 0 && (
+                <p className="mt-2 text-[11px] text-muted-foreground">Select a data source to enable querying.</p>
+              )}
             </div>
+          ) : (
+            noConnection && (
+              <div className="text-xs text-warning bg-warning/8 border border-warning/20 rounded-xl px-3 py-2">
+                This dashboard has no datasource connected — queries cannot be run.
+              </div>
+            )
           )}
 
           {/* ── Prompt section ── */}
@@ -1728,8 +1871,8 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
               value={prompt}
               onChange={e => { setPrompt(e.target.value); setPreview(null); setJustSuggested(false); setAssistNote(''); }}
               rows={2}
-              disabled={running || saving || assisting}
-              placeholder="Describe what you want to see — or leave empty and click Generate for an AI suggestion"
+              disabled={running || saving || assisting || noConnection}
+              placeholder={noConnection ? 'Select a data source above to enable querying' : 'Describe what you want to see — or leave empty and click Generate for an AI suggestion'}
               className="w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none disabled:opacity-50 transition-all"
             />
 
@@ -2173,14 +2316,27 @@ function SortablePageTab({
     disabled: !isEditing || renaming,
   });
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [dropdownPos, setDropdownPos] = useState({ top: 0, left: 0 });
   const actionsRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
     if (!actionsOpen) return;
     function close(e: MouseEvent) {
-      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) setActionsOpen(false);
+      if (
+        actionsRef.current && !actionsRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
+        setActionsOpen(false);
+      }
     }
+    function onScroll() { setActionsOpen(false); }
     document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      window.removeEventListener('scroll', onScroll, true);
+    };
   }, [actionsOpen]);
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -2228,44 +2384,67 @@ function SortablePageTab({
               <span className="ml-1.5 text-[10px] text-muted-foreground font-normal">Shared by {sharedByName}</span>
             )}
           </button>
-          {isEditing && (
-            <button
-              onPointerDown={e => e.stopPropagation()}
-              onClick={onStartRename}
-              className="opacity-0 group-hover/tab:opacity-100 mr-2 w-4 h-4 rounded text-muted-foreground hover:text-primary hover:bg-muted flex items-center justify-center transition-all"
-              title="Rename page"
-            >
-              <Edit3 className="w-3 h-3" />
-            </button>
-          )}
         </div>
       )}
 
-      {/* Share / Move / Copy / Duplicate */}
-      {!renaming && (onShare || onMove || onCopy || onDuplicate) && (
-        <div ref={actionsRef} className="relative">
+      {/* Actions Menu */}
+      {!renaming && (
+        <div className="relative">
           <button
+            ref={buttonRef}
             onPointerDown={e => e.stopPropagation()}
-            onClick={() => setActionsOpen(v => !v)}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setDropdownPos({ top: rect.bottom + 4, left: rect.left });
+              setActionsOpen(v => !v);
+            }}
             title="Page actions"
             className="opacity-0 group-hover/tab:opacity-100 ml-0.5 w-5 h-5 rounded text-muted-foreground hover:text-primary hover:bg-muted flex items-center justify-center transition-all"
           >
             <MoreHorizontal className="w-3.5 h-3.5" />
           </button>
-          {actionsOpen && (
-            <div className="absolute top-full mt-1 left-0 w-44 bg-card border border-border rounded-xl shadow-xl z-40 py-1" onPointerDown={e => e.stopPropagation()}>
+          {actionsOpen && typeof document !== 'undefined' && createPortal(
+            <div
+              ref={actionsRef}
+              className="fixed w-48 bg-card border border-border rounded-xl shadow-xl z-[9999] py-1"
+              style={{ top: dropdownPos.top, left: dropdownPos.left }}
+              onPointerDown={e => e.stopPropagation()}
+            >
+              
+              {/* Rename */}
+              {isEditing && (
+                <button onClick={() => { setActionsOpen(false); onStartRename(); }}
+                  className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
+                  <Edit3 className="w-3.5 h-3.5 text-muted-foreground" /> Rename
+                </button>
+              )}
+
+              {/* Share */}
               {canShare && onShare && (
                 <button onClick={() => { setActionsOpen(false); onShare(); }}
                   className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
                   <Share2 className="w-3.5 h-3.5 text-muted-foreground" /> Share page
                 </button>
               )}
+
+              {/* Export */}
+              <button onClick={() => { setActionsOpen(false); onExportPng(); }}
+                disabled={exporting}
+                className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors disabled:opacity-50">
+                <ImageDown className="w-3.5 h-3.5 text-muted-foreground" /> Export as PNG
+              </button>
+
+              {(onDuplicate || onCopy || onMove) && <div className="h-px bg-border my-1 mx-2" />}
+
+              {/* Duplicate */}
               {onDuplicate && (
                 <button onClick={() => { setActionsOpen(false); onDuplicate(); }}
                   className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
                   <Copy className="w-3.5 h-3.5 text-muted-foreground" /> Duplicate page
                 </button>
               )}
+
+              {/* Copy / Move */}
               {onCopy && (
                 <button onClick={() => { setActionsOpen(false); onCopy(); }}
                   className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors">
@@ -2278,56 +2457,35 @@ function SortablePageTab({
                   <ArrowRightLeft className="w-3.5 h-3.5 text-muted-foreground" /> Move to dashboard…
                 </button>
               )}
-            </div>
+
+              {/* Delete */}
+              {isEditing && canDelete && (
+                <>
+                  <div className="h-px bg-border my-1 mx-2" />
+                  {confirmDelete ? (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-destructive/10">
+                      <span className="text-[10px] text-destructive font-semibold flex-1">Confirm delete?</span>
+                      <button onClick={(e) => { e.stopPropagation(); onConfirmDelete(e as any); }}
+                        className="w-5 h-5 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity">
+                        <Check className="w-3 h-3" />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); onCancelDelete(e as any); }}
+                        className="w-5 h-5 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button onClick={(e) => { e.stopPropagation(); onRequestDelete(e as any); }}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5 text-destructive" /> Delete page
+                    </button>
+                  )}
+                </>
+              )}
+            </div>,
+            document.body
           )}
         </div>
-      )}
-
-      {/* Per-page PNG export */}
-      {!renaming && (
-        <button
-          onPointerDown={e => e.stopPropagation()}
-          onClick={onExportPng}
-          disabled={exporting}
-          title="Export this page as PNG"
-          className="opacity-0 group-hover/tab:opacity-100 ml-0.5 w-5 h-5 rounded text-muted-foreground hover:text-primary hover:bg-muted flex items-center justify-center transition-all disabled:opacity-40"
-        >
-          <ImageDown className="w-3.5 h-3.5" />
-        </button>
-      )}
-
-      {/* Delete */}
-      {isEditing && canDelete && !renaming && (
-        confirmDelete ? (
-          <div className="flex items-center gap-1 px-1.5 py-1">
-            <span className="text-[10px] text-destructive font-medium">Delete?</span>
-            <button
-              onPointerDown={e => e.stopPropagation()}
-              onClick={onConfirmDelete}
-              className="w-4 h-4 rounded bg-destructive text-white flex items-center justify-center hover:opacity-90 transition-opacity"
-              title="Confirm delete"
-            >
-              <Check className="w-2.5 h-2.5" />
-            </button>
-            <button
-              onPointerDown={e => e.stopPropagation()}
-              onClick={onCancelDelete}
-              className="w-4 h-4 rounded bg-muted border border-border text-muted-foreground flex items-center justify-center hover:text-foreground transition-colors"
-              title="Cancel"
-            >
-              <X className="w-2.5 h-2.5" />
-            </button>
-          </div>
-        ) : (
-          <button
-            onPointerDown={e => e.stopPropagation()}
-            onClick={onRequestDelete}
-            className="opacity-0 group-hover/tab:opacity-100 ml-0.5 w-4 h-4 rounded-full bg-muted border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 flex items-center justify-center transition-all"
-            title="Delete page"
-          >
-            <X className="w-2.5 h-2.5" />
-          </button>
-        )
       )}
     </div>
   );
@@ -2446,7 +2604,7 @@ function MoveCopyDialog({
   const [error, setError] = useState('');
 
   useEffect(() => {
-    dashboardApi.list({ editableOnly: true })
+    dashboardApi.list({ editableOnly: true, origin: 'manual' })
       .then(r => setDashboards(r.dashboards || []))
       .catch(() => setError('Could not load your dashboards'))
       .finally(() => setLoadingDash(false));
@@ -2537,18 +2695,94 @@ function MoveCopyDialog({
   );
 }
 
+// ── Data Source picker for Cards Chat navigation ────────────────
+// Single-step: pick a connection so the Chat button can navigate
+// to the right data-source chat page. Page selection happens inside
+// the Add Widget / Generate dialogs, not here.
+function DataSourcePickerModal({
+  connections,
+  onConfirm, onClose,
+}: {
+  connections: any[];
+  onConfirm: (connectionId: string) => void;
+  onClose: () => void;
+}) {
+  const [selectedConnectionId, setSelectedConnectionId] = useState('');
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card border border-border rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Select Data Source</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">Choose a data source to open Chat</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-2">
+          {connections.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              No data sources connected yet. Add one from Settings → Connections.
+            </p>
+          ) : (
+            connections.map((c: any) => (
+              <button
+                key={c.id}
+                onClick={() => setSelectedConnectionId(c.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm text-left transition-all ${
+                  selectedConnectionId === c.id
+                    ? 'border-primary bg-primary/5 text-foreground'
+                    : 'border-border hover:border-primary/40 hover:bg-muted/40 text-foreground'
+                }`}
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${selectedConnectionId === c.id ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
+                <span className="font-medium">{c.name}</span>
+                {c.connector_type && (
+                  <span className="ml-auto text-xs text-muted-foreground">{c.connector_type}</span>
+                )}
+              </button>
+            ))
+          )}
+          <div className="flex gap-2 pt-3">
+            <button
+              disabled={!selectedConnectionId}
+              onClick={() => onConfirm(selectedConnectionId)}
+              className="flex-1 py-2.5 bg-[#2B2B2B] hover:bg-[#3a3a3a] text-white rounded-xl text-sm font-semibold disabled:opacity-40 transition-colors"
+            >
+              Open Chat
+            </button>
+            <button onClick={onClose} className="px-5 py-2.5 bg-muted hover:bg-muted/80 rounded-xl text-sm text-muted-foreground transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function DashboardBuilder({
-  dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav, isNew,
+  dashId, backUrl, backLabel, titleOverride, subtitleOverride, hideContextNav, hideBackLink, isNew,
+  headerTabBar,
 }: {
   dashId: string; backUrl?: string; backLabel?: string;
   titleOverride?: string; subtitleOverride?: string;
   // When true, hides the in-header back link + Chat/Dashboard buttons because
   // the surrounding layout already provides that navigation (single data source).
   hideContextNav?: boolean;
+  // When true, hides only the back arrow (not the chat/generate buttons).
+  // Used for single-workspace modes like Cards where there is no parent list to return to.
+  hideBackLink?: boolean;
   // When true (newly created datasource dashboard), auto-reload after a short
   // delay to replace placeholder cards with AI-generated insight cards seeded
   // in the background.
   isNew?: boolean;
+  // Optional tab bar rendered in the header after the title — used by the Cards
+  // module to show "My Cards | Shared with Me" tabs in the existing header row.
+  headerTabBar?: React.ReactNode;
 }) {
   const currentUser = useAuthStore(s => s.user);
   const [dashboard, setDashboard] = useState<Record<string, unknown> | null>(null);
@@ -2630,6 +2864,14 @@ export function DashboardBuilder({
   const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
   
   const isGeneral = dashboard?.context_type === 'org_overview' || (!dashboard?.connection_id && !dashboard?.combo_id);
+  const isCardsMode = dashboard?.origin === 'cards';
+  // For cards workspaces, users pick a data source on demand; for regular dashboards,
+  // use the fixed connection/combo from the dashboard record.
+  const [cardsConnectionId, setCardsConnectionId] = useState<string | undefined>();
+  const [cardsConnections, setCardsConnections] = useState<any[]>([]);
+  const [showDataSourcePicker, setShowDataSourcePicker] = useState(false);
+  // The effective connectionId for all chat/query operations in this session.
+  const activeConnectionId = isCardsMode ? cardsConnectionId : (dashboard?.connection_id as string | undefined);
   const [showAddWidget, setShowAddWidget] = useState(false);
   const [showGenerate, setShowGenerate] = useState(false);
   const [defaultPosition, setDefaultPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -2780,6 +3022,8 @@ export function DashboardBuilder({
       } else if (data.dashboard?.combo_id) {
         const { chats } = await chatApi.list({ comboId: data.dashboard.combo_id as string });
         if (chats.length > 0) setActiveChatId(chats[0].id);
+      } else if (data.dashboard?.origin === 'cards') {
+        connectionApi.list().then(r => setCardsConnections(r.connections || [])).catch(() => {});
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -3146,6 +3390,16 @@ export function DashboardBuilder({
       ui_hint: String(qd.ui_hint || raw.ui_hint || raw.widget_type || 'table'),
       sql: String(qd.sql || raw.sql || ''),
     };
+
+    // If the user sent the widget to a different page, switch to that page
+    // and reload so the layout is fresh from the server.
+    const targetPageId = raw._targetPageId as string | undefined;
+    if (targetPageId && targetPageId !== activePage) {
+      setActivePage(targetPageId);
+      loadData();
+      return;
+    }
+
     const tempId = (defaultPosition as any)?.tempId;
     if (tempId) {
       setWidgets(ws => ws.map(old => old.id === tempId ? { ...old, ...w, id: w.id, isLoading: false } : old));
@@ -3382,6 +3636,21 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     setDefaultPosition({ x, y, w: WIDGET_W, h: WIDGET_H });
     setDefaultHint('');
     setShowAddWidget(true);
+  }
+
+  function openEditQuery(widgetId: string) {
+    setEditQueryWidgetId(widgetId);
+  }
+
+  // Used only for the Chat button: selects a connection so the Chat link
+  // can navigate to the right data-source chat page.
+  async function handleChatConnectionSelected(connectionId: string) {
+    setCardsConnectionId(connectionId);
+    setShowDataSourcePicker(false);
+    try {
+      const { chats } = await chatApi.list({ connectionId });
+      if (chats.length > 0) setActiveChatId(chats[0].id);
+    } catch { /* non-fatal */ }
   }
 
   const dashName = () => safeFilePart(String(dashboard?.name || titleOverride || 'Dashboard'));
@@ -3679,7 +3948,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       `}} />
 
         <header className="border-b border-border bg-background/95 backdrop-blur-md px-4 py-2.5 flex items-center gap-3 shrink-0" style={{ boxShadow: 'var(--shadow-soft)' }}>
-          {!hideContextNav && (backUrl ? (
+          {!hideContextNav && !hideBackLink && (backUrl ? (
             <Link href={backUrl} className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground text-xs mr-1">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m15 18-6-6 6-6" /></svg>
               {backLabel || 'Back'}
@@ -3690,15 +3959,21 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             </Link>
           ))}
 
-          {!hideContextNav && <div className="w-px h-4 bg-border shrink-0" />}
+          {!hideContextNav && !hideBackLink && <div className="w-px h-4 bg-border shrink-0" />}
 
-          <LayoutGrid className="w-4 h-4 text-primary shrink-0" />
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-foreground truncate leading-tight">{titleOverride || String(dashboard?.name || '')}</h1>
-            {subtitleOverride && <p className="text-[10px] text-muted-foreground">{subtitleOverride}</p>}
-          </div>
+          {!isCardsMode && (
+            <>
+              <LayoutGrid className="w-4 h-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <h1 className="text-sm font-semibold text-foreground truncate leading-tight">{titleOverride || String(dashboard?.name || '')}</h1>
+                {subtitleOverride && <p className="text-[10px] text-muted-foreground">{subtitleOverride}</p>}
+              </div>
+            </>
+          )}
 
-          {chatUrl && !hideContextNav && dashboard?.origin !== 'manual' && (
+          {headerTabBar}
+
+          {!hideContextNav && !isCardsMode && chatUrl && dashboard?.origin !== 'manual' && (
             <div className="flex items-center gap-2 ml-4 shrink-0">
               <Link
                 href={chatUrl}
@@ -3707,9 +3982,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                 <MessageSquare className="w-3.5 h-3.5" />
                 <span>Chat</span>
               </Link>
-              <div
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 shrink-0"
-              >
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary/10 text-primary border border-primary/20 shrink-0">
                 <LayoutDashboard className="w-3.5 h-3.5" />
                 <span>Dashboard</span>
               </div>
@@ -3717,8 +3990,9 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           )}
 
           <div className="ml-auto flex items-center gap-2">
-            {!isGeneral && canEdit && (
-              <button onClick={() => setShowGenerate(true)}
+            {(!isGeneral || isCardsMode) && canEdit && (
+              <button
+                onClick={() => setShowGenerate(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #D97A1E, #F5A623)' }}>
                 <Sparkles className="w-3.5 h-3.5" /> Generate
@@ -3993,10 +4267,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                           onInspect={() => setInspectWidgetId(widget.id)}
                           onRename={title => renameWidget(widget.id, title)}
                           onSuggestTitle={() => suggestWidgetTitle(widget.id)}
-                          onEditQuery={() => setEditQueryWidgetId(widget.id)}
+                          onEditQuery={() => openEditQuery(widget.id)}
                           otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
                           onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
-                          isGeneral={isGeneral}
+                          isGeneral={isGeneral && !isCardsMode}
                           onFocus={() => setFocusedWidget(widget)}
                           canShare={isOwner}
                           onShare={() => setWidgetShareTarget({ id: String(widget.id), title: String(widget.title || 'Card') })}
@@ -4072,10 +4346,13 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         {showAddWidget && activePage && (
           <AddWidgetDialog
             dashId={dashId} pageId={activePage}
-            chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
-            onChatCreated={setActiveChatId}
+            chatId={activeChatId} connectionId={activeConnectionId}
+            onChatCreated={id => { setActiveChatId(id); }}
+            onConnectionChange={id => setCardsConnectionId(id)}
             defaultHint={defaultHint} defaultPosition={defaultPosition || undefined}
-            isGeneral={isGeneral}
+            isGeneral={isGeneral && !isCardsMode}
+            availableConnections={isCardsMode ? cardsConnections : undefined}
+            availablePages={isCardsMode ? pages.map(p => ({ id: String(p.id), name: String(p.name) })) : undefined}
             onAdd={handleWidgetAdded} onClose={() => {
               if ((defaultPosition as any)?.tempId) {
                 const tid = (defaultPosition as any).tempId;
@@ -4089,9 +4366,12 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         {showGenerate && activePage && (
           <GenerateDialog
             dashId={dashId} pageId={activePage}
-            chatId={activeChatId} connectionId={dashboard?.connection_id as string | undefined}
+            chatId={activeChatId} connectionId={activeConnectionId}
             onChatCreated={setActiveChatId}
+            onConnectionChange={id => setCardsConnectionId(id)}
             onWidgetAdded={handleWidgetAdded}
+            availableConnections={isCardsMode ? cardsConnections : undefined}
+            availablePages={isCardsMode ? pages.map(p => ({ id: String(p.id), name: String(p.name) })) : undefined}
             onClose={() => setShowGenerate(false)}
           />
         )}
@@ -4123,8 +4403,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               dashId={dashId}
               pageId={activePage!}
               chatId={activeChatId}
-              connectionId={dashboard?.connection_id as string | undefined}
-              isGeneral={isGeneral}
+              connectionId={activeConnectionId}
+              isGeneral={isGeneral && !isCardsMode}
+              availableConnections={isCardsMode ? cardsConnections : undefined}
+              onConnectionChange={id => setCardsConnectionId(id)}
               onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
               onClose={() => setEditQueryWidgetId(null)}
             />
@@ -4273,6 +4555,15 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         mode={moveCopyTarget.mode}
         onClose={() => setMoveCopyTarget(null)}
         onConfirm={handleMoveCopyConfirm}
+      />
+    )}
+
+    {/* ── Cards: connection picker for Chat navigation only ─── */}
+    {showDataSourcePicker && (
+      <DataSourcePickerModal
+        connections={cardsConnections}
+        onConfirm={handleChatConnectionSelected}
+        onClose={() => setShowDataSourcePicker(false)}
       />
     )}
     </>

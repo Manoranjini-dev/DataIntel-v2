@@ -22,10 +22,12 @@ export interface CreateDashboardDto {
   description?: string;
   contextType: 'org_overview' | 'connection' | 'combo';
   contextId?: string | null;
-  // Discriminates the two independent dashboard families. Manual dashboards
+  // Discriminates the independent dashboard families. Manual dashboards
   // belong to the Dashboards module; datasource dashboards live only inside a
-  // specific data source / combo workflow. Defaults to 'manual'.
-  origin?: 'manual' | 'datasource';
+  // specific data source / combo workflow; cards-workspace dashboards belong
+  // to the Cards module (no fixed data source, no seeding, never publishable).
+  // Defaults to 'manual'.
+  origin?: 'manual' | 'datasource' | 'cards';
 }
 
 export interface CreateWidgetDto {
@@ -129,9 +131,22 @@ export class DashboardBuilderService {
       );
     }
 
+    // Cards module only: the distinct data sources used by cards inside each
+    // workspace, for the "filter by data source" dropdown on the Cards page.
+    // Skipped for regular dashboard listing — it's an extra correlated
+    // subquery per row that nothing else needs.
+    const dataSourcesCol = opts.origin === 'cards'
+      ? `(SELECT COALESCE(json_agg(DISTINCT jsonb_build_object('id', dc.id, 'name', dc.name)) FILTER (WHERE dc.id IS NOT NULL), '[]'::json)
+            FROM dashboard_widgets_v2 w
+            JOIN dashboard_pages p ON p.id = w.page_id
+            LEFT JOIN datasource_connections dc ON dc.id = w.datasource_context_id AND w.datasource_context_type = 'connection'
+          WHERE p.dashboard_id = d.id AND w.deleted_at IS NULL AND p.deleted_at IS NULL) AS data_sources,`
+      : '';
+
     const rows = await this.db.queryMany<any>(
       `SELECT d.*, a.display_name AS created_by_name,
               (SELECT COUNT(*) FROM dashboard_pages WHERE dashboard_id = d.id AND deleted_at IS NULL) AS page_count,
+              ${dataSourcesCol}
               ds.shared_by AS dash_share_shared_by, ds.can_edit AS dash_share_can_edit,
               sharer.display_name AS dash_share_shared_by_name, sharer.email AS dash_share_shared_by_email,
               (SELECT ps.shared_by FROM dashboard_page_shares ps
@@ -191,7 +206,7 @@ export class DashboardBuilderService {
               ws.can_edit, ws.shared_by, ws.created_at AS shared_at,
               sharer.display_name AS shared_by_name, sharer.email AS shared_by_email,
               p.id AS page_id, p.name AS page_name,
-              d.id AS dashboard_id, d.name AS dashboard_name
+              d.id AS dashboard_id, d.name AS dashboard_name, d.origin AS dashboard_origin
        FROM dashboard_widget_shares ws
        JOIN dashboard_widgets_v2 w ON w.id = ws.widget_id
        JOIN dashboard_pages p ON p.id = w.page_id
@@ -231,7 +246,9 @@ export class DashboardBuilderService {
       );
       canEdit = !!share?.can_edit;
     }
-    const canPublish = (requesterRole === 'ADMIN' || requesterRole === 'ANALYST') && canEdit;
+    // Cards-workspace dashboards are never publishable — never trust the
+    // client to hide the button, decide it here.
+    const canPublish = dash.origin !== 'cards' && (requesterRole === 'ADMIN' || requesterRole === 'ANALYST') && canEdit;
 
     return {
       ...dash,
@@ -318,11 +335,14 @@ export class DashboardBuilderService {
     }
     await this.dashboardPermissions.requireAction(dashId, publisher.id, 'can_publish');
 
-    const dash = await this.db.queryOne<{ id: string; draft_layout: any }>(
-      `SELECT id, draft_layout FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
+    const dash = await this.db.queryOne<{ id: string; draft_layout: any; origin: string }>(
+      `SELECT id, draft_layout, origin FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
       [dashId],
     );
     if (!dash) throw new NotFoundException('Dashboard not found');
+    if (dash.origin === 'cards') {
+      throw new ForbiddenException('Card workspaces cannot be published.');
+    }
 
     // Fix: actually promote the draft_layout positions to the live widget rows
     // inside a transaction before flipping the status flag. Previously draft_layout

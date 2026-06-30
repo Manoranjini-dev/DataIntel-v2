@@ -477,7 +477,7 @@ export const chatApi = {
 // ── Dashboard API ─────────────────────────
 
 export const dashboardApi = {
-  list: async (params: { origin?: 'manual' | 'datasource'; contextType?: string; contextId?: string; editableOnly?: boolean } = {}) => {
+  list: async (params: { origin?: 'manual' | 'datasource' | 'cards'; contextType?: string; contextId?: string; editableOnly?: boolean } = {}) => {
     const qs = new URLSearchParams();
     if (params.origin) qs.set('origin', params.origin);
     if (params.contextType) qs.set('contextType', params.contextType);
