@@ -12,7 +12,7 @@ import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
   MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
   MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical, Share2,
-  Copy, ArrowRightLeft,
+  Copy, ArrowRightLeft, Search,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
@@ -462,7 +462,7 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
   widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage, isGeneral, onFocus,
-  canShare, onShare, onCopyToDashboard, onMoveToDashboard,
+  canShare, onShare, onCopyToDashboard, onMoveToDashboard, isCardsMode,
 }: {
   widget: WidgetData;
   isEditing: boolean;
@@ -483,6 +483,7 @@ function Widget({
   onShare?: () => void;
   onCopyToDashboard?: () => void;
   onMoveToDashboard?: () => void;
+  isCardsMode?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -542,7 +543,7 @@ function Widget({
             className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
             onClick={() => {
               if (isEditing) onSelect?.();
-              if (!isGeneral) onEditQuery?.();
+              if (!isGeneral && (!isEditing || isCardsMode)) onEditQuery?.();
             }}
             title={!isGeneral ? `Click to add ${isText ? 'text' : 'an image'}` : ''}
           >
@@ -578,7 +579,7 @@ function Widget({
         className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
         onClick={() => {
           if (isEditing) onSelect?.();
-          if (!isGeneral) onEditQuery?.();
+          if (!isGeneral && (!isEditing || isCardsMode)) onEditQuery?.();
         }}
         title={!isGeneral ? "Click to configure widget data" : ""}
       >
@@ -710,6 +711,12 @@ function Widget({
                     className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
                     <Play className="w-3.5 h-3.5 text-primary" /> Edit query
                   </button>
+                  {onInspect && (
+                    <button onClick={() => { setMenuOpen(false); onInspect?.(); }}
+                      className="w-full text-left flex items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-muted/60 transition-colors shrink-0">
+                      <Search className="w-3.5 h-3.5 text-muted-foreground" /> Inspect execution
+                    </button>
+                  )}
                 </>
               )}
               {otherPages && otherPages.length > 0 && (
@@ -3630,6 +3637,27 @@ Based on the above data context, suggest a highly relevant dashboard card title.
       addStaticWidget(type, slot);
       return;
     }
+
+    if (isCardsMode) {
+      const newWidgetId = 'temp-' + Date.now();
+      const template = WIDGET_TEMPLATES.find(t => t.type === type);
+      setWidgets(prev => [...prev, {
+        id: newWidgetId, title: template?.name || type, widget_type: type,
+        query_prompt: '', position_x: slot.x, position_y: slot.y,
+        width: WIDGET_W, height: WIDGET_H, isLoading: true,
+      }]);
+      dashboardApi.addWidget(dashId, activePage, {
+        title: template?.name || type, widget_type: type,
+        gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
+        datasourceScopeType: 'connection',
+        sql: '', queryPrompt: '', resultRows: [], resultColumns: [], uiHint: type,
+      }).then(res => {
+        setWidgets(ws => ws.map(w => w.id === newWidgetId ? { ...w, id: String(res.widget.id), isLoading: false } : w));
+        openEditQuery(String(res.widget.id));
+      }).catch(e => console.error(e));
+      return;
+    }
+
     setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
     setDefaultHint(type);
     setShowAddWidget(true);
@@ -4275,6 +4303,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                           otherPages={pages.filter(p => p.id !== activePage).map(p => ({ id: String(p.id), name: String(p.name) }))}
                           onMoveToPage={targetPageId => moveWidgetToPage(widget.id, targetPageId)}
                           isGeneral={isGeneral && !isCardsMode}
+                          isCardsMode={isCardsMode}
                           onFocus={() => setFocusedWidget(widget)}
                           canShare={isOwner}
                           onShare={() => setWidgetShareTarget({ id: String(widget.id), title: String(widget.title || 'Card') })}
