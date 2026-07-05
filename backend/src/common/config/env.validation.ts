@@ -33,6 +33,36 @@ export class EnvironmentVariables {
   @IsNumber() @IsOptional()
   MCP_MAX_RESULT_ROWS: number = 500;
 
+  // ── MCP Toolbox (external sidecar) ────────────
+  // Master kill-switch. When false, all queries use the native connector path.
+  @IsString() @IsOptional()
+  TOOLBOX_ENABLED: string = 'false';
+
+  @IsString() @IsOptional()
+  TOOLBOX_URL: string = 'http://toolbox:5000';
+
+  @IsString() @IsOptional()
+  TOOLBOX_CONFIG_PATH: string = '/config/tools.yaml';
+
+  /**
+   * Comma-separated ConnectorType values routed through Toolbox. Mappable set:
+   * mysql, postgres, redshift, bigquery, mssql, oracle, snowflake.
+   * (Databricks / mongodb / elasticsearch always use the native path.)
+   * Defaults to the best-tested pair; widen after per-connector shadow-diff.
+   */
+  @IsString() @IsOptional()
+  TOOLBOX_ROUTED_CONNECTORS: string = 'mysql,postgres';
+
+  @IsNumber() @IsOptional()
+  TOOLBOX_STATEMENT_TIMEOUT_MS: number = 30000;
+
+  @IsNumber() @IsOptional()
+  TOOLBOX_MAX_ROWS: number = 500;
+
+  /** TTL for the cached Toolbox health probe used by the routing guard. */
+  @IsNumber() @IsOptional()
+  TOOLBOX_HEALTH_TTL_MS: number = 5000;
+
   @IsNumber() @IsOptional()
   MEMORY_SLIDING_WINDOW_SIZE: number = 20;
 

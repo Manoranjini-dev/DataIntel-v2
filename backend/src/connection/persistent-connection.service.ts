@@ -5,6 +5,7 @@
 
 import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { MCPService } from '../mcp/mcp.service';
@@ -27,6 +28,7 @@ export class PersistentConnectionService {
     private readonly config: ConfigService,
     private readonly connectionPermissions: ConnectionPermissionsService,
     private readonly cache: CacheService,
+    private readonly events: EventEmitter2,
   ) {
     this.encKey = this.config.getOrThrow('CREDENTIAL_ENCRYPTION_KEY');
   }
@@ -134,6 +136,9 @@ export class PersistentConnectionService {
       details: { name: dto.name, connectorType: dto.connectorType, host: dto.host },
     });
 
+    // Trigger Toolbox tools.yaml regeneration (no-op when Toolbox is disabled).
+    this.events.emit('connection.created', { id: conn!.id });
+
     return conn;
   }
 
@@ -184,6 +189,8 @@ export class PersistentConnectionService {
       accountId: user.id, eventType: 'connection_updated',
       resourceType: 'connection', resourceId: connId, details: { name: dto.name },
     });
+
+    this.events.emit('connection.updated', { id: connId });
 
     return conn;
   }
@@ -281,6 +288,8 @@ export class PersistentConnectionService {
       accountId: user.id, eventType: 'connection_deleted',
       resourceType: 'connection', resourceId: connId,
     });
+
+    this.events.emit('connection.deleted', { id: connId });
   }
 
   /** Test connection health and update status */
@@ -578,6 +587,8 @@ export class PersistentConnectionService {
       eventType: 'connection_credentials_rotated',
       resourceType: 'connection', resourceId: connId,
     });
+
+    this.events.emit('connection.credentials_rotated', { id: connId });
 
     this.logger.log(`Credentials rotated for connection ${connId} by user ${user.id}`);
   }

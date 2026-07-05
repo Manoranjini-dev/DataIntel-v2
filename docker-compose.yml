@@ -1,6 +1,20 @@
 version: '3.9'
 
 services:
+  # MCP Toolbox for Databases — external sidecar owning connection pooling and
+  # read-only SQL execution for the hot path (MySQL / Postgres / BigQuery).
+  # The backend writes tools.yaml into the shared volume; Toolbox hot-reloads it.
+  toolbox:
+    image: us-central1-docker.pkg.dev/database-toolbox/toolbox/toolbox:latest
+    command: ['--tools-file', '/config/tools.yaml', '--address', '0.0.0.0', '--port', '5000']
+    volumes:
+      - toolbox-config:/config:ro          # backend writes, toolbox reads
+    ports:
+      - '5000:5000'
+    restart: unless-stopped
+    networks:
+      - app-network
+
   backend:
     build:
       context: ./backend
@@ -11,6 +25,12 @@ services:
       - ./backend/.env
     environment:
       - NODE_ENV=production
+      - TOOLBOX_URL=http://toolbox:5000
+      - TOOLBOX_CONFIG_PATH=/config/tools.yaml
+    volumes:
+      - toolbox-config:/config:rw          # backend writes tools.yaml here
+    depends_on:
+      - toolbox
     restart: unless-stopped
     networks:
       - app-network
@@ -34,3 +54,8 @@ services:
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  # Shared credential-bearing config (tools.yaml). Mount as tmpfs in prod so the
+  # decrypted secrets never touch disk.
+  toolbox-config:

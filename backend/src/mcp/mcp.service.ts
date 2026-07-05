@@ -22,6 +22,8 @@ import {
   MCPToolDefinition,
   MCPToolResult,
 } from './types';
+import { ToolboxClientService } from './toolbox/toolbox-client.service';
+import { sourceKeyFor } from './toolbox/toolbox.constants';
 import { MySQLConnector } from './connectors/mysql.connector';
 import { PostgresConnector } from './connectors/postgres.connector';
 import { MongoDBConnector } from './connectors/mongo.connector';
@@ -52,11 +54,28 @@ export class MCPService implements OnModuleDestroy {
   private readonly executionTimeout: number;
   private readonly maxResultRows: number;
 
-  constructor(private readonly configService: ConfigService) {
+  /** When true, eligible connectors route executeReadQuery through Toolbox. */
+  private readonly toolboxEnabled: boolean;
+  /** ConnectorTypes eligible for the Toolbox path. */
+  private readonly routedConnectors: ReadonlySet<ConnectorType>;
+
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly toolboxClient: ToolboxClientService,
+  ) {
     this.executionTimeout =
       this.configService.get<number>('MCP_EXECUTION_TIMEOUT_MS') ?? 30000;
     this.maxResultRows =
       this.configService.get<number>('MCP_MAX_RESULT_ROWS') ?? 500;
+
+    this.toolboxEnabled =
+      (this.configService.get<string>('TOOLBOX_ENABLED') ?? 'false') === 'true';
+    this.routedConnectors = new Set(
+      (this.configService.get<string>('TOOLBOX_ROUTED_CONNECTORS') ?? 'mysql,postgres')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean) as ConnectorType[],
+    );
 
     // Generate a runtime-only encryption key from random entropy
     const runtimeSalt = randomBytes(16);
@@ -201,8 +220,33 @@ export class MCPService implements OnModuleDestroy {
 
     const sqlString = typeof sql === 'string' ? sql : JSON.stringify(sql);
     this.logger.log(`Executing query via MCP [session=${sessionId}]: ${sqlString.substring(0, 100)}...`);
+
+    // Toolbox hot path: route eligible connectors through the sidecar, falling
+    // back to the native connector on ANY error so an outage never breaks queries.
+    if (await this.useToolbox(session.connectorType)) {
+      try {
+        const sourceKey = sourceKeyFor(connectionParams);
+        const data = await this.toolboxClient.invokeExecuteSql(sourceKey, sqlString);
+        return { success: true, data, executionTimeMs: data.executionTimeMs };
+      } catch (err: any) {
+        this.logger.warn(
+          `Toolbox path failed for ${session.connectorType} (falling back to native): ${err?.message}`,
+        );
+        // fall through to the legacy native connector below
+      }
+    }
+
     const connector = this.getConnector(session.connectorType);
     return connector.executeReadQuery(connectionParams, sqlString, this.executionTimeout);
+  }
+
+  /**
+   * Routing guard — use Toolbox iff globally enabled, the connector is in the
+   * routed allowlist, and the sidecar is currently healthy (cached probe).
+   */
+  private async useToolbox(type: ConnectorType): Promise<boolean> {
+    if (!this.toolboxEnabled || !this.routedConnectors.has(type)) return false;
+    return this.toolboxClient.isHealthy();
   }
 
   /** Get connector capabilities */
