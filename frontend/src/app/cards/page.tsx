@@ -60,6 +60,7 @@ export default function CardsPage() {
           const { dashboard } = await dashboardApi.create({
             name: 'My Cards',
             origin: 'cards',
+            contextType: 'org_overview',
           } as any);
           setWorkspaceId(dashboard.id);
         } else {

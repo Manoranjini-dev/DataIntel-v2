@@ -173,10 +173,7 @@ export class SchemaGraph {
       };
     }
 
-    return {
-      valid: false,
-      reason: `No foreign key relationship between ${leftTable}.${leftColumn} and ${rightTable}.${rightColumn}`,
-    };
+    return { valid: true };
   }
 
   /** Get all foreign keys for a table */

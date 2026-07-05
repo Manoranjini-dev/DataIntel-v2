@@ -184,11 +184,12 @@ export default function DashboardsPage() {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {dashboards.map((dash: any) => (
-              <div key={dash.id} className="relative group block bg-card border border-border hover:border-[#2B2B2B]/30 rounded-2xl overflow-hidden transition-all hover:shadow-md">
-                <Link
-                  href={`/dashboards/${dash.id}`}
-                  className="block h-full w-full"
-                >
+              <div 
+                key={dash.id} 
+                onClick={() => router.push(`/dashboards/${dash.id}`)}
+                className="relative group block bg-card border border-border hover:border-[#2B2B2B]/30 rounded-2xl overflow-hidden transition-all hover:shadow-md cursor-pointer"
+              >
+                <div className="block h-full w-full">
                 {/* Preview strip */}
                 <div className="h-28 bg-gradient-to-br from-muted/60 to-muted flex items-center justify-center">
                   <LayoutDashboard className="w-10 h-10 text-muted-foreground/20" />
@@ -235,7 +236,7 @@ export default function DashboardsPage() {
                     <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-primary transition-colors" />
                   </div>
                 </div>
-                </Link>
+                </div>
 
                 {/* Context Menu */}
                 <div className="absolute top-3 right-3 z-10" onClick={e => e.stopPropagation()}>

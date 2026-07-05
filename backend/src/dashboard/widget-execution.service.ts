@@ -335,6 +335,21 @@ Rules:
     const connId = providedConnectionId || await this.resolveWidgetConnectionId(widget);
     const schema = connId ? await this.buildSchemaContext(connId) : '-- No schema available';
 
+    const NO_SCHEMA_MESSAGE = 'No database schema is available for the selected data source. Run Schema Sync for this connection, then try again.';
+    if (!connId || schema.trim() === '-- No schema available') {
+      // Don't ask the LLM to invent a question with nothing to reference — it
+      // tends to respond with a refusal sentence (e.g. "Insufficient schema
+      // information...") that then gets treated as a real, runnable prompt.
+      this.logger.warn(`[suggestQuestion] widget=${widgetId} conn=${connId ?? 'none'} — no schema available, skipping LLM call`);
+      return NO_SCHEMA_MESSAGE;
+    }
+
+    const conn = await this.db.queryOne<any>(
+      'SELECT name, connector_type FROM datasource_connections WHERE id = $1',
+      [connId],
+    );
+    const dataSourceLine = conn ? `Data source: "${conn.name}" (${conn.connector_type})` : '';
+
     // Fetch sibling widgets on the same page to enable deduplication.
     // NOTE: dashboard_widgets_v2 has NO top-level `prompt` column — the prompt
     // lives inside the query_definition JSONB. Selecting a non-existent `prompt`
@@ -369,11 +384,13 @@ You are given a database schema, the card's chart type, and the insights already
 Rules:
 - Propose EXACTLY ONE concise, business-relevant question (one sentence, max 20 words).
 - The question MUST fit the given chart type: ${guidance}
+- The question MUST be answerable against the given data source using ONLY the tables/columns in its schema below — do not reference any other data source.
 - Reference REAL table/column names from the schema so a text-to-SQL engine can answer it.
 - The question MUST produce a non-empty result: use COUNT(*), SUM, or GROUP BY — avoid filters that might return 0 rows.
 - Prefer high-value insights in the "${categoryHint}" category: ${this.categoryDescription(categoryHint)}.
 - Do NOT suggest an insight that is already covered by a sibling widget (see list below).
 - Return ONLY the question text, with no surrounding quotes and no commentary.
+- You are always given a real schema below — never refuse, apologize, or claim the schema is insufficient.
 
 CRITICAL SQL COMPATIBILITY RULES (violations cause query failures):
 - NEVER ask for percentages, ratios, shares, or proportions (e.g., "what percentage", "what share", "what fraction"). These require window functions or correlated subqueries that frequently fail. Instead ask for the raw sum or count: "Show total [measure] by [category], top 10."
@@ -382,7 +399,7 @@ CRITICAL SQL COMPATIBILITY RULES (violations cause query failures):
 - For pie_chart and donut_chart: ask for the raw SUM or COUNT by category — the chart handles percentage display automatically.
 ${dedupBlock}`;
 
-    const userContent = `Chart type: ${widgetType}\n\nDatabase schema:\n${schema}\n\nReturn the single best question now.`;
+    const userContent = `${dataSourceLine}\nChart type: ${widgetType}\n\nDatabase schema:\n${schema}\n\nReturn the single best question now.`;
 
     const FALLBACK_QUESTION = 'Show the total number of records grouped by the most relevant category.';
     try {
@@ -391,8 +408,8 @@ ${dedupBlock}`;
       // emits a clean one-line question instead of leaking its chain-of-thought.
       const q = await this.llm.generateFreeText(system, userContent, 512, { reasoningEffort: 'low' });
       const out = this.cleanAssistText(q);
-      if (!out || out.toLowerCase().includes('ai service error')) {
-        this.logger.warn(`[suggestQuestion] empty/unclean AI response — using deterministic fallback question`);
+      if (!out || out.toLowerCase().includes('ai service error') || this.isRefusal(out)) {
+        this.logger.warn(`[suggestQuestion] empty/unclean/refusal AI response ("${out}") — using deterministic fallback question`);
         return FALLBACK_QUESTION;
       }
       this.logger.log(`[suggestQuestion] suggested="${out}"`);
@@ -401,6 +418,16 @@ ${dedupBlock}`;
       this.logger.warn(`[suggestQuestion] failed: ${err?.message} — using deterministic fallback question`);
       return FALLBACK_QUESTION;
     }
+  }
+
+  /**
+   * Detect refusal/apology text a model can emit instead of a real question
+   * (e.g. "Insufficient schema information...", "I cannot generate..."). This
+   * text otherwise passes cleanAssistText unfiltered — it is short, single-line,
+   * and unquoted — and would be surfaced as though it were a valid prompt.
+   */
+  private isRefusal(text: string): boolean {
+    return /\b(insufficient|not enough|no (database )?schema|unable to (craft|generate|propose)|cannot (generate|propose|craft|answer)|i (can'?t|cannot))\b/i.test(text);
   }
 
   /** Rotate through insight categories based on how many sibling widgets already exist. */

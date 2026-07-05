@@ -97,12 +97,18 @@ export class AuthController {
 
     if (result) {
       const resetUrl = `${this.frontendUrl}/reset-password?token=${result.token}`;
-      await this.emailService.sendPasswordResetEmail({
-        to: result.account.email,
-        name: result.account.display_name,
-        resetUrl,
-        expiresAt: result.expiresAt,
-      });
+      // Fire-and-forget — see UserService.sendInvitation for why this must
+      // never block the HTTP response on SMTP round-trip time.
+      this.emailService
+        .sendPasswordResetEmail({
+          to: result.account.email,
+          name: result.account.display_name,
+          resetUrl,
+          expiresAt: result.expiresAt,
+        })
+        .catch((err) =>
+          this.logger.error(`Failed to send password reset email to ${result.account.email}: ${err?.message}`, err?.stack),
+        );
     }
 
     // Always succeed — never reveal whether the email exists.

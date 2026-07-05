@@ -383,14 +383,23 @@ export class UserService {
     resend: boolean,
   ): Promise<void> {
     const activationUrl = `${this.frontendUrl}/activate?token=${token}`;
-    await this.email.sendInvitationEmail({
-      to: account.email,
-      name: account.display_name,
-      role: account.role,
-      activationUrl,
-      expiresAt,
-      resend,
-    });
+    // Fire-and-forget: real SMTP delivery can take anywhere from seconds to
+    // minutes (or hang until timeout). Awaiting it here blocked the create/
+    // resend-user request for the full duration — the admin would see no
+    // feedback, resubmit, and hit a false "account already exists" error even
+    // though the first request had actually succeeded in the background.
+    this.email
+      .sendInvitationEmail({
+        to: account.email,
+        name: account.display_name,
+        role: account.role,
+        activationUrl,
+        expiresAt,
+        resend,
+      })
+      .catch((err) =>
+        this.logger.error(`Failed to send invitation email to ${account.email}: ${err?.message}`, err?.stack),
+      );
 
     await this.audit.log({
       accountId: account.id,

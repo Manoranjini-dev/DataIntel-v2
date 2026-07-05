@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { connectionApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/auth-store';
 import { Plus, Pencil, X, Zap, RefreshCw, Trash2, Search, Check, LogOut, Share2, UserX, Clock } from 'lucide-react';
@@ -688,6 +689,7 @@ function AutoRefreshDialog({ conn, onClose }: { conn: any; onClose: () => void }
 
 // ── Data Sources page ──────────────────────────────────────────
 export default function DataSourcesPage() {
+  const router = useRouter();
   const role = useAuthStore(s => s.user?.role);
   const canCreate = role !== 'VIEWER';
 
@@ -810,9 +812,9 @@ export default function DataSourcesPage() {
               return (
                 <div key={conn.id} className="group flex items-center hover:bg-muted/30 transition-colors">
                   {/* Clickable info area → connection chat */}
-                  <Link
-                    href={`/connections/${conn.id}/chat`}
-                    className="flex items-center gap-4 flex-1 min-w-0 px-4 py-3.5"
+                  <div
+                    onClick={() => router.push(`/connections/${conn.id}/chat`)}
+                    className="flex items-center gap-4 flex-1 min-w-0 px-4 py-3.5 cursor-pointer"
                   >
                     {/* Icon */}
                     <span
@@ -837,7 +839,7 @@ export default function DataSourcesPage() {
                         {conn.database_name ? ` · ${conn.database_name}` : ''}
                       </p>
                     </div>
-                  </Link>
+                  </div>
 
                   {/* Actions — visible on hover. Only owners (or Admin) may edit/delete; never shown to shared users. */}
                   <div className="flex items-center gap-1 pr-4 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">

@@ -172,11 +172,12 @@ export class PersistentConnectionService {
          encrypted_password = COALESCE($7, encrypted_password),
          ssl_enabled = COALESCE($8, ssl_enabled),
          connection_options = COALESCE($9, connection_options),
+         database_name = COALESCE($10, database_name),
          updated_at = NOW()
        WHERE id = $1
-       RETURNING id, name, host, port, status, updated_at`,
+       RETURNING id, name, host, port, database_name, status, updated_at`,
       [connId, dto.name, dto.description, dto.host, dto.port,
-       dto.username, encryptedPassword, dto.sslEnabled ?? dto.ssl, mergedOptions],
+       dto.username, encryptedPassword, dto.sslEnabled ?? dto.ssl, mergedOptions, dto.databaseName],
     );
 
     await this.audit.log({

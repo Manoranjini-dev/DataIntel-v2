@@ -1739,7 +1739,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
           setError('AI generation failed — could not propose a question. Please type one and try again.');
           return;
         }
-        if (suggested.toLowerCase().includes('unable to craft') || suggested.toLowerCase().includes('no database schema')) {
+        if (/\b(insufficient|not enough|no (database )?schema|unable to (craft|generate|propose)|cannot (generate|propose|craft|answer))\b/i.test(suggested)) {
           setError('AI cannot suggest a question because no database schema is available. Please run Schema Sync for this data source first.');
           return;
         }

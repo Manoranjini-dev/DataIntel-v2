@@ -41,6 +41,10 @@ export class UpdateConnectionDto {
   @IsNumber() @IsOptional() @Min(1) @Max(65535) port?: number;
   @IsString() @IsOptional() username?: string;
   @IsString() @IsOptional() password?: string;
+  @IsString() @IsOptional() databaseName?: string;
+  @IsEnum(['mysql', 'postgres', 'elasticsearch', 'mongodb', 'databricks', 'mssql', 'snowflake', 'bigquery', 'redshift'])
+  @IsOptional()
+  connectorType?: ConnectorType;
   @IsBoolean() @IsOptional() sslEnabled?: boolean;
   @IsBoolean() @IsOptional() ssl?: boolean;
 

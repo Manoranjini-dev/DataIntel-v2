@@ -55,12 +55,11 @@ export class EmailService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     if (this.transporter) {
-      try {
-        await this.transporter.verify();
+      this.transporter.verify().then(() => {
         this.logger.log('SMTP transport verified.');
-      } catch (err) {
+      }).catch((err) => {
         this.logger.error(`SMTP verification failed: ${err}`);
-      }
+      });
     }
   }
 

@@ -53,7 +53,11 @@ apiClient.interceptors.response.use(
           .some(p => window.location.pathname.startsWith(p));
         if (!isAlreadyOnPublic) {
           useAuthStore.getState().clearUser();
-          window.location.href = '/login';
+          // Call logout to clear the HttpOnly cookie so Next.js middleware doesn't trap us.
+          // Use a raw fetch to avoid re-triggering interceptors.
+          fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
+            window.location.href = '/login';
+          });
         }
       }
     }
