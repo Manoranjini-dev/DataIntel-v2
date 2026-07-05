@@ -1062,7 +1062,9 @@ function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, 
         onChatCreated?.(chat.id);
       }
       if (!activeChatId) return;
-      const p = defaultHint ? `${prompt} (format for a ${defaultHint.replace(/_/g, ' ')})` : prompt;
+      const p = defaultHint
+        ? `${prompt} (format for a ${defaultHint.replace(/_/g, ' ')}. Use human-readable names instead of IDs for categories/labels where possible)`
+        : `${prompt} (Use human-readable names instead of IDs for categories/labels where possible)`;
       const data = await chatApi.ask(activeChatId, p, true);
       setPreview(data as Record<string, unknown>);
     } catch (e) { console.error(e); }
@@ -1658,7 +1660,10 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
     try {
       const cid = await getChat();
       if (!cid) { setError('No connection available to run this query.'); return; }
-      const result = await chatApi.ask(cid, finalPrompt, true);
+      const promptWithHint = vizType
+        ? `${finalPrompt} (format for a ${vizType.replace(/_/g, ' ')}. Use human-readable names instead of IDs for categories/labels where possible)`
+        : `${finalPrompt} (Use human-readable names instead of IDs for categories/labels where possible)`;
+      const result = await chatApi.ask(cid, promptWithHint, true);
       const exec = (result as any).execution;
 
       if (exec?.generated_query) {
