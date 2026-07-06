@@ -11,6 +11,7 @@ import { WidgetExecutionService } from './widget-execution.service';
 import { DefaultCardsService } from './default-cards.service';
 import { CurrentUser } from '../common/decorators';
 import { SafeAccount } from '../auth/auth.service';
+import { Public } from '../auth/auth.guard';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 
 @ApiTags('Dashboards')
@@ -257,6 +258,27 @@ export class DashboardController {
   ) {
     const dashboard = await this.builder.unpublishDashboard(dashId, user);
     return { dashboard };
+  }
+
+  // ── Embedding (DB2-03) ────────────────────────
+  @Post(':dashId/embed')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Enable/disable embedding and get the embed token' })
+  async setEmbed(
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: { enabled: boolean; regenerate?: boolean },
+  ) {
+    return this.builder.setEmbed(dashId, user, !!dto.enabled, !!dto.regenerate);
+  }
+
+  // Public: serves a published, embed-enabled dashboard by opaque token.
+  // Two path segments so it never collides with GET :dashId (one segment).
+  @Public()
+  @Get('embed/:token')
+  @ApiOperation({ summary: 'Public read of an embedded dashboard by token' })
+  async getEmbedded(@Param('token') token: string) {
+    return this.builder.getEmbeddedDashboard(token);
   }
 
 

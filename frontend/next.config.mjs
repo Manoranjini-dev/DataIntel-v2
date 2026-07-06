@@ -7,7 +7,7 @@ const nextConfig = {
   //    Every restart rebuilds fresh chunks with new hashes that the browser can actually load.
   // 2. Browser-side: serve all _next/static assets with no-store so the
   //    browser never holds on to an old chunk URL after a server restart.
-  webpack(config, { dev, webpack }) {
+  webpack(config, { dev, isServer, webpack }) {
     // Disable webpack filesystem cache in dev
     if (dev) {
       config.cache = false;
@@ -19,6 +19,21 @@ const nextConfig = {
         __VERSION__: JSON.stringify('12.10.1'),
       }),
     );
+
+    // pptxgenjs (client-side .pptx export) references Node built-ins via the
+    // `node:` scheme for its Node code path. In the browser bundle strip the
+    // scheme and stub those modules — the browser path uses Blob, not fs.
+    if (!isServer) {
+      config.plugins.push(
+        new webpack.NormalModuleReplacementPlugin(/^node:/, (resource) => {
+          resource.request = resource.request.replace(/^node:/, '');
+        }),
+      );
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false, https: false, http: false, stream: false, zlib: false,
+      };
+    }
     return config;
   },
 

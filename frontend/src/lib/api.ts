@@ -637,6 +637,21 @@ export const dashboardApi = {
     return handleResponse<{ dashboard: any }>(r);
   },
 
+  // Enable/disable embedding; returns { embed_enabled, embed_token }
+  setEmbed: async (dashId: string, enabled: boolean, regenerate = false) => {
+    const r = await apiFetch(`/dashboards/${dashId}/embed`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled, regenerate }),
+    });
+    return handleResponse<{ embed_enabled: boolean; embed_token: string | null }>(r);
+  },
+
+  // Public read of an embedded dashboard by token (no auth required)
+  getEmbedded: async (token: string) => {
+    const r = await apiFetch(`/dashboards/embed/${token}`);
+    return handleResponse<{ dashboard: any; pages: any[] }>(r);
+  },
+
 
   updateLayout: async (dashId: string, layout: any[]) => {
     const r = await apiFetch(`/dashboards/${dashId}/layout`, {

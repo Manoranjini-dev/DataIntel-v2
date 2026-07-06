@@ -12,7 +12,7 @@ import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
   MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
   MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical, Share2,
-  Copy, ArrowRightLeft, Search,
+  Copy, ArrowRightLeft, Search, Code2, Presentation,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
@@ -29,6 +29,7 @@ import { TextCard } from '../generative-ui/text-card';
 import { ImageCard } from '../generative-ui/image-card';
 import { useAuthStore } from '@/lib/auth-store';
 import { ShareDashboardModal } from './ShareDashboardModal';
+import { EmbedDashboardModal } from './EmbedDashboardModal';
 import { ShareResourceModal } from './ShareResourceModal';
 import {
   applyVisualizationConfig, AGGREGATION_OPTIONS, NUMERIC_ONLY_AGGREGATIONS, isNumericColumn,
@@ -2683,19 +2684,20 @@ function SortablePageTab({
   );
 }
 
-// ── Export-to-PDF page selection modal ──────────────────────────
+// ── Export page-selection modal (PDF / PowerPoint) ──────────────
 function ExportPdfModal({
   pages, dashName, exporting, onExport, onClose,
 }: {
   pages: { id: string; name: string }[];
   dashName: string;
   exporting: boolean;
-  onExport: (orderedSelectedIds: string[]) => void;
+  onExport: (orderedSelectedIds: string[], format: 'pdf' | 'pptx') => void;
   onClose: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(pages.map(p => String(p.id))),
   );
+  const [format, setFormat] = useState<'pdf' | 'pptx'>('pdf');
   const allSelected = selected.size === pages.length && pages.length > 0;
 
   const toggle = (id: string) =>
@@ -2711,7 +2713,7 @@ function ExportPdfModal({
   const handleExport = () => {
     // Preserve current dashboard order, include only selected pages.
     const ordered = pages.filter(p => selected.has(String(p.id))).map(p => String(p.id));
-    if (ordered.length) onExport(ordered);
+    if (ordered.length) onExport(ordered, format);
   };
 
   return (
@@ -2723,13 +2725,31 @@ function ExportPdfModal({
               <FileText className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-foreground">Export dashboard as PDF</h2>
-              <p className="text-xs text-muted-foreground">{dashName}.pdf</p>
+              <h2 className="text-sm font-semibold text-foreground">Export dashboard</h2>
+              <p className="text-xs text-muted-foreground">{dashName}.{format}</p>
             </div>
           </div>
           {!exporting && (
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><X className="w-4 h-4" /></button>
           )}
+        </div>
+
+        {/* Format selector (DB2-01 PDF / DB2-02 PowerPoint) */}
+        <div className="px-5 py-3 border-b border-border shrink-0 flex gap-2">
+          <button
+            onClick={() => setFormat('pdf')}
+            disabled={exporting}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium border transition-all ${format === 'pdf' ? 'bg-primary/10 border-primary/40 text-primary' : 'border-border text-muted-foreground hover:bg-muted/60'}`}
+          >
+            <FileText className="w-3.5 h-3.5" /> PDF document
+          </button>
+          <button
+            onClick={() => setFormat('pptx')}
+            disabled={exporting}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-medium border transition-all ${format === 'pptx' ? 'bg-primary/10 border-primary/40 text-primary' : 'border-border text-muted-foreground hover:bg-muted/60'}`}
+          >
+            <Presentation className="w-3.5 h-3.5" /> PowerPoint
+          </button>
         </div>
 
         <div className="px-5 py-3 border-b border-border shrink-0 flex items-center justify-between">
@@ -2765,8 +2785,8 @@ function ExportPdfModal({
             className="flex-1 py-2 bg-primary text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:opacity-90 transition-opacity flex items-center justify-center gap-2"
           >
             {exporting
-              ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating PDF…</>
-              : <><FileText className="w-3.5 h-3.5" />Export {selected.size} page{selected.size !== 1 ? 's' : ''}</>}
+              ? <><span className="w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin" />Generating {format === 'pptx' ? 'PowerPoint' : 'PDF'}…</>
+              : <>{format === 'pptx' ? <Presentation className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}Export {selected.size} {format === 'pptx' ? 'slide' : 'page'}{selected.size !== 1 ? 's' : ''}</>}
           </button>
         </div>
       </div>
@@ -3073,6 +3093,7 @@ export function DashboardBuilder({
   // Export state — a single in-flight flag prevents duplicate export requests.
   const [exporting, setExporting] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [exportNote, setExportNote] = useState<{ kind: 'success' | 'error' | 'info'; msg: string } | null>(null);
   const [pageNote, setPageNote] = useState<{ kind: 'success' | 'error' | 'info'; msg: string } | null>(null);
 
@@ -3969,6 +3990,44 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     }
   }
 
+  async function exportDashboardPptx(orderedSelectedIds: string[]) {
+    if (exporting) return;
+    setExporting(true);
+    setExportNote(null);
+    const orig = activePageRef.current;
+    const ordered = pagesRef.current.filter(p => orderedSelectedIds.includes(String(p.id)));
+    try {
+      if (!ordered.length) throw new Error('No pages selected');
+      const PptxGenJS = (await import('pptxgenjs')).default;
+      const pptx = new PptxGenJS();
+      pptx.defineLayout({ name: 'C1X_WIDE', width: 13.333, height: 7.5 });
+      pptx.layout = 'C1X_WIDE';
+      let added = 0;
+      for (const p of ordered) {
+        const cap = await capturePage(String(p.id));
+        if (!cap) continue;
+        const slide = pptx.addSlide();
+        // Editable title text + the captured page image, fit preserving aspect ratio.
+        slide.addText(String(p.name || 'Page'), { x: 0.4, y: 0.2, w: 12.5, h: 0.5, fontSize: 18, bold: true, color: '363636' });
+        const areaX = 0.4, areaY = 0.85, areaW = 12.5, areaH = 6.4;
+        const ar = cap.width / cap.height;
+        let w = areaW, h = areaW / ar;
+        if (h > areaH) { h = areaH; w = areaH * ar; }
+        slide.addImage({ data: cap.dataUrl, x: areaX + (areaW - w) / 2, y: areaY + (areaH - h) / 2, w, h });
+        added++;
+      }
+      if (added === 0) throw new Error('No page content could be captured');
+      await pptx.writeFile({ fileName: `${dashName()}.pptx` });
+      setExportNote({ kind: 'success', msg: `Exported ${added} slide${added !== 1 ? 's' : ''} to PowerPoint` });
+    } catch (e: any) {
+      setExportNote({ kind: 'error', msg: e?.message || 'Failed to export PowerPoint' });
+    } finally {
+      setShowExportModal(false);
+      if (orig && String(activePageRef.current) !== String(orig)) switchPage(String(orig));
+      setExporting(false);
+    }
+  }
+
   const handleDragEnd = useCallback(async (event: DragEndEvent) => {
     setActiveDragItem(null);
     const { active, over } = event;
@@ -4071,9 +4130,23 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     minH: 2
   })), [widgets]);
 
-  const layouts = useMemo(() => ({
-    lg: layout, md: layout, sm: layout, xs: layout, xxs: layout
-  }), [layout]);
+  // DB2-04 — mobile arrangement: desktop (lg/md) keeps the authored layout;
+  // tablets/phones get an optimized single-column stack (in reading order) so
+  // cards stay full-width and readable without horizontal scrolling. Mobile
+  // layouts are derived, never persisted (see the onLayoutChange guard below).
+  const layouts = useMemo(() => {
+    const stack = (cols: number) => {
+      let y = 0;
+      return widgets.map(w => {
+        const h = Math.max(2, w.height || 4);
+        const item = { i: String(w.id), x: 0, y, w: cols, h, minW: 1, minH: 2 };
+        y += h;
+        return item;
+      });
+    };
+    return { lg: layout, md: layout, sm: stack(6), xs: stack(4), xxs: stack(2) };
+  }, [layout, widgets]);
+  const [rglBreakpoint, setRglBreakpoint] = useState<string>('lg');
   const { isOver, setNodeRef } = useDroppable({ id: 'dashboard-drop-zone' });
   const mergedRef = useCallback(
     (node: HTMLDivElement | null) => {
@@ -4228,11 +4301,11 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             <button
               onClick={() => setShowExportModal(true)}
               disabled={exporting || pages.length === 0}
-              title="Export dashboard as PDF"
+              title="Export dashboard as PDF or PowerPoint"
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border border-border bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/60 disabled:opacity-50 transition-all"
             >
-              <FileText className={`w-3.5 h-3.5 ${exporting ? 'animate-pulse' : ''}`} />
-              {exporting ? 'Exporting…' : 'Export PDF'}
+              <Download className={`w-3.5 h-3.5 ${exporting ? 'animate-pulse' : ''}`} />
+              {exporting ? 'Exporting…' : 'Export'}
             </button>
 
             <button onClick={() => setShowVersions(v => !v)}
@@ -4304,6 +4377,15 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-all">
                 <Share2 className="w-3.5 h-3.5" />
                 Share
+              </button>
+            )}
+
+            {canPublish && (
+              <button onClick={() => setShowEmbedModal(true)}
+                title="Embed this dashboard in an external site"
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-muted/60 hover:bg-muted border border-border rounded-xl text-xs font-medium text-muted-foreground hover:text-foreground transition-all">
+                <Code2 className="w-3.5 h-3.5" />
+                Embed
               </button>
             )}
           </div>
@@ -4451,7 +4533,11 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                   isDraggable={isEditing}
                   isResizable={isEditing}
                   resizeHandles={['s', 'e', 'se']}
+                  onBreakpointChange={(bp: string) => setRglBreakpoint(bp)}
                   onLayoutChange={(newLayout: any) => {
+                    // Never persist the derived mobile stack back onto the
+                    // authored desktop layout — only lg/md drive saved positions.
+                    if (rglBreakpoint !== 'lg' && rglBreakpoint !== 'md') return;
                     setWidgets(ws => {
                       let changed = false;
                       const next = ws.map(w => {
@@ -4647,8 +4733,20 @@ Based on the above data context, suggest a highly relevant dashboard card title.
             pages={pages.map(p => ({ id: String(p.id), name: String(p.name) }))}
             dashName={String(dashboard?.name || titleOverride || 'Dashboard')}
             exporting={exporting}
-            onExport={(ids) => exportDashboardPdf(ids)}
+            onExport={(ids, format) => format === 'pptx' ? exportDashboardPptx(ids) : exportDashboardPdf(ids)}
             onClose={() => setShowExportModal(false)}
+          />
+        )}
+
+        {showEmbedModal && dashboard && (
+          <EmbedDashboardModal
+            dashId={dashId}
+            dashName={String(dashboard?.name || 'Dashboard')}
+            isPublished={isPublished}
+            initialEnabled={Boolean((dashboard as any)?.embed_enabled)}
+            initialToken={((dashboard as any)?.embed_token) ?? null}
+            onClose={() => setShowEmbedModal(false)}
+            onChange={(s) => setDashboard((d: any) => d ? { ...d, embed_enabled: s.embed_enabled, embed_token: s.embed_token } : d)}
           />
         )}
 

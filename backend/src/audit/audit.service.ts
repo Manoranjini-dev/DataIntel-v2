@@ -27,6 +27,7 @@ export type AuditEventType =
   | 'chat_created' | 'chat_archived' | 'chat_unarchived' | 'chat_deleted' | 'chat_message_promoted'
   // Dashboard events
   | 'dashboard_created' | 'dashboard_updated' | 'dashboard_published' | 'dashboard_unpublished' | 'dashboard_deleted'
+  | 'dashboard_embed_enabled' | 'dashboard_embed_disabled'
   | 'dashboard_page_created' | 'dashboard_page_deleted' | 'dashboard_generated'
   | 'dashboard_page_copied' | 'dashboard_page_moved'
   | 'dashboard_shared' | 'dashboard_share_revoked'

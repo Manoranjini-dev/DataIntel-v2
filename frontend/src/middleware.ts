@@ -17,6 +17,8 @@ const PUBLIC_ROUTES = [
   '/forgot-password',
   '/reset-password',
   '/api/auth/sso',
+  // Publicly embeddable dashboards (token-gated by the backend).
+  '/embed',
 ];
 
 // Auth routes that an already-authenticated user should be bounced away from.

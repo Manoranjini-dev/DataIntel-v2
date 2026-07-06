@@ -10,6 +10,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { randomBytes } from 'crypto';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
 import { DashboardPermissionsService } from './dashboard-permissions.service';
@@ -416,6 +417,88 @@ export class DashboardBuilderService {
     });
 
     return this.getDashboard(dashId, requester.id, requester.role);
+  }
+
+  // ── Embedding (DB2-03) ─────────────────────────────────
+
+  /**
+   * Enable/disable embedding for a dashboard. Generates a fresh opaque token
+   * the first time embedding is turned on. Same permission bar as publishing.
+   * Returns the current embed state.
+   */
+  async setEmbed(
+    dashId: string,
+    requester: SafeAccount,
+    enabled: boolean,
+    regenerate = false,
+  ): Promise<{ embed_enabled: boolean; embed_token: string | null }> {
+    if (requester.role !== 'ADMIN' && requester.role !== 'ANALYST') {
+      throw new ForbiddenException('Only Admins and Analysts can manage embedding.');
+    }
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_publish');
+
+    const dash = await this.db.queryOne<{ id: string; embed_token: string | null; origin: string }>(
+      `SELECT id, embed_token, origin FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
+      [dashId],
+    );
+    if (!dash) throw new NotFoundException('Dashboard not found');
+    if (dash.origin === 'cards') {
+      throw new ForbiddenException('Card workspaces cannot be embedded.');
+    }
+
+    // Mint a token on first enable (or when explicitly rotating).
+    const token = enabled && (!dash.embed_token || regenerate)
+      ? randomBytes(24).toString('base64url')
+      : dash.embed_token;
+
+    const updated = await this.db.queryOne<{ embed_enabled: boolean; embed_token: string | null }>(
+      `UPDATE dashboards
+          SET embed_enabled = $2, embed_token = $3, updated_at = NOW(), updated_by = $4
+        WHERE id = $1
+      RETURNING embed_enabled, embed_token`,
+      [dashId, enabled, token, requester.id],
+    );
+
+    await this.audit.log({
+      accountId: requester.id,
+      eventType: enabled ? 'dashboard_embed_enabled' : 'dashboard_embed_disabled',
+      resourceType: 'dashboard', resourceId: dashId,
+    });
+
+    return updated!;
+  }
+
+  /**
+   * Public read path for an embedded dashboard. The token is the capability —
+   * the dashboard is only served when embedding is enabled AND it is currently
+   * published, so unpublishing or disabling embedding revokes access instantly.
+   * Content is read using the owner's identity so the full published dashboard
+   * is returned (no per-viewer share filtering).
+   */
+  async getEmbeddedDashboard(token: string) {
+    if (!token) throw new NotFoundException('Dashboard not found');
+    const dash = await this.db.queryOne<any>(
+      `SELECT d.*, a.display_name AS created_by_name
+         FROM dashboards d
+         JOIN accounts a ON a.id = d.created_by
+        WHERE d.embed_token = $1
+          AND d.embed_enabled = true
+          AND d.status = 'published'
+          AND d.deleted_at IS NULL`,
+      [token],
+    );
+    if (!dash) throw new NotFoundException('This dashboard is not available for embedding.');
+
+    const ownerId = dash.created_by;
+    const pages = await this.listPages(dash.id, ownerId);
+    const pagesWithWidgets = await Promise.all(
+      pages.map(async (p: any) => ({
+        ...p,
+        widgets: await this.listWidgets(p.id, ownerId),
+      })),
+    );
+
+    return { dashboard: dash, pages: pagesWithWidgets };
   }
 
   async softDeleteDashboard(dashId: string, deleter: SafeAccount) {

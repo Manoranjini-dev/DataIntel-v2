@@ -6,7 +6,7 @@ import { useAuthStore } from '@/lib/auth-store';
 import { usePathname } from 'next/navigation';
 import { authApi } from '@/lib/api';
 
-const PUBLIC_ROUTES = ['/', '/login', '/register', '/activate', '/forgot-password', '/reset-password'];
+const PUBLIC_ROUTES = ['/', '/login', '/register', '/activate', '/forgot-password', '/reset-password', '/embed'];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, setUser, clearUser } = useAuthStore();
