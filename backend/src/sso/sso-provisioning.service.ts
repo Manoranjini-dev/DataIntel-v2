@@ -53,14 +53,28 @@ export class SsoProvisioningService {
         [email],
       );
       if (byEmail) {
-        this.assertUsable(byEmail);
-        await this.db.query(
-          `UPDATE accounts
-              SET sso_provider = $1, sso_subject = $2,
-                  email_verified = true, updated_at = NOW()
-            WHERE id = $3`,
-          [provider, profile.subject, byEmail.id],
-        );
+        if (byEmail.status === 'PENDING_INVITATION') {
+          // Allow SSO login to automatically activate an invited user
+          await this.db.query(
+            `UPDATE accounts
+                SET sso_provider = $1, sso_subject = $2,
+                    email_verified = true, 
+                    status = 'ACTIVE', is_active = true,
+                    invitation_token = NULL, invitation_expires_at = NULL,
+                    updated_at = NOW()
+              WHERE id = $3`,
+            [provider, profile.subject, byEmail.id],
+          );
+        } else {
+          this.assertUsable(byEmail);
+          await this.db.query(
+            `UPDATE accounts
+                SET sso_provider = $1, sso_subject = $2,
+                    email_verified = true, updated_at = NOW()
+              WHERE id = $3`,
+            [provider, profile.subject, byEmail.id],
+          );
+        }
         await this.audit.log({
           accountId: byEmail.id,
           eventType: 'sso_identity_linked',
