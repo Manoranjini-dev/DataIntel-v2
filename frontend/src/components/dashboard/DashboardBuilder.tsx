@@ -34,6 +34,7 @@ import {
   applyVisualizationConfig, AGGREGATION_OPTIONS, NUMERIC_ONLY_AGGREGATIONS, isNumericColumn,
   type VisualizationConfig, type AggregationFn,
 } from '@/lib/aggregation';
+import { validateFormula, type CustomMeasure } from '@/lib/custom-measures';
 import { useUIStore } from '@/lib/ui-store';
 
 // ── Grid geometry — MUST stay in sync with the ResponsiveGridLayout props
@@ -99,12 +100,15 @@ function normalizeWidgetType(hint?: string | null): string {
     comparison_card: 'metric_card',
     number_trend: 'metric_card',
     list: 'table',
+    map_chart: 'map',
+    matrix_chart: 'matrix',
+    pivot: 'matrix',
   };
   const VALID = new Set([
     'metric_card', 'line_chart', 'area_chart', 'bar_chart', 'pie_chart',
     'donut_chart', 'table', 'heatmap', 'funnel', 'scatter', 'pivot',
     'gauge', 'treemap', 'sankey', 'text', 'image', 'divider', 'filter_control',
-    'stacked_bar', 'stacked_area_chart', 'combo_chart',
+    'stacked_bar', 'stacked_area_chart', 'combo_chart', 'map', 'matrix',
   ]);
   const normalized = MAP[hint || ''] || hint || 'table';
   return VALID.has(normalized) ? normalized : 'table';
@@ -130,6 +134,8 @@ const WIDGET_TEMPLATES = [
   { type: 'waterfall_chart', name: 'Waterfall', icon: '⊟', desc: 'Running totals' },
   { type: 'stat_grid', name: 'Stat Grid', icon: '⊞', desc: 'Multiple metrics' },
   { type: 'table', name: 'Data Table', icon: '☰', desc: 'Raw row data' },
+  { type: 'map', name: 'Map', icon: '🌍', desc: 'Geospatial mapping' },
+  { type: 'matrix', name: 'Matrix Pivot', icon: '⊞', desc: 'Hierarchical pivot table' },
   { type: 'text', name: 'Free Text', icon: '✎', desc: 'Static note or annotation' },
   { type: 'image', name: 'Image', icon: '▢', desc: 'Picture or logo' },
 ];
@@ -623,6 +629,7 @@ function Widget({
             title={widget.title}
             compact={true}
             showLegend={vizConfig?.showLegend}
+            config={vizConfig}
           />
         </div>
         {(qd.metricContext || qd.businessSignificance) && (
@@ -827,6 +834,7 @@ function WidgetFocusOverlay({ widget, onClose }: { widget: WidgetData; onClose: 
                 uiHint={hint as any}
                 title={widget.title}
                 showLegend={widget.visualization_config?.showLegend}
+                config={widget.visualization_config}
               />
             </div>
           )}
@@ -1587,6 +1595,18 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   const [sortBy, setSortBy] = useState(vc?.sortBy || '');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(vc?.sortDir || 'asc');
   const [showLegendSetting, setShowLegendSetting] = useState(vc?.showLegend !== false);
+  // Advanced-visual + calculated-field config.
+  const [customMeasures, setCustomMeasures] = useState<CustomMeasure[]>(vc?.customMeasures || []);
+  const [gaugeTarget, setGaugeTarget] = useState<string>(vc?.gaugeTarget != null ? String(vc.gaugeTarget) : '');
+  const [gaugeMin, setGaugeMin] = useState<string>(vc?.gaugeMin != null ? String(vc.gaugeMin) : '');
+  const [gaugeMax, setGaugeMax] = useState<string>(vc?.gaugeMax != null ? String(vc.gaugeMax) : '');
+  const [locationField, setLocationField] = useState(vc?.locationField || '');
+  const [latField, setLatField] = useState(vc?.latField || '');
+  const [lonField, setLonField] = useState(vc?.lonField || '');
+  const [mapValueField, setMapValueField] = useState(vc?.mapValueField || '');
+  const [matrixRows, setMatrixRows] = useState<string>((vc?.matrixRows || []).join(','));
+  const [matrixCols, setMatrixCols] = useState<string>((vc?.matrixCols || []).join(','));
+  const [matrixMeasure, setMatrixMeasure] = useState(vc?.matrixMeasure || '');
   const [vizSaving, setVizSaving] = useState(false);
   const [vizSaved, setVizSaved] = useState(false);
   const [vizError, setVizError] = useState('');
@@ -1600,6 +1620,21 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   async function handleSaveVisualization() {
     setVizSaving(true); setVizError(''); setVizSaved(false);
     try {
+      // Validate custom measures against the available fields before saving.
+      const measureFields = [...availableColumns, ...customMeasures.map((m) => m.name)];
+      for (const m of customMeasures) {
+        if (!m.name.trim() || !m.formula.trim()) continue;
+        const res = validateFormula(m.formula, measureFields.filter((f) => f !== m.name));
+        if (!res.valid) {
+          setVizError(`Measure "${m.name || 'unnamed'}": ${res.error}`);
+          setVizSaving(false);
+          return;
+        }
+      }
+      const cleanMeasures = customMeasures.filter((m) => m.name.trim() && m.formula.trim());
+      const num = (s: string) => (s.trim() === '' || isNaN(Number(s)) ? undefined : Number(s));
+      const list = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
+
       const visualization_config: VisualizationConfig = {
         vizType: vizType || undefined,
         xAxis: xAxis || undefined,
@@ -1609,6 +1644,17 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
         sortBy: sortBy || undefined,
         sortDir,
         showLegend: showLegendSetting,
+        customMeasures: cleanMeasures.length ? cleanMeasures : undefined,
+        gaugeTarget: num(gaugeTarget),
+        gaugeMin: num(gaugeMin),
+        gaugeMax: num(gaugeMax),
+        locationField: locationField || undefined,
+        latField: latField || undefined,
+        lonField: lonField || undefined,
+        mapValueField: mapValueField || undefined,
+        matrixRows: list(matrixRows).length ? list(matrixRows) : undefined,
+        matrixCols: list(matrixCols).length ? list(matrixCols) : undefined,
+        matrixMeasure: matrixMeasure || undefined,
       };
       await dashboardApi.updateWidget(dashId, pageId, widget.id, { ...widget, visualization_config });
       onUpdate({ visualization_config });
@@ -2129,6 +2175,136 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
               />
               <span className="text-xs text-foreground">Show legend</span>
             </label>
+
+            {/* ── Gauge config ── */}
+            {/gauge/.test(vizType) && (
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Target</label>
+                  <input value={gaugeTarget} onChange={e => setGaugeTarget(e.target.value)} inputMode="decimal" placeholder="e.g. 1000"
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Min</label>
+                  <input value={gaugeMin} onChange={e => setGaugeMin(e.target.value)} inputMode="decimal" placeholder="0"
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Max</label>
+                  <input value={gaugeMax} onChange={e => setGaugeMax(e.target.value)} inputMode="decimal" placeholder="auto"
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+              </div>
+            )}
+
+            {/* ── Map config ── */}
+            {/map/.test(vizType) && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Location field (country)</label>
+                  <select value={locationField} onChange={e => setLocationField(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">(auto-detect)</option>
+                    {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Value (measure)</label>
+                  <select value={mapValueField} onChange={e => setMapValueField(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">(auto-detect)</option>
+                    {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Latitude field</label>
+                  <select value={latField} onChange={e => setLatField(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">(none)</option>
+                    {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Longitude field</label>
+                  <select value={lonField} onChange={e => setLonField(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">(none)</option>
+                    {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* ── Matrix config ── */}
+            {/matrix|pivot/.test(vizType) && (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Row dimensions (comma-sep, outer→inner)</label>
+                  <input value={matrixRows} onChange={e => setMatrixRows(e.target.value)} placeholder="region, country"
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Column dimension</label>
+                  <input value={matrixCols} onChange={e => setMatrixCols(e.target.value)} placeholder="year"
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-muted-foreground mb-1">Measure</label>
+                  <select value={matrixMeasure} onChange={e => setMatrixMeasure(e.target.value)}
+                    className="w-full px-3 py-2 bg-muted/50 border border-border rounded-xl text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40">
+                    <option value="">(auto-detect)</option>
+                    {availableColumns.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* ── Custom Measures (calculated fields) ── */}
+            <div className="mt-4 pt-3 border-t border-border/60">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Custom Measures</p>
+                <button
+                  type="button"
+                  onClick={() => setCustomMeasures(m => [...m, { id: `m_${Date.now()}`, name: '', formula: '' }])}
+                  className="text-[11px] px-2 py-1 rounded-lg border border-border text-foreground hover:bg-muted transition-colors"
+                >+ Add measure</button>
+              </div>
+              <p className="text-[10px] text-muted-foreground mb-2">Reference fields with <code>[Column]</code>; use + − * / and functions (round, abs, min, max, coalesce). Available everywhere a measure is accepted.</p>
+              <div className="space-y-2">
+                {customMeasures.map((m, idx) => {
+                  const others = [...availableColumns, ...customMeasures.filter((_, i) => i !== idx).map(x => x.name)];
+                  const check = m.formula.trim() ? validateFormula(m.formula, others) : null;
+                  return (
+                    <div key={m.id} className="flex gap-1.5 items-start">
+                      <input
+                        value={m.name}
+                        onChange={e => setCustomMeasures(list => list.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))}
+                        placeholder="Name"
+                        className="w-28 px-2 py-1.5 bg-muted/50 border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                      />
+                      <div className="flex-1">
+                        <input
+                          value={m.formula}
+                          onChange={e => setCustomMeasures(list => list.map((x, i) => i === idx ? { ...x, formula: e.target.value } : x))}
+                          placeholder="[revenue] - [cost]"
+                          className={`w-full px-2 py-1.5 bg-muted/50 border rounded-lg text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 ${check && !check.valid ? 'border-destructive' : 'border-border'}`}
+                        />
+                        {check && !check.valid && <p className="text-[10px] text-destructive mt-0.5">{check.error}</p>}
+                        {check && check.valid && <p className="text-[10px] text-success mt-0.5">✓ valid</p>}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCustomMeasures(list => list.filter((_, i) => i !== idx))}
+                        className="px-2 py-1.5 text-muted-foreground hover:text-destructive transition-colors"
+                        title="Delete measure"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
             {vizError && (
               <p className="mt-3 text-xs text-destructive bg-destructive/8 border border-destructive/20 rounded-xl px-3 py-2">{vizError}</p>

@@ -21,6 +21,8 @@ import {
   Filter,
   Clock,
   TreePine,
+  Map as MapIcon,
+  Grid3x3,
   type LucideIcon,
 } from 'lucide-react';
 import type { UIHint } from '@/lib/types';
@@ -170,6 +172,22 @@ export const PALETTE_ITEMS: PaletteItem[] = [
     icon: Filter,
     defaultSize: 'md',
     color: 'text-red-400 bg-red-500/10',
+  },
+  {
+    type: 'map',
+    label: 'Map',
+    description: 'Geographic distribution',
+    icon: MapIcon,
+    defaultSize: 'lg',
+    color: 'text-emerald-400 bg-emerald-500/10',
+  },
+  {
+    type: 'matrix',
+    label: 'Matrix',
+    description: 'Pivot table with drill-down',
+    icon: Grid3x3,
+    defaultSize: 'lg',
+    color: 'text-violet-400 bg-violet-500/10',
   },
   {
     type: 'timeline',

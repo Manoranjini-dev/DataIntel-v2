@@ -10,7 +10,9 @@
 // Includes intelligent fallback detection.
 
 import { useState } from 'react';
+import dynamic from 'next/dynamic';
 import type { QueryExecutionResult, UIHint } from '@/lib/types';
+import type { VisualizationConfig } from '@/lib/aggregation';
 import { MetricCard } from './metric-card';
 import { StatGrid } from './stat-grid';
 import { BarChartCard } from './bar-chart-card';
@@ -19,6 +21,14 @@ import { PieChartCard } from './pie-chart-card';
 import { AreaChartCard } from './area-chart-card';
 import { ComboChartCard } from './combo-chart-card';
 import { ScatterChartCard } from './scatter-chart-card';
+import { FunnelChartCard } from './funnel-chart-card';
+import { GaugeChartCard } from './gauge-chart-card';
+// Map uses react-simple-maps (browser-only geo rendering) — load client-side.
+const MapChartCard = dynamic(() => import('./map-chart-card').then((m) => m.MapChartCard), {
+  ssr: false,
+  loading: () => <div className="w-full h-full flex items-center justify-center text-xs text-zinc-400">Loading map…</div>,
+});
+import { MatrixCard } from './matrix-card';
 import { DataTableCard } from './data-table-card';
 import { ListCard } from './list-card';
 
@@ -29,7 +39,21 @@ interface GenerativeUIRendererProps {
   compact?: boolean;
   /** Defaults to true (existing behavior) when unset. */
   showLegend?: boolean;
+  /** Per-widget visualization config (gauge target, map fields, matrix dims…). */
+  config?: VisualizationConfig;
 }
+
+/**
+ * Normalize the canonical DB widget_type vocabulary (e.g. 'funnel', 'pivot')
+ * and legacy aliases onto the UIHint values resolveComponent understands.
+ */
+const HINT_ALIASES: Record<string, UIHint> = {
+  funnel: 'funnel_chart',
+  pivot: 'matrix',
+  scatter_plot: 'scatter',
+  gauge_chart: 'gauge',
+  donut: 'donut_chart',
+};
 
 /**
  * Intelligent fallback: if the LLM's hint doesn't match the data shape,
@@ -37,9 +61,10 @@ interface GenerativeUIRendererProps {
  */
 function resolveComponent(
   execution: QueryExecutionResult,
-  hint?: UIHint,
+  rawHint?: UIHint,
 ): UIHint {
   const { rows, columns } = execution;
+  const hint = rawHint ? (HINT_ALIASES[rawHint] ?? rawHint) : undefined;
 
   // No data → table (shows "no data" message)
   if (!rows || rows.length === 0) return 'data_table';
@@ -98,10 +123,9 @@ function resolveComponent(
       case 'heatmap':
         return hasNumeric && columns.length >= 3 ? 'data_table' : 'data_table'; // Heatmap rendered as table for now
 
-      // New extended types — map to closest existing renderer
       case 'donut_chart':
         if (hasNumeric && rows.length >= 1 && rows.length <= 12 && columns.length >= 2)
-          return 'pie_chart';
+          return 'donut_chart';
         break;
 
       case 'stacked_bar':
@@ -125,8 +149,19 @@ function resolveComponent(
         break;
 
       case 'gauge':
+        if (hasNumeric) return 'gauge';
+        break;
+
       case 'number_trend':
         if (isSingleRow && hasNumeric) return 'metric_card';
+        break;
+
+      case 'map':
+        if (columns.length >= 2) return 'map';
+        break;
+
+      case 'matrix':
+        if (columns.length >= 2) return 'matrix';
         break;
 
       case 'comparison_card':
@@ -135,7 +170,7 @@ function resolveComponent(
         break;
 
       case 'funnel_chart':
-        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'bar_chart';
+        if (hasNumeric && rows.length >= 1 && columns.length >= 2) return 'funnel_chart';
         break;
 
       case 'timeline':
@@ -190,6 +225,7 @@ export function GenerativeUIRenderer({
   title,
   compact,
   showLegend,
+  config,
 }: GenerativeUIRendererProps) {
   const [view, setView] = useState<'chart' | 'table'>('chart');
   const resolved = resolveComponent(execution, uiHint);
@@ -231,6 +267,50 @@ export function GenerativeUIRenderer({
       break;
     case 'scatter':
       viz = <ScatterChartCard execution={execution} title={title} compact={compact} />;
+      break;
+    case 'donut_chart':
+      viz = <PieChartCard execution={execution} title={title} compact={compact} showLegend={showLegend} donut />;
+      break;
+    case 'funnel_chart':
+      viz = <FunnelChartCard execution={execution} title={title} compact={compact} />;
+      break;
+    case 'gauge':
+      viz = (
+        <GaugeChartCard
+          execution={execution}
+          title={title}
+          compact={compact}
+          target={config?.gaugeTarget}
+          min={config?.gaugeMin}
+          max={config?.gaugeMax}
+        />
+      );
+      break;
+    case 'map':
+      viz = (
+        <MapChartCard
+          execution={execution}
+          title={title}
+          compact={compact}
+          locationField={config?.locationField}
+          latField={config?.latField}
+          lonField={config?.lonField}
+          valueField={config?.mapValueField}
+        />
+      );
+      break;
+    case 'matrix':
+      viz = (
+        <MatrixCard
+          execution={execution}
+          title={title}
+          compact={compact}
+          rowDims={config?.matrixRows}
+          colDim={config?.matrixCols?.[0]}
+          measure={config?.matrixMeasure}
+          aggregation={config?.matrixAggregation}
+        />
+      );
       break;
     case 'list':
       viz = <ListCard execution={execution} title={title} compact={compact} />;

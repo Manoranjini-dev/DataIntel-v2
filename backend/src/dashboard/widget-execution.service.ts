@@ -464,9 +464,14 @@ ${dedupBlock}`;
         return 'a distribution or share of a total broken down by a categorical column.';
       case 'scatter':
         return 'a correlation between two numeric columns from the same table.';
+      case 'gauge':
+        return 'a single KPI value to compare against a target or threshold.';
+      case 'map':
+        return 'a measure broken down by a geographic column (country, state, or city).';
       case 'table':
       case 'pivot':
-        return 'a set of detailed records or a multi-dimensional breakdown.';
+      case 'matrix':
+        return 'a set of detailed records or a multi-dimensional breakdown across two or more dimensions.';
       default:
         return 'a clear, high-value analytical question matching the data.';
     }

@@ -9,6 +9,10 @@
 // changing the config is reflected immediately and identically on every
 // render/reload.
 
+import { applyCustomMeasures, type CustomMeasure } from './custom-measures';
+
+export type { CustomMeasure };
+
 export type AggregationFn = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'count_distinct' | 'median';
 
 export const AGGREGATION_OPTIONS: { value: AggregationFn; label: string }[] = [
@@ -32,6 +36,30 @@ export interface VisualizationConfig {
   sortDir?: 'asc' | 'desc';
   /** Defaults to true (matches existing chart behavior) when unset. */
   showLegend?: boolean;
+
+  /** User-defined calculated fields, computed as extra columns before render. */
+  customMeasures?: CustomMeasure[];
+
+  // ── Gauge config ──
+  /** Target/threshold the KPI is compared against. */
+  gaugeTarget?: number;
+  gaugeMin?: number;
+  gaugeMax?: number;
+
+  // ── Map config ──
+  /** Column holding a country/region name (choropleth mode). */
+  locationField?: string;
+  /** Latitude / longitude columns (marker mode). */
+  latField?: string;
+  lonField?: string;
+  /** Measure column shaded/sized on the map. */
+  mapValueField?: string;
+
+  // ── Matrix (pivot) config ──
+  matrixRows?: string[];
+  matrixCols?: string[];
+  matrixMeasure?: string;
+  matrixAggregation?: AggregationFn;
 }
 
 /** Aggregations that only make sense on numeric values. */
@@ -77,15 +105,17 @@ export function applyVisualizationConfig(
 ): { rows: Record<string, unknown>[]; columns: string[] } {
   if (!rows || rows.length === 0 || !config) return { rows, columns };
 
+  // Calculated fields first, so they can be used as axes / aggregation targets.
+  const withMeasures = applyCustomMeasures(rows, columns, config.customMeasures);
+  let outRows = withMeasures.rows;
+  let outColumns = withMeasures.columns;
+
   const groupField = config.groupBy || config.xAxis;
   const hasAggregation = !!(groupField && config.aggregation && config.yAxis);
 
-  let outRows = rows;
-  let outColumns = columns;
-
   if (hasAggregation) {
     const groups = new Map<string, Record<string, unknown>[]>();
-    for (const row of rows) {
+    for (const row of outRows) {
       const key = String(row[groupField!] ?? '');
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(row);

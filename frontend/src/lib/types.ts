@@ -32,6 +32,10 @@ export type UIHint =
   | 'treemap'
   | 'stacked_area_chart'
   | 'combo_chart'
+  | 'map'
+  | 'matrix'
+  | 'pivot'
+  | 'funnel'
   | 'text'
   | 'image';
 

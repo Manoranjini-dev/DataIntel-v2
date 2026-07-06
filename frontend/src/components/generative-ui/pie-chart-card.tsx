@@ -22,6 +22,8 @@ interface PieChartCardProps {
   compact?: boolean;
   /** Defaults to true (existing behavior) when unset. */
   showLegend?: boolean;
+  /** Render as a donut (larger hollow center) instead of the default pie. */
+  donut?: boolean;
 }
 
 function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
@@ -45,7 +47,7 @@ const CustomTooltip = ({
   );
 };
 
-export function PieChartCard({ execution, title, compact, showLegend = true }: PieChartCardProps) {
+export function PieChartCard({ execution, title, compact, showLegend = true, donut = false }: PieChartCardProps) {
   const { rows, columns } = execution;
 
   const schema = useMemo(() => {
@@ -82,7 +84,7 @@ export function PieChartCard({ execution, title, compact, showLegend = true }: P
               cx="50%"
               cy="45%"
               outerRadius="80%"
-              innerRadius="45%"
+              innerRadius={donut ? '62%' : '45%'}
               paddingAngle={2}
             >
               {schema.data.map((_entry, index) => (

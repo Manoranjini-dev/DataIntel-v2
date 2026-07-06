@@ -27,7 +27,7 @@ import { decrypt } from '../common/utils/encryption';
 const VALID_WIDGET_TYPES = new Set([
   'metric_card', 'line_chart', 'area_chart', 'bar_chart', 'pie_chart',
   'donut_chart', 'table', 'heatmap', 'funnel', 'scatter', 'pivot',
-  'gauge', 'treemap', 'sankey',
+  'gauge', 'treemap', 'sankey', 'map', 'matrix',
 ]);
 
 
