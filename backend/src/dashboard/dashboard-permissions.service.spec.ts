@@ -5,6 +5,41 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { DashboardPermissionsService } from './dashboard-permissions.service';
 
+describe('DashboardPermissionsService.canView (published visibility)', () => {
+  let svc: DashboardPermissionsService;
+  let db: { queryOne: jest.Mock };
+  const dashId = 'dash-1';
+
+  beforeEach(() => {
+    db = { queryOne: jest.fn() };
+    svc = new DashboardPermissionsService(db as any);
+  });
+
+  it('lets any authenticated user view a PUBLISHED dashboard they neither own nor are shared on', async () => {
+    db.queryOne.mockResolvedValueOnce({ created_by: 'owner-1', status: 'published' });
+    await expect(svc.canView(dashId, 'stranger')).resolves.toBe(true);
+    // Short-circuits on published — no share lookup needed.
+    expect(db.queryOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('still requires a share for a DRAFT dashboard', async () => {
+    db.queryOne
+      .mockResolvedValueOnce({ created_by: 'owner-1', status: 'draft' }) // dashboard
+      .mockResolvedValueOnce(null);                                      // no share
+    await expect(svc.canView(dashId, 'stranger')).resolves.toBe(false);
+  });
+
+  it('lets the owner view a draft dashboard', async () => {
+    db.queryOne.mockResolvedValueOnce({ created_by: 'owner-1', status: 'draft' });
+    await expect(svc.canView(dashId, 'owner-1')).resolves.toBe(true);
+  });
+
+  it('returns false for a missing dashboard', async () => {
+    db.queryOne.mockResolvedValueOnce(null);
+    await expect(svc.canView(dashId, 'anyone')).resolves.toBe(false);
+  });
+});
+
 describe('DashboardPermissionsService.requireAction', () => {
   let svc: DashboardPermissionsService;
   let db: { queryOne: jest.Mock };

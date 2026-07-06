@@ -153,15 +153,20 @@ export class DashboardPermissionsService {
   /**
    * Check if a user can view/access a dashboard.
    * Owner (dashboards.created_by) always has full access.
-   * Others need an entry in dashboard_shares.
+   * A PUBLISHED dashboard is viewable by any authenticated user — this mirrors
+   * the dashboards list (listDashboards), which surfaces published dashboards to
+   * everyone. Without this, a user could see a published dashboard in their list
+   * but get a 403 + empty page when opening it.
+   * Otherwise the user needs an entry in dashboard_shares.
    */
   async canView(dashId: string, accountId: string): Promise<boolean> {
-    const dash = await this.db.queryOne<{ created_by: string }>(
-      `SELECT created_by FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
+    const dash = await this.db.queryOne<{ created_by: string; status: string }>(
+      `SELECT created_by, status FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
       [dashId],
     );
     if (!dash) return false;
     if (dash.created_by === accountId) return true;
+    if (dash.status === 'published') return true;
 
     const share = await this.db.queryOne(
       `SELECT id FROM dashboard_shares WHERE dashboard_id = $1 AND shared_with = $2`,

@@ -540,14 +540,15 @@ export class DashboardBuilderService {
       if (share) { hasFullAccess = true; dashboardShareSharedBy = share.shared_by; }
     }
     if (!hasFullAccess) {
-      const acct = await this.db.queryOne<{ role: string }>(`SELECT role FROM accounts WHERE id = $1`, [requesterId]);
-      if (acct?.role === 'ADMIN') {
-        const published = await this.db.queryOne(
-          `SELECT 1 FROM dashboards WHERE id = $1 AND status = 'published' AND deleted_at IS NULL`,
-          [dashId],
-        );
-        if (published) hasFullAccess = true;
-      }
+      // A published dashboard is fully viewable by any authenticated user
+      // (mirrors listDashboards + DashboardPermissionsService.canView). This
+      // ensures every page of a published dashboard renders for authorized
+      // viewers instead of being filtered down to an empty set.
+      const published = await this.db.queryOne(
+        `SELECT 1 FROM dashboards WHERE id = $1 AND status = 'published' AND deleted_at IS NULL`,
+        [dashId],
+      );
+      if (published) hasFullAccess = true;
     }
 
     const pages = await this.db.queryMany<any>(

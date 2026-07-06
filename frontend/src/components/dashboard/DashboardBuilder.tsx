@@ -3025,6 +3025,7 @@ export function DashboardBuilder({
   }, [dashboard]);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // Monotonic page-number reservation so rapid +Page clicks never collide.
   const pageSeqRef = useRef(0);
@@ -3204,6 +3205,7 @@ export function DashboardBuilder({
   }, []);
 
   const loadData = useCallback(async () => {
+    setLoadError(null);
     try {
       const data = await dashboardApi.get(dashId);
       setDashboard(data.dashboard);
@@ -3238,7 +3240,18 @@ export function DashboardBuilder({
       } else if (data.dashboard?.origin === 'cards') {
         connectionApi.list().then(r => setCardsConnections(r.connections || [])).catch(() => {});
       }
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      console.error(e);
+      const status = e?.status ?? e?.structured?.status;
+      const msg = e?.structured?.message || e?.message || '';
+      setLoadError(
+        status === 403 || /do not have access/i.test(msg)
+          ? "You don't have access to this dashboard. Ask the owner to share it with you or publish it."
+          : status === 404 || /not found/i.test(msg)
+            ? 'This dashboard could not be found. It may have been deleted.'
+            : 'We couldn’t load this dashboard. Please try again.',
+      );
+    }
     finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashId]);
@@ -4161,6 +4174,30 @@ Based on the above data context, suggest a highly relevant dashboard card title.
   if (loading) return (
     <div className="flex-1 flex items-center justify-center bg-background">
       <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+
+  // Meaningful feedback when the dashboard genuinely failed to load — instead of
+  // the misleading "Empty page — click Edit" placeholder (DB access-error fix).
+  if (loadError && !dashboard) return (
+    <div className="flex-1 flex items-center justify-center bg-background p-6">
+      <div className="max-w-sm text-center">
+        <div className="w-12 h-12 rounded-2xl bg-destructive/10 border border-destructive/20 flex items-center justify-center mx-auto mb-4">
+          <X className="w-6 h-6 text-destructive" />
+        </div>
+        <p className="text-sm font-semibold text-foreground mb-1">Couldn’t load this dashboard</p>
+        <p className="text-xs text-muted-foreground mb-5">{loadError}</p>
+        <div className="flex items-center justify-center gap-2">
+          <button onClick={() => { setLoading(true); loadData(); }}
+            className="px-4 py-2 rounded-xl text-xs font-semibold bg-primary text-white hover:opacity-90 transition-opacity">
+            Try again
+          </button>
+          <a href={backUrl || '/dashboards'}
+            className="px-4 py-2 rounded-xl text-xs font-medium border border-border text-muted-foreground hover:bg-muted transition-colors">
+            {backLabel || 'Back'}
+          </a>
+        </div>
+      </div>
     </div>
   );
 
