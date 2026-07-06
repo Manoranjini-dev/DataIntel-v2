@@ -109,6 +109,12 @@ export class EnvironmentVariables {
   @IsString() @IsOptional()
   FRONTEND_URL: string = 'http://localhost:3000';
 
+  // Public base URL of THIS backend — used to build OIDC redirect URIs
+  // (${BACKEND_PUBLIC_URL}/api/auth/sso/:provider/callback). Must match the
+  // redirect URI registered with Google / Entra.
+  @IsString() @IsOptional()
+  BACKEND_PUBLIC_URL: string = 'http://localhost:3001';
+
   @IsNumber() @IsOptional()
   RESET_TOKEN_TTL_MINUTES: number = 60;
 

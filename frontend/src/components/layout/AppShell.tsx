@@ -13,25 +13,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPublicRoute = PUBLIC_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'));
 
-  const [isChecking, setIsChecking] = useState(!isAuthenticated && !isPublicRoute);
+  const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
-    // Only check auth if we don't have a user in state, and it's not a public route.
-    if (isChecking) {
-      authApi.me()
-        .then(res => {
-          if (res.success && res.account) {
-            setUser(res.account);
-          }
-          // Do not call clearUser() here on general failures. 
-          // The Axios interceptor already handles 401s and redirects to /login.
-        })
-        .catch((err) => {
-          console.warn('[AppShell] auth check failed (network/backend down?), keeping local auth state.', err);
-        })
-        .finally(() => setIsChecking(false));
-    }
-  }, [isChecking, setUser]);
+    // Always verify the session with the server on mount.
+    // This ensures the Zustand store stays in sync after SSO redirects,
+    // where the cookie changes but the local state may be stale.
+    authApi.me()
+      .then(res => {
+        if (res.success && res.account) {
+          setUser(res.account);
+        } else {
+          clearUser();
+        }
+      })
+      .catch((err) => {
+        // Network/backend down — keep local auth state so the app doesn't flash
+        // a login redirect when the backend is briefly unreachable.
+        console.warn('[AppShell] auth check failed (network/backend down?), keeping local auth state.', err);
+      })
+      .finally(() => setIsChecking(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (isChecking) {
     return (

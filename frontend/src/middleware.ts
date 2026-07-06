@@ -4,7 +4,20 @@ import type { NextRequest } from 'next/server';
 // Routes that don't require authentication. Invitation activation and the
 // password-reset flow must be reachable without a session — an invited user
 // has no session yet when they click the link in their email.
-const PUBLIC_ROUTES = ['/login', '/register', '/activate', '/forgot-password', '/reset-password'];
+//
+// The SSO endpoints must also be public: a user has no session when they start
+// an OIDC flow, and the IdP redirects back to the callback *before* any session
+// cookie exists. These live under `/api/auth/sso/*`, which the `matcher` below
+// already excludes — this entry is a belt-and-suspenders guard so the SSO flow
+// stays reachable even if the `api` exclusion is ever removed from the matcher.
+const PUBLIC_ROUTES = [
+  '/login',
+  '/register',
+  '/activate',
+  '/forgot-password',
+  '/reset-password',
+  '/api/auth/sso',
+];
 
 // Auth routes that an already-authenticated user should be bounced away from.
 // (Activation / reset are intentionally excluded so the links still work.)

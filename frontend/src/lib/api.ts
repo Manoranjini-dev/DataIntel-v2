@@ -165,6 +165,71 @@ export const authApi = {
   },
 };
 
+// ── SSO API ─────────────────────────────────
+
+export interface PublicSsoProvider {
+  provider: 'google' | 'entra' | 'ldap';
+  displayName: string;
+  kind: 'redirect' | 'password';
+}
+
+export const ssoApi = {
+  /** Enabled providers for the login page (public). */
+  providers: async () => {
+    const r = await apiFetch('/auth/sso/providers');
+    return handleResponse<{ success: boolean; providers: PublicSsoProvider[] }>(r);
+  },
+
+  /** Full-page URL that begins an OIDC redirect flow (google | entra). */
+  startUrl: (provider: 'google' | 'entra') => `${API_BASE}/auth/sso/${provider}/start`,
+
+  /** LDAP / Active Directory username + password login. */
+  ldapLogin: async (username: string, password: string) => {
+    const r = await apiFetch('/auth/sso/ldap', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+    return handleResponse<{ success: boolean; account: any }>(r);
+  },
+};
+
+export interface AdminSsoProvider {
+  provider: 'google' | 'entra' | 'ldap';
+  enabled: boolean;
+  displayName: string | null;
+  config: Record<string, any>;
+  hasSecret: boolean;
+  autoProvision: boolean;
+  allowedDomains: string[];
+  defaultRole: 'ADMIN' | 'ANALYST' | 'VIEWER';
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+export interface UpsertSsoProvider {
+  enabled?: boolean;
+  displayName?: string;
+  config?: Record<string, any>;
+  secret?: string;
+  autoProvision?: boolean;
+  allowedDomains?: string[];
+  defaultRole?: 'ADMIN' | 'ANALYST' | 'VIEWER';
+}
+
+export const ssoAdminApi = {
+  list: async () => {
+    const r = await apiFetch('/auth/admin/sso/providers');
+    return handleResponse<{ success: boolean; providers: AdminSsoProvider[] }>(r);
+  },
+  upsert: async (provider: string, body: UpsertSsoProvider) => {
+    const r = await apiFetch(`/auth/admin/sso/providers/${provider}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    return handleResponse<{ success: boolean; provider: AdminSsoProvider }>(r);
+  },
+};
+
 // ── User Management API (ADMIN only) ─────────
 
 export interface ManagedUser {

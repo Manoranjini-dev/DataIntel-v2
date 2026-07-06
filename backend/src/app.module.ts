@@ -15,6 +15,7 @@ import { DatabaseModule } from './database/database.module';
 import { CacheModule } from './cache/cache.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { SsoModule } from './sso/sso.module';
 import { AccountModule } from './account/account.module';
 import { EmailModule } from './email/email.module';
 import { UserModule } from './user/user.module';
@@ -79,6 +80,7 @@ import { DashboardGenerationModule } from './dashboard-generation/dashboard-gene
     AuditModule,
     EmailModule,
     AuthModule,
+    SsoModule,
     AccountModule,
     UserModule,
 

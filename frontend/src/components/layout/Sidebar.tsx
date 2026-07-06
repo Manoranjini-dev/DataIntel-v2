@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, CreditCard, Database, Layers, Settings, Users, PanelLeftClose, PanelLeftOpen, LogOut } from 'lucide-react';
+import { LayoutDashboard, CreditCard, Database, Layers, Settings, Users, ShieldCheck, PanelLeftClose, PanelLeftOpen, LogOut } from 'lucide-react';
 import { useAuthStore } from '@/lib/auth-store';
 import { useUIStore } from '@/lib/ui-store';
 import { authApi } from '@/lib/api';
@@ -34,7 +34,7 @@ export function Sidebar() {
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
 
   const isAdmin = user?.role === 'ADMIN';
-  const adminActive = pathname.startsWith('/admin/users');
+  const adminActive = pathname.startsWith('/admin/users') || pathname.startsWith('/admin/sso');
 
   const handleSignOut = async () => {
     // Always clear local state and navigate — even if the backend is unreachable.
@@ -83,15 +83,26 @@ export function Sidebar() {
             );
           })}
           {isAdmin && (
-            <Link
-              href="/admin/users"
-              title="User Management"
-              className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
-                adminActive ? 'bg-[#2B2B2B] text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
-            >
-              <Users className={`w-[18px] h-[18px] shrink-0 ${adminActive ? 'text-[#F5A623]' : ''}`} />
-            </Link>
+            <>
+              <Link
+                href="/admin/users"
+                title="User Management"
+                className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+                  pathname.startsWith('/admin/users') ? 'bg-[#2B2B2B] text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                <Users className={`w-[18px] h-[18px] shrink-0 ${pathname.startsWith('/admin/users') ? 'text-[#F5A623]' : ''}`} />
+              </Link>
+              <Link
+                href="/admin/sso"
+                title="SSO Settings"
+                className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+                  pathname.startsWith('/admin/sso') ? 'bg-[#2B2B2B] text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                <ShieldCheck className={`w-[18px] h-[18px] shrink-0 ${pathname.startsWith('/admin/sso') ? 'text-[#F5A623]' : ''}`} />
+              </Link>
+            </>
           )}
         </nav>
 
@@ -166,13 +177,25 @@ export function Sidebar() {
               href="/admin/users"
               className={`
                 flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
-                ${adminActive
+                ${pathname.startsWith('/admin/users')
                   ? 'bg-[#2B2B2B] text-white shadow-sm'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'}
               `}
             >
-              <Users className={`w-[18px] h-[18px] shrink-0 ${adminActive ? 'text-[#F5A623]' : ''}`} />
+              <Users className={`w-[18px] h-[18px] shrink-0 ${pathname.startsWith('/admin/users') ? 'text-[#F5A623]' : ''}`} />
               User Management
+            </Link>
+            <Link
+              href="/admin/sso"
+              className={`
+                flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all
+                ${pathname.startsWith('/admin/sso')
+                  ? 'bg-[#2B2B2B] text-white shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'}
+              `}
+            >
+              <ShieldCheck className={`w-[18px] h-[18px] shrink-0 ${pathname.startsWith('/admin/sso') ? 'text-[#F5A623]' : ''}`} />
+              SSO Settings
             </Link>
           </>
         )}

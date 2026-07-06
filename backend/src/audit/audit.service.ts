@@ -8,6 +8,8 @@ import { DatabaseService } from '../database/database.service';
 export type AuditEventType =
   // Auth events
   | 'account_created' | 'login_success' | 'login_failed' | 'logout' | 'password_changed'
+  // SSO events
+  | 'sso_provider_configured' | 'sso_identity_linked'
   // User-management events (Phase 1)
   | 'user_created' | 'user_updated' | 'user_activated' | 'user_deactivated'
   | 'user_reactivated' | 'user_deleted'

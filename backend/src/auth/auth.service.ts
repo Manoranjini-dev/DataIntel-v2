@@ -449,6 +449,51 @@ export class AuthService {
     await this.db.query('DELETE FROM sessions WHERE account_id = $1', [accountId]);
   }
 
+  /**
+   * Issue a session for an already-authenticated account (used by the SSO
+   * flows once an external identity has been verified + provisioned). Applies
+   * the same active/deleted guards as password login and returns the session
+   * token plus the safe account projection.
+   */
+  async issueSessionForAccount(
+    accountId: string,
+    ipAddress?: string,
+    userAgent?: string,
+    method = 'sso',
+  ): Promise<{ account: SafeAccount; sessionToken: string }> {
+    const account = await this.db.queryOne<AccountRow>(
+      'SELECT * FROM accounts WHERE id = $1',
+      [accountId],
+    );
+    if (!account) {
+      throw new UnauthorizedException('Account not found');
+    }
+    if (account.is_deleted || account.status === 'DELETED') {
+      throw new UnauthorizedException('This account no longer exists');
+    }
+    if (account.status !== 'ACTIVE' || !account.is_active) {
+      throw new UnauthorizedException('This account is not active. Contact your administrator.');
+    }
+
+    await this.db.query(
+      'UPDATE accounts SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
+      [accountId],
+    );
+
+    const sessionToken = await this.createSession(accountId, ipAddress, userAgent);
+
+    await this.audit.log({
+      accountId,
+      eventType: 'login_success',
+      resourceType: 'session',
+      details: { method },
+      ipAddress,
+      userAgent,
+    });
+
+    return { account: this.toSafeAccount(account), sessionToken };
+  }
+
   // ── Private helpers ────────────────────────────
 
   private async createSession(accountId: string, ipAddress?: string, userAgent?: string): Promise<string> {
