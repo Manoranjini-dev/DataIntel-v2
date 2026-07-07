@@ -1,12 +1,16 @@
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
 
+  // ── Transpile three so its ESM imports resolve cleanly ─────────
+  transpilePackages: ['three'],
+
   // ── Disable all dev caching so stale-chunk 404s never happen ──
-  // 1. Tell webpack NOT to persist its module cache to disk between restarts.
-  //    Every restart rebuilds fresh chunks with new hashes that the browser can actually load.
-  // 2. Browser-side: serve all _next/static assets with no-store so the
-  //    browser never holds on to an old chunk URL after a server restart.
   webpack(config, { dev, isServer, webpack }) {
     // Disable webpack filesystem cache in dev
     if (dev) {
@@ -34,6 +38,7 @@ const nextConfig = {
         fs: false, https: false, http: false, stream: false, zlib: false,
       };
     }
+
     return config;
   },
 
@@ -52,30 +57,6 @@ const nextConfig = {
       },
     ];
   },
-
-  // optimizePackageImports is stable in Next.js 15 (graduated from experimental)
-  optimizePackageImports: [
-    'lucide-react',
-    'recharts',
-    'framer-motion',
-    '@radix-ui/react-dialog',
-    '@radix-ui/react-dropdown-menu',
-    '@radix-ui/react-label',
-    '@radix-ui/react-scroll-area',
-    '@radix-ui/react-select',
-    '@radix-ui/react-separator',
-    '@radix-ui/react-slot',
-    '@radix-ui/react-tabs',
-    '@radix-ui/react-tooltip',
-    '@dnd-kit/core',
-    '@dnd-kit/sortable',
-    '@dnd-kit/utilities',
-    '@xyflow/react',
-    'react-markdown',
-    'remark-gfm',
-    '@tanstack/react-table',
-    'react-grid-layout',
-  ],
 
   modularizeImports: {
     'lucide-react': {

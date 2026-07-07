@@ -235,3 +235,32 @@
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .animate-float-in { animation: float-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* ── Landing page: marquee ─────────────────────────────────────── */
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.animate-marquee {
+  animation: marquee 38s linear infinite;
+  will-change: transform;
+}
+.animate-marquee:hover { animation-play-state: paused; }
+
+/* ── Landing page: feature card hover ─────────────────────────── */
+.landing-feature-card {
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.landing-feature-card:hover {
+  border-color: rgba(217, 122, 30, 0.38) !important;
+  box-shadow: 0 14px 44px -10px rgba(217, 122, 30, 0.16) !important;
+}
+
+/* ── Landing page: floating card pulse ─────────────────────────── */
+@keyframes float-bob {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-6px); }
+}
+.float-bob { animation: float-bob 3.8s ease-in-out infinite; }
+.float-bob-slow { animation: float-bob 5.2s ease-in-out infinite; }
+.float-bob-fast { animation: float-bob 2.9s ease-in-out infinite; }

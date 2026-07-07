@@ -49,7 +49,7 @@ apiClient.interceptors.response.use(
       // Don't redirect on logout — it handles navigation itself
       const isLogout = url.includes('/auth/logout');
       if (!isLogout && typeof window !== 'undefined') {
-        const isAlreadyOnPublic = ['/login', '/register', '/activate', '/forgot-password', '/reset-password']
+        const isAlreadyOnPublic = window.location.pathname === '/' || ['/login', '/register', '/activate', '/forgot-password', '/reset-password']
           .some(p => window.location.pathname.startsWith(p));
         if (!isAlreadyOnPublic) {
           useAuthStore.getState().clearUser();
