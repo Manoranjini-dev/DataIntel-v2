@@ -13,6 +13,10 @@ import { Responsive, WidthProvider } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import { dashboardApi } from '@/lib/api';
 import { applyVisualizationConfig } from '@/lib/aggregation';
+import {
+  type FilterSet, dashboardFiltersToSet, scopeFilterSetToColumns, mergeFilterSets,
+} from '@/lib/filters';
+import { FilterBuilder } from '@/components/dashboard/FilterBuilder';
 import { GenerativeUIRenderer } from '@/components/generative-ui';
 import { TextCard } from '@/components/generative-ui/text-card';
 import { ImageCard } from '@/components/generative-ui/image-card';
@@ -36,13 +40,17 @@ interface EmbWidget {
   grid_x?: number; grid_y?: number; grid_w?: number; grid_h?: number;
 }
 
-function EmbeddedWidget({ widget }: { widget: EmbWidget }) {
+function EmbeddedWidget({ widget, globalFilters }: { widget: EmbWidget; globalFilters?: FilterSet }) {
   const qd = typeof widget.query_definition === 'string'
     ? (() => { try { return JSON.parse(widget.query_definition); } catch { return {}; } })()
     : (widget.query_definition || {});
   const rawRows = widget.result_rows || qd.rows || [];
   const rawColumns = widget.result_columns || qd.columns || [];
-  const { rows, columns } = applyVisualizationConfig(rawRows, rawColumns, widget.visualization_config);
+  const scoped = scopeFilterSetToColumns(globalFilters, rawColumns);
+  const effectiveConfig = scoped.conditions.length
+    ? { ...widget.visualization_config, filters: mergeFilterSets(scoped, widget.visualization_config?.filters) }
+    : widget.visualization_config;
+  const { rows, columns } = applyVisualizationConfig(rawRows, rawColumns, effectiveConfig);
   const hint = widget.visualization_config?.vizType || widget.ui_hint || widget.widget_type || 'table';
 
   return (
@@ -75,18 +83,31 @@ function EmbeddedWidget({ widget }: { widget: EmbWidget }) {
 
 export default function EmbeddedDashboardPage() {
   const { token } = useParams<{ token: string }>();
-  const [data, setData] = useState<{ dashboard: any; pages: any[] } | null>(null);
+  const [data, setData] = useState<{ dashboard: any; pages: any[]; filters?: any[] } | null>(null);
   const [error, setError] = useState('');
   const [activePage, setActivePage] = useState(0);
+  const [globalFilters, setGlobalFilters] = useState<FilterSet>({ conjunction: 'and', conditions: [] });
 
   useEffect(() => {
     dashboardApi.getEmbedded(token)
-      .then((r) => { setData(r); })
+      .then((r) => { setData(r); setGlobalFilters(dashboardFiltersToSet((r as any).filters)); })
       .catch((e) => setError(e?.structured?.message || e?.message || 'This dashboard is not available.'));
   }, [token]);
 
   const page = data?.pages?.[activePage];
-  const widgets: EmbWidget[] = page?.widgets || [];
+  const widgets: EmbWidget[] = useMemo(() => page?.widgets || [], [page]);
+
+  // Union of columns across the visible page's widgets, for the filter bar.
+  const filterableColumns = useMemo(() => {
+    const set = new Set<string>();
+    for (const w of widgets) (w.result_columns || []).forEach((c) => set.add(c));
+    return Array.from(set);
+  }, [widgets]);
+  const filterSampleRows = useMemo(() => {
+    const rows: Record<string, unknown>[] = [];
+    for (const w of widgets) { if (w.result_rows?.length) rows.push(...w.result_rows.slice(0, 8)); if (rows.length > 80) break; }
+    return rows;
+  }, [widgets]);
 
   // Desktop keeps saved positions; phones/tablets stack full-width in order.
   const layouts = useMemo(() => {
@@ -141,6 +162,20 @@ export default function EmbeddedDashboardPage() {
         )}
       </div>
 
+      {globalFilters.conditions.length > 0 && filterableColumns.length > 0 && (
+        <div className="px-3 pt-3">
+          <div className="rounded-xl border border-border bg-card/60 px-3 py-2">
+            <FilterBuilder
+              value={globalFilters}
+              onChange={setGlobalFilters}
+              columns={filterableColumns}
+              rows={filterSampleRows}
+              compact
+            />
+          </div>
+        </div>
+      )}
+
       <div className="p-3">
         {widgets.length === 0 ? (
           <div className="py-20 text-center text-sm text-muted-foreground">This page has no widgets.</div>
@@ -158,7 +193,7 @@ export default function EmbeddedDashboardPage() {
           >
             {widgets.map((w) => (
               <div key={String(w.id)}>
-                <EmbeddedWidget widget={w} />
+                <EmbeddedWidget widget={w} globalFilters={globalFilters} />
               </div>
             ))}
           </ResponsiveGridLayout>

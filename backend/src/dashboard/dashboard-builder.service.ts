@@ -63,6 +63,19 @@ export interface LayoutItem {
   layoutMobile?: Record<string, number>;
 }
 
+/**
+ * One dashboard-global filter condition. Mirrors the client FilterCondition
+ * (frontend/src/lib/filters.ts): a target dimension + typed operator, with the
+ * operator-specific payload (value/values/relativeN/from/to) carried in
+ * `config` so new operators never require a schema change.
+ */
+export interface AddDashboardFilterDto {
+  column: string;
+  colType: 'numeric' | 'string' | 'date';
+  operator: string;
+  config?: Record<string, unknown>;
+}
+
 @Injectable()
 export class DashboardBuilderService {
   private readonly logger = new Logger(DashboardBuilderService.name);
@@ -498,7 +511,14 @@ export class DashboardBuilderService {
       })),
     );
 
-    return { dashboard: dash, pages: pagesWithWidgets };
+    // Dashboard-global filters cascade to widgets client-side; ship them so the
+    // embedded viewer can render (and interact with) the filter bar.
+    const filters = await this.db.queryMany(
+      `SELECT * FROM dashboard_filters WHERE dashboard_id = $1 ORDER BY created_at ASC`,
+      [dash.id],
+    );
+
+    return { dashboard: dash, pages: pagesWithWidgets, filters };
   }
 
   async softDeleteDashboard(dashId: string, deleter: SafeAccount) {
@@ -1218,13 +1238,32 @@ export class DashboardBuilderService {
     return this.db.queryMany(`SELECT * FROM dashboard_filters WHERE dashboard_id = $1 ORDER BY created_at ASC`, [dashId]);
   }
 
-  async addFilter(dashId: string, requester: SafeAccount, dto: any) {
+  async addFilter(dashId: string, requester: SafeAccount, dto: AddDashboardFilterDto) {
     await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
+    if (!dto?.column || !dto?.operator) {
+      throw new BadRequestException('A filter requires a column and an operator.');
+    }
     const filter = await this.db.queryOne(
-      `INSERT INTO dashboard_filters (dashboard_id, name, filter_type, operator, default_value, config)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [dashId, dto.name, dto.filterType, dto.operator, dto.defaultValue, dto.config || {}]
+      `INSERT INTO dashboard_filters (dashboard_id, column_name, col_type, operator, config)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [dashId, dto.column, dto.colType || 'string', dto.operator, dto.config || {}]
     );
+    return filter;
+  }
+
+  async updateFilter(filterId: string, dashId: string, requester: SafeAccount, dto: AddDashboardFilterDto) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
+    if (!dto?.column || !dto?.operator) {
+      throw new BadRequestException('A filter requires a column and an operator.');
+    }
+    const filter = await this.db.queryOne(
+      `UPDATE dashboard_filters
+          SET column_name = $1, col_type = $2, operator = $3, config = $4, updated_at = NOW()
+        WHERE id = $5 AND dashboard_id = $6
+        RETURNING *`,
+      [dto.column, dto.colType || 'string', dto.operator, dto.config || {}, filterId, dashId]
+    );
+    if (!filter) throw new NotFoundException('Filter not found');
     return filter;
   }
 

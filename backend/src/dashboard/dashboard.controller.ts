@@ -5,7 +5,7 @@
 import {
   Controller, Get, Post, Put, Delete, Body, Param, HttpCode, HttpStatus, Query
 } from '@nestjs/common';
-import { DashboardBuilderService, CreateDashboardDto, CreateWidgetDto, LayoutItem } from './dashboard-builder.service';
+import { DashboardBuilderService, CreateDashboardDto, CreateWidgetDto, LayoutItem, AddDashboardFilterDto } from './dashboard-builder.service';
 import { DashboardPermissionsService } from './dashboard-permissions.service';
 import { WidgetExecutionService } from './widget-execution.service';
 import { DefaultCardsService } from './default-cards.service';
@@ -626,9 +626,21 @@ export class DashboardController {
   async addFilter(
     @Param('dashId') dashId: string,
     @CurrentUser() user: SafeAccount,
-    @Body() dto: any,
+    @Body() dto: AddDashboardFilterDto,
   ) {
     const filter = await this.builder.addFilter(dashId, user, dto);
+    return { filter };
+  }
+
+  @Put(':dashId/filters/:filterId')
+  @ApiOperation({ summary: 'Update dashboard filter' })
+  async updateFilter(
+    @Param('dashId') dashId: string,
+    @Param('filterId') filterId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() dto: AddDashboardFilterDto,
+  ) {
+    const filter = await this.builder.updateFilter(filterId, dashId, user, dto);
     return { filter };
   }
 

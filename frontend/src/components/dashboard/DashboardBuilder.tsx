@@ -36,6 +36,11 @@ import {
   type VisualizationConfig, type AggregationFn,
 } from '@/lib/aggregation';
 import { validateFormula, type CustomMeasure } from '@/lib/custom-measures';
+import {
+  type FilterSet, mergeFilterSets, scopeFilterSetToColumns,
+  dashboardFiltersToSet, conditionToDbPayload,
+} from '@/lib/filters';
+import { FilterBuilder } from './FilterBuilder';
 import { useUIStore } from '@/lib/ui-store';
 
 // ── Grid geometry — MUST stay in sync with the ResponsiveGridLayout props
@@ -469,10 +474,12 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
 // ── Widget card ─────────────────────────────────────────────────
 function Widget({
   widget, isEditing, isSelected, onSelect, onRemove, onInspect, onRename, onSuggestTitle, onEditQuery, otherPages, onMoveToPage, isGeneral, onFocus,
-  canShare, onShare, onCopyToDashboard, onMoveToDashboard, isCardsMode,
+  canShare, onShare, onCopyToDashboard, onMoveToDashboard, isCardsMode, globalFilters,
 }: {
   widget: WidgetData;
   isEditing: boolean;
+  /** Dashboard-global filters; cascaded to this widget's matching columns. */
+  globalFilters?: FilterSet;
   isSelected?: boolean;
   onSelect?: () => void;
   onRemove?: () => void;
@@ -513,9 +520,18 @@ function Widget({
 
   const rawRows = widget.result_rows || [];
   const rawColumns = widget.result_columns || [];
-  const vizConfig = widget.visualization_config;
-  // Pure, deterministic reshape (group by / aggregate) — a no-op when no
-  // visualization config is set, so unconfigured widgets render unchanged.
+  // Merge dashboard-global filters (scoped to this widget's columns) with the
+  // widget's own filters, so both cascade through the same deterministic
+  // reshape (filter → measures → group by / aggregate). A no-op when no
+  // visualization config or global filter is set.
+  const vizConfig = useMemo(() => {
+    const scoped = scopeFilterSetToColumns(globalFilters, rawColumns);
+    if (!scoped.conditions.length) return widget.visualization_config;
+    return {
+      ...widget.visualization_config,
+      filters: mergeFilterSets(scoped, widget.visualization_config?.filters),
+    };
+  }, [widget.visualization_config, globalFilters, rawColumns]);
   const { rows, columns } = useMemo(
     () => applyVisualizationConfig(rawRows, rawColumns, vizConfig),
     [rawRows, rawColumns, vizConfig],
@@ -796,7 +812,7 @@ function Widget({
 // Read-only expanded view of a single widget. Re-runs the same client-side
 // visualization transform + renderer (non-compact) so the chart/table looks
 // identical, just larger. Available in published/view mode to all roles.
-function WidgetFocusOverlay({ widget, onClose }: { widget: WidgetData; onClose: () => void }) {
+function WidgetFocusOverlay({ widget, onClose, globalFilters }: { widget: WidgetData; onClose: () => void; globalFilters?: FilterSet }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     document.addEventListener('keydown', onKey);
@@ -805,7 +821,11 @@ function WidgetFocusOverlay({ widget, onClose }: { widget: WidgetData; onClose: 
 
   const rawRows = widget.result_rows || [];
   const rawColumns = widget.result_columns || [];
-  const { rows, columns } = applyVisualizationConfig(rawRows, rawColumns, widget.visualization_config);
+  const scoped = scopeFilterSetToColumns(globalFilters, rawColumns);
+  const effectiveConfig = scoped.conditions.length
+    ? { ...widget.visualization_config, filters: mergeFilterSets(scoped, widget.visualization_config?.filters) }
+    : widget.visualization_config;
+  const { rows, columns } = applyVisualizationConfig(rawRows, rawColumns, effectiveConfig);
   const hint = widget.visualization_config?.vizType || widget.ui_hint || widget.widget_type || 'table';
   const qd = typeof widget.query_definition === 'string' ? JSON.parse(widget.query_definition) : (widget.query_definition || {});
 
@@ -1608,6 +1628,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   const [matrixRows, setMatrixRows] = useState<string>((vc?.matrixRows || []).join(','));
   const [matrixCols, setMatrixCols] = useState<string>((vc?.matrixCols || []).join(','));
   const [matrixMeasure, setMatrixMeasure] = useState(vc?.matrixMeasure || '');
+  const [filters, setFilters] = useState<FilterSet>(vc?.filters || { conjunction: 'and', conditions: [] });
   const [vizSaving, setVizSaving] = useState(false);
   const [vizSaved, setVizSaved] = useState(false);
   const [vizError, setVizError] = useState('');
@@ -1656,6 +1677,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
         matrixRows: list(matrixRows).length ? list(matrixRows) : undefined,
         matrixCols: list(matrixCols).length ? list(matrixCols) : undefined,
         matrixMeasure: matrixMeasure || undefined,
+        filters: filters.conditions.length ? filters : undefined,
       };
       await dashboardApi.updateWidget(dashId, pageId, widget.id, { ...widget, visualization_config });
       onUpdate({ visualization_config });
@@ -2259,6 +2281,13 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
                 </div>
               </div>
             )}
+
+            {/* ── Filters ── */}
+            <div className="mt-4 pt-3 border-t border-border/60">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Filters</p>
+              <p className="text-[10px] text-muted-foreground mb-2">Filter this card&apos;s rows. Operators adapt to each dimension&apos;s data type (number / text / date).</p>
+              <FilterBuilder value={filters} onChange={setFilters} columns={availableColumns} rows={sampleRows} />
+            </div>
 
             {/* ── Custom Measures (calculated fields) ── */}
             <div className="mt-4 pt-3 border-t border-border/60">
@@ -3040,6 +3069,63 @@ export function DashboardBuilder({
     | { kind: 'widget'; id: string; pageId: string; mode: 'move' | 'copy' }
     | null
   >(null);
+
+  // ── Dashboard-global filters ──────────────────────────────
+  // Author-defined filters that cascade to every widget with a matching column.
+  // Viewers may also change values at view time; those changes are session-only
+  // (held in this state) until an author with edit rights saves them.
+  const [globalFilters, setGlobalFilters] = useState<FilterSet>({ conjunction: 'and', conditions: [] });
+  const [savedGlobalFilters, setSavedGlobalFilters] = useState<FilterSet>({ conjunction: 'and', conditions: [] });
+  const [savingFilters, setSavingFilters] = useState(false);
+  const [showFilterBar, setShowFilterBar] = useState(false);
+
+  const loadGlobalFilters = useCallback(async () => {
+    try {
+      const { filters } = await dashboardApi.listFilters(dashId);
+      const fs = dashboardFiltersToSet(filters as any);
+      setGlobalFilters(fs);
+      setSavedGlobalFilters(fs);
+    } catch { /* filters are best-effort; a load failure just yields none */ }
+  }, [dashId]);
+
+  useEffect(() => { void loadGlobalFilters(); }, [loadGlobalFilters]);
+
+  async function saveGlobalFilters() {
+    setSavingFilters(true);
+    try {
+      // Replace-all: the row set is small and this keeps the author's on-screen
+      // set authoritative without diffing individual conditions.
+      const existing = await dashboardApi.listFilters(dashId);
+      await Promise.all((existing.filters || []).map((f: any) => dashboardApi.removeFilter(dashId, f.id)));
+      for (const c of globalFilters.conditions) {
+        await dashboardApi.addFilter(dashId, conditionToDbPayload(c));
+      }
+      await loadGlobalFilters();
+    } finally {
+      setSavingFilters(false);
+    }
+  }
+
+  // Union of every widget's columns + a merged row sample, used by the filter
+  // bar to offer dimensions and infer their data types.
+  const filterableColumns = useMemo(() => {
+    const set = new Set<string>();
+    for (const w of widgets) (w.result_columns || []).forEach(c => set.add(c));
+    return Array.from(set);
+  }, [widgets]);
+  const filterSampleRows = useMemo(() => {
+    const rows: Record<string, unknown>[] = [];
+    for (const w of widgets) {
+      if (w.result_rows?.length) rows.push(...w.result_rows.slice(0, 8));
+      if (rows.length > 80) break;
+    }
+    return rows;
+  }, [widgets]);
+
+  const globalFiltersDirty = useMemo(
+    () => JSON.stringify(globalFilters) !== JSON.stringify(savedGlobalFilters),
+    [globalFilters, savedGlobalFilters],
+  );
 
   async function handleMoveCopyConfirm(targetDashboardId: string, targetPageId?: string) {
     if (!moveCopyTarget) return;
@@ -4524,6 +4610,51 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                 </div>
               </div>
             )}
+
+            {/* ── Dashboard filter bar ── */}
+            {(canEdit || globalFilters.conditions.length > 0) && filterableColumns.length > 0 && (
+              <div className="mb-4">
+                {!showFilterBar && globalFilters.conditions.length === 0 ? (
+                  canEdit && (
+                    <button
+                      onClick={() => setShowFilterBar(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-xs font-semibold text-foreground hover:bg-muted transition-colors"
+                    >
+                      <Search className="w-3.5 h-3.5" /> Add dashboard filter
+                    </button>
+                  )
+                ) : (
+                  <div className="rounded-2xl border border-border bg-card/60 px-4 py-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Dashboard filters
+                        <span className="ml-2 normal-case font-normal text-muted-foreground/70">applies to widgets with a matching column</span>
+                      </p>
+                      {canEdit && globalFiltersDirty && (
+                        <button
+                          onClick={saveGlobalFilters}
+                          disabled={savingFilters}
+                          className="text-[11px] px-2.5 py-1 rounded-lg bg-primary text-white font-semibold disabled:opacity-50 hover:opacity-90 transition-opacity"
+                        >
+                          {savingFilters ? 'Saving…' : 'Save filters'}
+                        </button>
+                      )}
+                    </div>
+                    <FilterBuilder
+                      value={globalFilters}
+                      onChange={setGlobalFilters}
+                      columns={filterableColumns}
+                      rows={filterSampleRows}
+                      compact
+                    />
+                    {!canEdit && (
+                      <p className="text-[10px] text-muted-foreground mt-2">Changes apply to your current view only.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             {widgets.length === 0 ? (
               <div className="relative" style={{ minHeight: 'calc(100vh - 220px)' }}>
               <div className="flex flex-col items-center justify-center h-full gap-5 text-center min-h-[400px]">
@@ -4607,6 +4738,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                         <Widget
                           widget={widget}
                           isEditing={isEditing}
+                          globalFilters={globalFilters}
                           isSelected={selectedWidgetId === widget.id}
                           onSelect={() => setSelectedWidgetId(widget.id)}
                           onRemove={() => removeWidget(widget.id)}
@@ -4761,7 +4893,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         })()}
 
         {focusedWidget && (
-          <WidgetFocusOverlay widget={focusedWidget} onClose={() => setFocusedWidget(null)} />
+          <WidgetFocusOverlay widget={focusedWidget} onClose={() => setFocusedWidget(null)} globalFilters={globalFilters} />
         )}
 
         <DragOverlay>

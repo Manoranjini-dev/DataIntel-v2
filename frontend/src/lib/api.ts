@@ -802,6 +802,14 @@ export const dashboardApi = {
     return handleResponse<{ filter: any }>(r);
   },
 
+  updateFilter: async (dashId: string, filterId: string, data: any) => {
+    const r = await apiFetch(`/dashboards/${dashId}/filters/${filterId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse<{ filter: any }>(r);
+  },
+
   removeFilter: async (dashId: string, filterId: string) => {
     const r = await apiFetch(`/dashboards/${dashId}/filters/${filterId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);

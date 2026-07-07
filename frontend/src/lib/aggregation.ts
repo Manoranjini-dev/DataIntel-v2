@@ -10,8 +10,10 @@
 // render/reload.
 
 import { applyCustomMeasures, type CustomMeasure } from './custom-measures';
+import { applyFilters, type FilterSet } from './filters';
 
 export type { CustomMeasure };
+export type { FilterSet };
 
 export type AggregationFn = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'count_distinct' | 'median';
 
@@ -39,6 +41,12 @@ export interface VisualizationConfig {
 
   /** User-defined calculated fields, computed as extra columns before render. */
   customMeasures?: CustomMeasure[];
+
+  /**
+   * Row filters applied to the returned data before measures/aggregation.
+   * Operators are gated by the inferred column type (see ./filters).
+   */
+  filters?: FilterSet;
 
   // ── Gauge config ──
   /** Target/threshold the KPI is compared against. */
@@ -105,8 +113,13 @@ export function applyVisualizationConfig(
 ): { rows: Record<string, unknown>[]; columns: string[] } {
   if (!rows || rows.length === 0 || !config) return { rows, columns };
 
-  // Calculated fields first, so they can be used as axes / aggregation targets.
-  const withMeasures = applyCustomMeasures(rows, columns, config.customMeasures);
+  // Filters first — they act on the raw returned rows, before calculated
+  // fields and aggregation reshape the data.
+  const filteredRows = applyFilters(rows, config.filters);
+  if (filteredRows.length === 0) return { rows: [], columns };
+
+  // Calculated fields next, so they can be used as axes / aggregation targets.
+  const withMeasures = applyCustomMeasures(filteredRows, columns, config.customMeasures);
   let outRows = withMeasures.rows;
   let outColumns = withMeasures.columns;
 
