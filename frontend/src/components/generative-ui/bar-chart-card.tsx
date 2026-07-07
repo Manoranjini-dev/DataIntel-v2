@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
+import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE } from '@/lib/chart-format';
 
 const COLORS = [
   '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
@@ -137,16 +138,25 @@ export function BarChartCard({ execution, title, compact, stacked, showLegend = 
   // Auto-switch to horizontal if there are many categories or labels are long
   const isHorizontal = xLabelsCount > 5 || maxLabelLength > 12;
 
+  // Axis titles derive from the plotted fields. The category/measure axes swap
+  // between vertical and horizontal layouts, so the titles swap too. A single
+  // Y/measure title is shown only when there's exactly one measure (otherwise
+  // the legend names the series).
+  const measureTitle = schema.numericCols.length === 1 ? schema.numericCols[0] : undefined;
+  const xTitle = isHorizontal ? xAxisLabel(measureTitle) : xAxisLabel(schema.labelCol);
+  const yTitle = isHorizontal ? yAxisLabel(schema.labelCol) : yAxisLabel(measureTitle);
+
   const needsRotation = !isHorizontal && maxLabelLength > 8;
   const rotationAngle = needsRotation ? -45 : 0;
-  const xAxisHeight = isHorizontal ? 30 : (rotationAngle === -45 ? 70 : 30);
+  const baseXAxisHeight = isHorizontal ? 30 : (rotationAngle === -45 ? 70 : 30);
+  const xAxisHeight = baseXAxisHeight + (xTitle ? X_TITLE_SPACE : 0);
   const safeInterval = xLabelsCount > 20 ? 'preserveEnd' : 0;
 
   // Calculate Y-axis width dynamically based on label length to prevent clipping
   const maxYValLength = Math.max(...schema.data.map((d: any) => String(d[schema.numericCols[0]] || '').length));
   const verticalYAxisWidth = Math.max(maxYValLength * 8 + 16, 40);
   const horizontalYAxisWidth = Math.min(Math.max(maxLabelLength * 6.5 + 16, 60), 300);
-  const yAxisWidth = isHorizontal ? horizontalYAxisWidth : verticalYAxisWidth;
+  const yAxisWidth = (isHorizontal ? horizontalYAxisWidth : verticalYAxisWidth) + (yTitle ? Y_TITLE_SPACE : 0);
 
   // Dynamic scaling for horizontal bars based on category count
   let barThickness = 30;
@@ -193,10 +203,10 @@ export function BarChartCard({ execution, title, compact, stacked, showLegend = 
           width: '100%' 
         }}>
           <ResponsiveContainer width="99%" height="100%">
-            <BarChart 
-              data={schema.data} 
-              layout={isHorizontal ? "vertical" : "horizontal"} 
-              margin={{ top: 10, right: 20, left: 10, bottom: 0 }}
+            <BarChart
+              data={schema.data}
+              layout={isHorizontal ? "vertical" : "horizontal"}
+              margin={{ top: 10, right: 20, left: yTitle ? Y_TITLE_SPACE : 10, bottom: 0 }}
             >
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" horizontal={!isHorizontal} vertical={isHorizontal} />
             <XAxis
@@ -207,15 +217,17 @@ export function BarChartCard({ execution, title, compact, stacked, showLegend = 
               interval={safeInterval}
               axisLine={{ stroke: '#d4d4d8' }}
               tickLine={false}
+              label={xTitle}
             />
-            <YAxis 
+            <YAxis
               type={isHorizontal ? "category" : "number"}
               dataKey={isHorizontal ? "_label" : undefined}
-              tick={isHorizontal ? <CustomYAxisTick maxLabelLength={maxLabelLength} /> : axisStyle} 
-              axisLine={{ stroke: '#d4d4d8' }} 
-              tickLine={false} 
+              tick={isHorizontal ? <CustomYAxisTick maxLabelLength={maxLabelLength} /> : axisStyle}
+              axisLine={{ stroke: '#d4d4d8' }}
+              tickLine={false}
               width={yAxisWidth}
               interval={isHorizontal ? 0 : 'preserveEnd'}
+              label={yTitle}
             />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f4f4f5' }} />
             {showLegend && schema.numericCols.length > 1 && (

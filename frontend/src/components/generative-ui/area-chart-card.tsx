@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
+import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE } from '@/lib/chart-format';
 
 const COLORS = [
   { stroke: '#6366f1', fill: '#6366f130' },
@@ -102,12 +103,14 @@ export function AreaChartCard({ execution, title, compact, stacked, showLegend =
       chosen.forEach((c) => { point[c] = Number(row[c]); });
       return point;
     });
-    return { numericCols: chosen, data };
+    return { numericCols: chosen, labelCol, data };
   }, [rows, columns]);
 
   if (!schema) return null;
 
   const axisStyle = { fill: '#71717a', fontSize: 11 };
+  const xTitle = xAxisLabel(schema.labelCol);
+  const yTitle = schema.numericCols.length === 1 ? yAxisLabel(schema.numericCols[0]) : undefined;
 
   const xLabelsCount = schema.data.length;
   const maxLabelLength = Math.max(...schema.data.map((d: any) => String(d._label).length));
@@ -119,7 +122,8 @@ export function AreaChartCard({ execution, title, compact, stacked, showLegend =
 
   const needsRotation = !isHorizontal && maxLabelLength > 8;
   const rotationAngle = xLabelsCount > 10 ? -90 : (needsRotation ? -45 : 0);
-  const xAxisHeight = rotationAngle === -90 ? 100 : (rotationAngle === -45 ? 70 : 30);
+  const baseXAxisHeight = rotationAngle === -90 ? 100 : (rotationAngle === -45 ? 70 : 30);
+  const xAxisHeight = baseXAxisHeight + (xTitle ? X_TITLE_SPACE : 0);
   const safeInterval = xLabelsCount > 20 ? 'preserveEnd' : 0;
 
   const calculatedWidth = Math.max(100, xLabelsCount * 40 + 60);
@@ -134,17 +138,18 @@ export function AreaChartCard({ execution, title, compact, stacked, showLegend =
       <div className={`w-full ${compact ? 'flex-1 min-h-0 overflow-auto' : ''}`}>
         <div style={{ minWidth: compact ? calculatedWidth : undefined, height: compact ? "100%" : 220 + xAxisHeight - 30, width: '100%' }}>
           <ResponsiveContainer width="99%" height="100%">
-            <AreaChart data={schema.data} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+            <AreaChart data={schema.data} margin={{ top: 10, right: 20, left: yTitle ? Y_TITLE_SPACE : 10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-            <XAxis 
-              dataKey="_label" 
+            <XAxis
+              dataKey="_label"
               tick={<CustomTick angle={rotationAngle} />}
               height={xAxisHeight}
               interval={safeInterval}
-              axisLine={{ stroke: '#d4d4d8' }} 
-              tickLine={false} 
+              axisLine={{ stroke: '#d4d4d8' }}
+              tickLine={false}
+              label={xTitle}
             />
-            <YAxis tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={yAxisWidth} />
+            <YAxis tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={yAxisWidth + (yTitle ? Y_TITLE_SPACE : 0)} label={yTitle} />
             <Tooltip content={<CustomTooltip />} />
             {showLegend && schema.numericCols.length > 1 && (
               <Legend wrapperStyle={{ fontSize: 11, color: '#71717a', paddingTop: '10px' }} />

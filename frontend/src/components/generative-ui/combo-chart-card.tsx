@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
+import { xAxisLabel, yAxisLabel, yAxisLabelRight, X_TITLE_SPACE, Y_TITLE_SPACE } from '@/lib/chart-format';
 
 const BAR_COLOR = '#6366f1';
 const LINE_COLOR = '#f59e0b';
@@ -78,7 +79,7 @@ export function ComboChartCard({ execution, title, compact, showLegend = true }:
       [barCol]: Number(row[barCol]),
       [lineCol]: Number(row[lineCol]),
     }));
-    return { barCol, lineCol, data };
+    return { barCol, lineCol, labelCol, data };
   }, [rows, columns]);
 
   if (!schema) return null;
@@ -86,6 +87,10 @@ export function ComboChartCard({ execution, title, compact, showLegend = true }:
   const axisStyle = { fill: '#71717a', fontSize: 11 };
   const xLabelsCount = schema.data.length;
   const safeInterval = xLabelsCount > 20 ? 'preserveEnd' : 0;
+  // Dual-axis combo: X = category, left Y = bar measure, right Y = line measure.
+  const xTitle = xAxisLabel(schema.labelCol);
+  const leftYTitle = yAxisLabel(schema.barCol);
+  const rightYTitle = yAxisLabelRight(schema.lineCol);
 
   return (
     <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
@@ -96,7 +101,7 @@ export function ComboChartCard({ execution, title, compact, showLegend = true }:
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`} style={{ height: compact ? '100%' : 260 }}>
         <ResponsiveContainer width="99%" height="100%">
-          <ComposedChart data={schema.data} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+          <ComposedChart data={schema.data} margin={{ top: 10, right: rightYTitle ? Y_TITLE_SPACE : 20, left: leftYTitle ? Y_TITLE_SPACE : 10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
             <XAxis
               dataKey="_label"
@@ -104,9 +109,11 @@ export function ComboChartCard({ execution, title, compact, showLegend = true }:
               interval={safeInterval}
               axisLine={{ stroke: '#d4d4d8' }}
               tickLine={false}
+              height={30 + (xTitle ? X_TITLE_SPACE : 0)}
+              label={xTitle}
             />
-            <YAxis yAxisId="left" tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} />
-            <YAxis yAxisId="right" orientation="right" tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} />
+            <YAxis yAxisId="left" tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={60 + (leftYTitle ? Y_TITLE_SPACE : 0)} label={leftYTitle} />
+            <YAxis yAxisId="right" orientation="right" tick={axisStyle} axisLine={{ stroke: '#d4d4d8' }} tickLine={false} width={60 + (rightYTitle ? Y_TITLE_SPACE : 0)} label={rightYTitle} />
             <Tooltip content={<CustomTooltip />} cursor={{ fill: '#f4f4f5' }} />
             {showLegend && <Legend wrapperStyle={{ fontSize: 11, color: '#71717a', paddingTop: '10px' }} />}
             <Bar yAxisId="left" dataKey={schema.barCol} fill={BAR_COLOR} radius={[4, 4, 0, 0]} maxBarSize={50} />

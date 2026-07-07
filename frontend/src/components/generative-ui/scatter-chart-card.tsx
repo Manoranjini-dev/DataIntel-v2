@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
+import { xAxisLabel, yAxisLabel, Y_TITLE_SPACE } from '@/lib/chart-format';
 
 interface ScatterChartCardProps {
   execution: QueryExecutionResult;
@@ -71,6 +72,9 @@ export function ScatterChartCard({ execution, title, compact }: ScatterChartCard
 
   if (!schema) return null;
 
+  const xTitle = xAxisLabel(schema.xKey);
+  const yTitle = yAxisLabel(schema.yKey);
+
   return (
     <div className={`w-full flex flex-col bg-white ${compact ? 'h-full p-1' : 'rounded-xl border border-zinc-200 p-3 shadow-sm'}`}>
       {title && (
@@ -80,7 +84,7 @@ export function ScatterChartCard({ execution, title, compact }: ScatterChartCard
       )}
       <div className={`w-full ${compact ? 'flex-1 min-h-0' : ''}`}>
         <ResponsiveContainer width="99%" height={compact ? '100%' : 240}>
-          <ScatterChart margin={{ top: 10, right: 16, bottom: 16, left: 4 }}>
+          <ScatterChart margin={{ top: 10, right: 16, bottom: 24, left: Y_TITLE_SPACE }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
             <XAxis
               type="number"
@@ -89,6 +93,8 @@ export function ScatterChartCard({ execution, title, compact }: ScatterChartCard
               tick={{ fontSize: 10, fill: '#71717a' }}
               tickLine={false}
               axisLine={{ stroke: '#e4e4e7' }}
+              height={40}
+              label={xTitle}
             />
             <YAxis
               type="number"
@@ -97,7 +103,8 @@ export function ScatterChartCard({ execution, title, compact }: ScatterChartCard
               tick={{ fontSize: 10, fill: '#71717a' }}
               tickLine={false}
               axisLine={{ stroke: '#e4e4e7' }}
-              width={44}
+              width={44 + Y_TITLE_SPACE}
+              label={yTitle}
             />
             <ZAxis range={[40, 40]} />
             <Tooltip

@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Link from 'next/link';
-import { dashboardApi, chatApi, cardApi, connectionApi, recommendWidgets } from '@/lib/api';
+import { dashboardApi, chatApi, cardApi, connectionApi } from '@/lib/api';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ResponsiveGridLayout = require('react-grid-layout').Responsive as React.ComponentType<any>;
 import 'react-grid-layout/css/styles.css';
@@ -4012,6 +4012,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     try {
       if (!ordered.length) throw new Error('No pages selected');
       // Using require instead of dynamic import to avoid Next.js Webpack HMR chunk corruption bugs
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const PptxGenJS = require('pptxgenjs');
       const pptx = new PptxGenJS();
       pptx.defineLayout({ name: 'C1X_WIDE', width: 13.333, height: 7.5 });
