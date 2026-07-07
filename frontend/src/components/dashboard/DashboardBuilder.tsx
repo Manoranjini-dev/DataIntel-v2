@@ -3291,8 +3291,16 @@ export function DashboardBuilder({
             setTimeout(poll, 5000);
           }
         }
-      } catch {
-        if (!cancelled) setTimeout(poll, 8000); // back-off on error
+      } catch (err: any) {
+        // 403 (deleted/no access) and 404 (not found) are terminal — stop polling
+        // immediately. Retrying these would just spam the backend with guaranteed failures.
+        const status = err?.status ?? err?.structured?.status;
+        if (status === 403 || status === 404) {
+          seedingDoneRef.current = true;
+          setSeedingBanner(false);
+          return; // do NOT retry
+        }
+        if (!cancelled) setTimeout(poll, 8000); // back-off on transient errors only
       }
     }
 
