@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { connectionApi } from '@/lib/api';
 import {
   Code2, Zap, BarChart3, Rows3, Keyboard, Trash2, Radio,
-  TestTube2, Database, ShieldAlert, CheckCircle2, RefreshCw,
+  TestTube2, Database, ShieldAlert, CheckCircle2, XCircle, RefreshCw, Loader2,
 } from 'lucide-react';
 
 // Auto-refresh cadences supported by the backend (RefreshScheduleDto.intervalMinutes).
@@ -209,7 +209,10 @@ export default function ConnectionSettingsPage() {
       setTestResult({ success: result.success, message: result.success ? 'Connection successful' : 'Connection failed' });
     } catch (e: any) {
       setTestResult({ success: false, message: e?.message ?? 'Connection failed' });
-    } finally { setTesting(false); }
+    } finally {
+      setTesting(false);
+      setTimeout(() => setTestResult(null), 4000);
+    }
   }
 
   async function handleSaveCredentials(e: React.FormEvent) {
@@ -576,21 +579,24 @@ export default function ConnectionSettingsPage() {
               <button
                 onClick={handleTest}
                 disabled={testing}
-                className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 border ${
+                  testResult === null
+                    ? 'bg-primary text-white border-transparent hover:opacity-90'
+                    : testResult.success
+                      ? 'bg-green-500/15 hover:bg-green-500/25 border-green-500/30 text-green-700 dark:text-green-300 shadow-sm'
+                      : 'bg-red-500/15 hover:bg-red-500/25 border-red-500/30 text-red-700 dark:text-red-300 shadow-sm'
+                }`}
               >
+                {testing ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : testResult === null ? null : testResult.success ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-green-600 dark:text-green-400" />
+                ) : (
+                  <XCircle className="w-3.5 h-3.5 shrink-0 text-red-600 dark:text-red-400" />
+                )}
                 {testing ? 'Testing…' : 'Test Now'}
               </button>
             </div>
-            {testResult && (
-              <div className={`mt-3 px-4 py-3 rounded-xl text-xs font-medium flex items-center gap-2 ${
-                testResult.success
-                  ? 'bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20'
-                  : 'bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20'
-              }`}>
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-                {testResult.success ? 'Connection successful' : testResult.message ?? 'Connection failed'}
-              </div>
-            )}
           </div>
 
           <SettingCard

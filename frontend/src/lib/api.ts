@@ -358,7 +358,7 @@ export const connectionApi = {
 
   test: async (connId: string) => {
     const r = await apiFetch(`/connections/${connId}/test`, { method: 'POST' });
-    return handleResponse<{ success: boolean; latencyMs: number }>(r);
+    return handleResponse<{ success: boolean; latencyMs?: number; error?: string; message?: string }>(r);
   },
 
   getSchema: async (connId: string) => {

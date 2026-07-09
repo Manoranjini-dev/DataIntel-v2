@@ -36,8 +36,29 @@ export default function ConnectionOverviewPage() {
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [toastMsg, setToastMsg] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   useEffect(() => { loadData(); }, [slug, connId]);
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToastMsg({ message, type });
+    setTimeout(() => setToastMsg(null), 4000);
+  };
+
+  function getTestErrorMessage(resultOrErr: any): string {
+    if (typeof resultOrErr === 'string') return resultOrErr;
+    const code = resultOrErr?.code || resultOrErr?.cause?.code;
+    const rawMsg: string = resultOrErr?.message || resultOrErr?.error || resultOrErr?.structured?.message || '';
+    const lower = rawMsg.toLowerCase();
+    if (code === 'ECONNABORTED' || lower.includes('timeout')) {
+      return 'Connection test timed out. The database server may be unreachable or busy.';
+    }
+    if (code === 'ERR_NETWORK' || lower.includes('network error') || lower.includes('failed to fetch') || lower.includes('econnrefused')) {
+      return 'Could not reach the database server. Please check your host, port, and network connectivity.';
+    }
+    return rawMsg || 'Connection verification failed. Please verify credentials and host settings.';
+  }
 
   async function loadData() {
     try {
@@ -53,10 +74,29 @@ export default function ConnectionOverviewPage() {
 
   async function handleTest() {
     setTesting(true);
+    setTestResult(null);
     try {
       const result = await connectionApi.test(connId);
-      setConn((c: any) => ({ ...c, status: result.success ? 'active' : 'error', last_health_ok: result.success }));
-    } finally { setTesting(false); }
+      if (result.success) {
+        const msg = 'Database connection verified successfully.';
+        setTestResult({ success: true, message: msg });
+        showToast(msg, 'success');
+        setConn((c: any) => ({ ...c, status: 'active', last_health_ok: true }));
+      } else {
+        const msg = getTestErrorMessage(result);
+        setTestResult({ success: false, message: msg });
+        showToast(msg, 'error');
+        setConn((c: any) => ({ ...c, status: 'error', last_health_ok: false }));
+      }
+    } catch (e: any) {
+      const msg = getTestErrorMessage(e);
+      setTestResult({ success: false, message: msg });
+      showToast(msg, 'error');
+      setConn((c: any) => ({ ...c, status: 'error', last_health_ok: false }));
+    } finally {
+      setTesting(false);
+      setTimeout(() => setTestResult(null), 4000);
+    }
   }
 
   async function handleSync() {
@@ -64,6 +104,9 @@ export default function ConnectionOverviewPage() {
     try {
       await connectionApi.syncSchema(connId);
       setConn((c: any) => ({ ...c, schema_synced_at: new Date().toISOString() }));
+      showToast('Schema synchronized successfully.', 'success');
+    } catch (e: any) {
+      showToast(e?.message || 'Failed to sync schema.', 'error');
     } finally { setSyncing(false); }
   }
 
@@ -126,9 +169,26 @@ export default function ConnectionOverviewPage() {
           <div className="bg-card border border-border p-5 rounded-2xl flex flex-col" style={{ boxShadow: 'var(--shadow-soft)' }}>
             <h3 className="text-[11px] font-bold uppercase tracking-widest text-muted-foreground mb-4">Actions</h3>
             <div className="space-y-2.5 flex-1 flex flex-col justify-center">
-              <button onClick={handleTest} disabled={testing}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary hover:bg-secondary/80 border border-border rounded-xl text-sm font-medium transition-colors disabled:opacity-50">
-                {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+              <button
+                onClick={handleTest}
+                disabled={testing}
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 border rounded-xl text-sm font-medium transition-all disabled:opacity-50 ${
+                  testResult === null
+                    ? 'bg-secondary hover:bg-secondary/80 border-border text-foreground'
+                    : testResult.success
+                      ? 'bg-green-500/15 hover:bg-green-500/25 border-green-500/30 text-green-700 dark:text-green-300 font-semibold shadow-sm'
+                      : 'bg-red-500/15 hover:bg-red-500/25 border-red-500/30 text-red-700 dark:text-red-300 font-semibold shadow-sm'
+                }`}
+              >
+                {testing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : testResult === null ? (
+                  <Zap className="w-4 h-4" />
+                ) : testResult.success ? (
+                  <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+                ) : (
+                  <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                )}
                 {testing ? 'Testing…' : 'Test Connection'}
               </button>
               <button onClick={handleSync} disabled={syncing}
@@ -232,6 +292,23 @@ export default function ConnectionOverviewPage() {
           </Link>
         </div>
 
+        {/* Toast notification */}
+        {toastMsg && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-5">
+            <div className={`px-4 py-3 rounded-xl text-sm font-semibold shadow-xl border flex items-center gap-2.5 ${
+              toastMsg.type === 'success'
+                ? 'bg-green-50 text-green-800 border-green-200 dark:bg-green-950/90 dark:text-green-200 dark:border-green-800'
+                : 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/90 dark:text-red-200 dark:border-red-800'
+            }`}>
+              {toastMsg.type === 'success' ? (
+                <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+              ) : (
+                <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+              )}
+              <span>{toastMsg.message}</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
