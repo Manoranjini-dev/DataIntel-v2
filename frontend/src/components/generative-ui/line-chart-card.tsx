@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE } from '@/lib/chart-format';
+import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn } from '@/lib/chart-format';
 
 const COLORS = [
   '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
@@ -97,12 +97,13 @@ export function LineChartCard({ execution, title, compact, showLegend = true }: 
 
   const schema = useMemo(() => {
     if (!rows || rows.length < 2 || columns.length < 2) return null;
-    const numericCols = columns.filter((c) => isNumeric(rows, c));
+    // Plot real measures only — identifier columns are excluded from the lines.
+    const numericCols = measureColumns(rows, columns);
     if (numericCols.length === 0) return null;
 
-    const dateCols = columns.filter((c) => isDateLike(c, rows));
-    const labelCol = dateCols[0] || columns.find((c) => !numericCols.includes(c)) || columns[0];
     const chosen = numericCols.slice(0, 4);
+    const dateCols = columns.filter((c) => isDateLike(c, rows));
+    const labelCol = dateCols[0] || pickLabelColumn(columns, chosen);
 
     const data = rows.slice(0, 100).map((row) => {
       const point: Record<string, unknown> = { _label: truncate(String(row[labelCol] ?? ''), 40) }; // do not heavily truncate for CustomTick

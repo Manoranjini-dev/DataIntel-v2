@@ -10,7 +10,7 @@
 // widget editor (per-card filters) and the dashboard filter manager (global
 // filters). Pure controlled component — the parent owns the FilterSet.
 
-import { Trash2, Plus } from 'lucide-react';
+import { Trash2, Plus, Lock, Unlock } from 'lucide-react';
 import {
   inferColumnType,
   operatorsForType,
@@ -35,13 +35,16 @@ interface Props {
   rows: Record<string, unknown>[];
   /** Compact single-line layout (dashboard filter bar) vs stacked (editor). */
   compact?: boolean;
+  /** DC-04 — editor context: show per-filter lock/unlock toggles. Viewers omit
+   *  this, so locked filters render read-only and cannot be unlocked. */
+  canLock?: boolean;
 }
 
 function emptySet(): FilterSet {
   return { conjunction: 'and', conditions: [] };
 }
 
-export function FilterBuilder({ value, onChange, columns, rows, compact }: Props) {
+export function FilterBuilder({ value, onChange, columns, rows, compact, canLock }: Props) {
   const fs = value && value.conditions ? value : emptySet();
 
   function patch(next: Partial<FilterSet>) {
@@ -110,9 +113,11 @@ export function FilterBuilder({ value, onChange, columns, rows, compact }: Props
           key={c.id}
           cond={c}
           columns={columns}
+          canLock={canLock}
           onColumn={(col) => changeColumn(c.id, col)}
           onOperator={(op) => changeOperator(c.id, op)}
           onChange={(changes) => updateCond(c.id, changes)}
+          onToggleLock={() => updateCond(c.id, { locked: !c.locked })}
           onRemove={() => removeCond(c.id)}
         />
       ))}
@@ -132,41 +137,66 @@ export function FilterBuilder({ value, onChange, columns, rows, compact }: Props
 function ConditionRow({
   cond,
   columns,
+  canLock,
   onColumn,
   onOperator,
   onChange,
+  onToggleLock,
   onRemove,
 }: {
   cond: FilterCondition;
   columns: string[];
+  canLock?: boolean;
   onColumn: (col: string) => void;
   onOperator: (op: FilterOperator) => void;
   onChange: (changes: Partial<FilterCondition>) => void;
+  onToggleLock: () => void;
   onRemove: () => void;
 }) {
   const ops = operatorsForType(cond.colType);
+  // DC-04 — a locked filter is read-only: fields disabled and removal blocked.
+  // Only an editor (canLock) may unlock it (which re-enables editing).
+  const locked = !!cond.locked;
+  const disabled = locked;
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <select value={cond.column} onChange={(e) => onColumn(e.target.value)} className={`${inputCls} min-w-[7rem]`}>
+    <div className={`flex flex-wrap items-center gap-1.5 ${locked ? 'opacity-90' : ''}`}>
+      <select value={cond.column} disabled={disabled} onChange={(e) => onColumn(e.target.value)} className={`${inputCls} min-w-[7rem] disabled:opacity-60 disabled:cursor-not-allowed`}>
         {!columns.includes(cond.column) && cond.column && <option value={cond.column}>{cond.column}</option>}
         {columns.map((c) => (
           <option key={c} value={c}>{c}</option>
         ))}
       </select>
 
-      <select value={cond.operator} onChange={(e) => onOperator(e.target.value as FilterOperator)} className={inputCls}>
+      <select value={cond.operator} disabled={disabled} onChange={(e) => onOperator(e.target.value as FilterOperator)} className={`${inputCls} disabled:opacity-60 disabled:cursor-not-allowed`}>
         {ops.map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}
       </select>
 
-      <ValueEditor cond={cond} onChange={onChange} />
+      <ValueEditor cond={cond} onChange={onChange} disabled={disabled} />
+
+      {/* DC-04 lock toggle — editors only. Viewers see a static lock badge. */}
+      {canLock ? (
+        <button
+          type="button"
+          onClick={onToggleLock}
+          className={`px-1.5 py-1 transition-colors ${locked ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
+          title={locked ? 'Unlock filter (allow viewers to edit)' : 'Lock filter (viewers cannot edit)'}
+        >
+          {locked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+        </button>
+      ) : locked ? (
+        <span className="px-1.5 py-1 text-primary" title="Locked by an editor — read-only">
+          <Lock className="w-3.5 h-3.5" />
+        </span>
+      ) : null}
 
       <button
         type="button"
         onClick={onRemove}
-        className="px-1.5 py-1 text-muted-foreground hover:text-destructive transition-colors"
-        title="Remove filter"
+        disabled={locked}
+        className="px-1.5 py-1 text-muted-foreground hover:text-destructive transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
+        title={locked ? 'Unlock to remove' : 'Remove filter'}
       >
         <Trash2 className="w-3.5 h-3.5" />
       </button>
@@ -174,8 +204,9 @@ function ConditionRow({
   );
 }
 
-function ValueEditor({ cond, onChange }: { cond: FilterCondition; onChange: (changes: Partial<FilterCondition>) => void }) {
+function ValueEditor({ cond, onChange, disabled }: { cond: FilterCondition; onChange: (changes: Partial<FilterCondition>) => void; disabled?: boolean }) {
   if (operatorNeedsNoValue(cond.operator)) return null;
+  const dcls = `${inputCls} disabled:opacity-60 disabled:cursor-not-allowed`;
 
   // ── Date: relative ──
   if (cond.operator === 'relative') {
@@ -185,15 +216,17 @@ function ValueEditor({ cond, onChange }: { cond: FilterCondition; onChange: (cha
         <input
           type="number"
           min={1}
+          disabled={disabled}
           value={cond.relativeN ?? ''}
           onChange={(e) => onChange({ relativeN: e.target.value === '' ? undefined : Number(e.target.value) })}
           placeholder="N"
-          className={`${inputCls} w-16`}
+          className={`${dcls} w-16`}
         />
         <select
           value={cond.relativeUnit ?? ''}
+          disabled={disabled}
           onChange={(e) => onChange({ relativeUnit: (e.target.value || undefined) as RelativeUnit | undefined })}
-          className={inputCls}
+          className={dcls}
         >
           <option value="">unit…</option>
           {RELATIVE_UNITS.map((u) => (
@@ -211,16 +244,18 @@ function ValueEditor({ cond, onChange }: { cond: FilterCondition; onChange: (cha
         From
         <input
           type="datetime-local"
+          disabled={disabled}
           value={cond.from ?? ''}
           onChange={(e) => onChange({ from: e.target.value || undefined })}
-          className={inputCls}
+          className={dcls}
         />
         To
         <input
           type="datetime-local"
+          disabled={disabled}
           value={cond.to ?? ''}
           onChange={(e) => onChange({ to: e.target.value || undefined })}
-          className={inputCls}
+          className={dcls}
         />
       </span>
     );
@@ -230,12 +265,13 @@ function ValueEditor({ cond, onChange }: { cond: FilterCondition; onChange: (cha
   if (cond.operator === 'in' || cond.operator === 'not_in') {
     return (
       <input
+        disabled={disabled}
         value={(cond.values ?? []).join(', ')}
         onChange={(e) =>
           onChange({ values: e.target.value.split(',').map((s) => s.trim()).filter((s) => s !== '') })
         }
         placeholder="value1, value2, …"
-        className={`${inputCls} min-w-[10rem]`}
+        className={`${dcls} min-w-[10rem]`}
       />
     );
   }
@@ -244,10 +280,11 @@ function ValueEditor({ cond, onChange }: { cond: FilterCondition; onChange: (cha
   return (
     <input
       type={cond.colType === 'numeric' ? 'number' : 'text'}
+      disabled={disabled}
       value={cond.value ?? ''}
       onChange={(e) => onChange({ value: cond.colType === 'numeric' ? (e.target.value === '' ? undefined : Number(e.target.value)) : e.target.value })}
       placeholder="value"
-      className={`${inputCls} min-w-[8rem]`}
+      className={`${dcls} min-w-[8rem]`}
     />
   );
 }

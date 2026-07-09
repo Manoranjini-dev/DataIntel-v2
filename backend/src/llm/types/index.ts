@@ -40,8 +40,11 @@ export interface LLMContext {
  * The LLM prompt instructs the model to use the right format per connector family.
  */
 export interface LLMResponse {
-  /** 'conversational' when the LLM answered analytically without generating a query */
-  type?: 'data_query' | 'conversational' | 'schema_query';
+  /** 'conversational' when the LLM answered analytically without generating a query.
+   *  'row_counts' asks the backend to natively count rows in EVERY table (the
+   *  "how many records are in each table?" case) — the platform bans UNION in
+   *  LLM-generated SQL, so this is executed server-side from synced metadata. */
+  type?: 'data_query' | 'conversational' | 'schema_query' | 'row_counts';
   sql: string;
   explanation: string;
   tables_used: string[];

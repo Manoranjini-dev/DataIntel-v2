@@ -53,6 +53,62 @@ export function humanizeField(name?: string | null): string {
     .join(' ');
 }
 
+/**
+ * Detect identifier columns (primary/foreign keys) that should NOT be plotted
+ * as chart series — `id`, `clinic_id`, `doctor_id`, `user_uuid`, camelCase
+ * `clinicId`, etc. These are reference values, not measurable metrics; charting
+ * them as a bar/line/slice is misleading. They remain available for tooltips.
+ *
+ * Deliberately conservative so real measures are never dropped: it matches an
+ * `id`/`uuid`/`guid` suffix after a separator (or the bare word), never a plain
+ * `…id` ending — so "paid", "valid", "grid", "revenue" are safe.
+ */
+export function isIdentifierColumn(col?: string | null): boolean {
+  if (col == null) return false;
+  const raw = String(col).trim()
+    .replace(/^[a-z0-9_]+\./i, '')   // strip table/alias prefix
+    .replace(/["'`\[\]]/g, '');       // strip quoting
+  if (!raw) return false;
+  const lc = raw.toLowerCase();
+  if (lc === 'id' || lc === 'uuid' || lc === 'guid') return true;
+  if (/_(id|uuid|guid)$/.test(lc)) return true;   // clinic_id, order_uuid
+  if (/[a-z](Id|Uuid|Guid)$/.test(raw)) return true; // camelCase clinicId
+  return false;
+}
+
+/** True when a column's sampled values are all numeric. */
+export function isNumericColumn(rows: Record<string, unknown>[], col: string): boolean {
+  const sample = rows.slice(0, 20).filter((r) => r[col] != null);
+  return sample.length > 0 && sample.every((r) => !isNaN(Number(r[col])));
+}
+
+/**
+ * The numeric columns that should actually be PLOTTED as chart series — numeric
+ * columns minus identifier columns. Safety net: if excluding identifiers would
+ * leave nothing to plot (e.g. the only numeric column IS an id), fall back to
+ * the raw numeric set so the chart still renders instead of vanishing.
+ */
+export function measureColumns(rows: Record<string, unknown>[], columns: string[]): string[] {
+  const numeric = columns.filter((c) => isNumericColumn(rows, c));
+  const measures = numeric.filter((c) => !isIdentifierColumn(c));
+  return measures.length > 0 ? measures : numeric;
+}
+
+/**
+ * Pick the category/label column, preferring a non-identifier column (e.g.
+ * `clinic_name`) over an id so the axis shows a human-readable label. `exclude`
+ * are the already-chosen measure columns. Falls back to an id only if nothing
+ * else is available.
+ */
+export function pickLabelColumn(columns: string[], exclude: string[]): string {
+  const notMeasure = columns.filter((c) => !exclude.includes(c));
+  return (
+    notMeasure.find((c) => !isIdentifierColumn(c)) ??
+    notMeasure[0] ??
+    columns[0]
+  );
+}
+
 /** Consistent styling for the axis title text across every chart. */
 export const AXIS_TITLE_STYLE = {
   fill: '#3f3f46',

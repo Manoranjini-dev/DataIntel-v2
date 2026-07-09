@@ -41,6 +41,9 @@ export interface FilterCondition {
   /** custom_range: ISO datetime bounds (at least one required). */
   from?: string;
   to?: string;
+  /** DC-04 — when true, viewers cannot modify or remove this filter; only
+   *  editors can toggle the lock. Enforced read-only in view/published/embed. */
+  locked?: boolean;
 }
 
 export interface FilterSet {
@@ -345,6 +348,8 @@ export interface DashboardFilterRow {
   col_type?: ColumnType | null;
   operator: FilterOperator;
   config?: Partial<FilterCondition> | null;
+  /** DC-04 — first-class lock column (falls back to config for older rows). */
+  locked?: boolean | null;
 }
 
 /** Convert dashboard_filters rows into a client FilterSet (combined with AND). */
@@ -355,6 +360,7 @@ export function dashboardFiltersToSet(rows: DashboardFilterRow[] | undefined | n
     column: r.column_name,
     colType: (r.col_type || r.config?.colType || 'string') as ColumnType,
     operator: r.operator,
+    locked: (r.locked ?? r.config?.locked) === true,
   }));
   return { conjunction: 'and', conditions };
 }
@@ -365,10 +371,12 @@ export function conditionToDbPayload(cond: FilterCondition): {
   colType: ColumnType;
   operator: FilterOperator;
   config: Partial<FilterCondition>;
+  locked: boolean;
 } {
-  const { id: _id, column, colType, operator, ...rest } = cond;
+  const { id: _id, column, colType, operator, locked, ...rest } = cond;
   void _id;
-  return { column, colType, operator, config: rest };
+  // `locked` is promoted to a top-level column; keep it out of `config`.
+  return { column, colType, operator, config: rest, locked: locked === true };
 }
 
 /**

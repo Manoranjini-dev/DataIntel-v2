@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, Y_TITLE_SPACE } from '@/lib/chart-format';
+import { xAxisLabel, yAxisLabel, Y_TITLE_SPACE, measureColumns, isIdentifierColumn } from '@/lib/chart-format';
 
 interface ScatterChartCardProps {
   execution: QueryExecutionResult;
@@ -55,11 +55,15 @@ export function ScatterChartCard({ execution, title, compact }: ScatterChartCard
 
   const schema = useMemo(() => {
     if (!rows || rows.length < 2 || columns.length < 2) return null;
-    const numericCols = columns.filter((c) => isNumeric(rows, c));
+    // Prefer real measures for the axes (id columns excluded); fall back to raw
+    // numerics only if excluding ids would leave fewer than the two axes needed.
+    const measures = measureColumns(rows, columns);
+    const numericCols = measures.length >= 2 ? measures : columns.filter((c) => isNumeric(rows, c));
     if (numericCols.length < 2) return null;
     const [xKey, yKey] = numericCols;
-    // First non-numeric column (if any) labels each point.
-    const labelKey = columns.find((c) => !numericCols.includes(c));
+    // First non-identifier, non-numeric column (if any) labels each point.
+    const labelKey = columns.find((c) => !numericCols.includes(c) && !isIdentifierColumn(c))
+      ?? columns.find((c) => !numericCols.includes(c));
 
     const data = rows.slice(0, 200).map((row) => ({
       ...(labelKey ? { [labelKey]: row[labelKey] } : {}),

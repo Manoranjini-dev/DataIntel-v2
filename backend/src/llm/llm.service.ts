@@ -201,7 +201,9 @@ Rules — follow every one without exception:
           { role: 'user', content: userContent },
         ],
         temperature: 0.35,
-        max_tokens: 320,
+        // Headroom for reasoning-model output — a tight cap returns empty content
+        // (the insight itself stays ~3 sentences per the system prompt).
+        max_tokens: 800,
       });
 
       const text = completion.choices[0]?.message?.content?.trim();
@@ -214,6 +216,58 @@ Rules — follow every one without exception:
       return rowCount === 0
         ? 'No results were found matching your criteria.'
         : `Found ${rowCount} result${rowCount !== 1 ? 's' : ''}.`;
+    }
+  }
+
+  /**
+   * Generate N business-domain-aware starter questions for a datasource, purely
+   * from its compressed schema. Infers the domain (healthcare/sales/HR/finance/…)
+   * from table & column names and proposes immediately-executable questions that
+   * use the ACTUAL tables. Returns [] on failure so the caller can fall back.
+   */
+  async generateStarterQuestions(
+    compressedSchema: string,
+    connectorFamily: 'sql' | 'elasticsearch' | 'document' | 'databricks' = 'sql',
+    count = 4,
+  ): Promise<string[]> {
+    const entity = connectorFamily === 'elasticsearch' ? 'indices' : connectorFamily === 'document' ? 'collections' : 'tables';
+    const systemPrompt = `You are a business intelligence analyst helping a NON-TECHNICAL user explore a new datasource.
+Given the database schema, infer the BUSINESS DOMAIN (e.g. appointment/doctor → healthcare; orders/products → sales/ecommerce; employees/department → HR; transactions/accounts → finance) and propose exactly ${count} starter questions that let the user immediately discover value.
+
+Rules — follow every one:
+- Questions MUST be answerable from the ${entity} and columns actually present in the schema — never invent tables/columns.
+- Prefer business insights (trends, rankings, totals, comparisons, "this month", "top N") over metadata questions.
+- Plain conversational English — no SQL, no column/table jargon exposed awkwardly. It's fine to reference a real entity name naturally ("appointments", "customers").
+- Each question must be self-contained and immediately executable (no follow-up clarification needed).
+- Vary the analytical shape: at least one count/total, one ranking ("which … most"), one time-trend, one comparison/breakdown.
+- No duplicates; keep each under 12 words.
+
+OUTPUT — STRICT JSON only, no markdown:
+{ "questions": ["...", "...", "...", "..."] }`;
+
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: this.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `Schema:\n${compressedSchema}\n\nGenerate ${count} starter questions.` },
+        ],
+        temperature: 0.4,
+        // Generous budget: the configured model is a reasoning model that spends
+        // output tokens on hidden reasoning; a small cap leaves empty content.
+        max_tokens: 1500,
+      });
+      let text = completion.choices[0]?.message?.content?.trim() || '';
+      if (text.startsWith('```')) text = text.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
+      const parsed = JSON.parse(text);
+      const questions = Array.isArray(parsed?.questions) ? parsed.questions : [];
+      return questions
+        .filter((q: unknown): q is string => typeof q === 'string' && q.trim().length > 0)
+        .map((q: string) => q.trim())
+        .slice(0, count);
+    } catch (error) {
+      this.logger.warn(`generateStarterQuestions failed: ${error instanceof Error ? error.message : 'unknown'}`);
+      return [];
     }
   }
 
@@ -332,8 +386,8 @@ Rules — follow every one without exception:
       throw new Error(`LLM output is not valid JSON: ${cleaned.substring(0, 200)}`);
     }
 
-    // Conversational or schema_query response — no data query needed
-    if (parsed.type === 'conversational' || parsed.type === 'schema_query') {
+    // Conversational / schema_query / row_counts — no LLM-generated data query.
+    if (parsed.type === 'conversational' || parsed.type === 'schema_query' || parsed.type === 'row_counts') {
       return {
         type: parsed.type,
         sql: '',
@@ -343,7 +397,7 @@ Rules — follow every one without exception:
         ui_hint: (parsed.ui_hint as UIHint) || undefined,
         schema_query_params: parsed.schema_query_params as any,
         follow_up_questions: Array.isArray(parsed.follow_up_questions)
-          ? (parsed.follow_up_questions as string[]).slice(0, 3)
+          ? (parsed.follow_up_questions as string[]).slice(0, 4)
           : undefined,
       };
     }
@@ -369,7 +423,7 @@ Rules — follow every one without exception:
       confidence: parsed.confidence as number,
       ui_hint: (parsed.ui_hint as UIHint) || undefined,
       follow_up_questions: Array.isArray(parsed.follow_up_questions)
-        ? (parsed.follow_up_questions as string[]).slice(0, 3)
+        ? (parsed.follow_up_questions as string[]).slice(0, 4)
         : undefined,
     };
   }
@@ -409,8 +463,8 @@ Rules — follow every one without exception:
       throw new Error(`LLM output is not valid JSON: ${cleaned.substring(0, 200)}`);
     }
 
-    // Conversational or schema_query response — no data query needed
-    if (parsed.type === 'conversational' || parsed.type === 'schema_query') {
+    // Conversational / schema_query / row_counts — no LLM-generated data query.
+    if (parsed.type === 'conversational' || parsed.type === 'schema_query' || parsed.type === 'row_counts') {
       return {
         type: parsed.type,
         sql: '',
@@ -420,7 +474,7 @@ Rules — follow every one without exception:
         ui_hint: (parsed.ui_hint as UIHint) || undefined,
         schema_query_params: parsed.schema_query_params as any,
         follow_up_questions: Array.isArray(parsed.follow_up_questions)
-          ? (parsed.follow_up_questions as string[]).slice(0, 3)
+          ? (parsed.follow_up_questions as string[]).slice(0, 4)
           : undefined,
       };
     }
@@ -474,7 +528,7 @@ Rules — follow every one without exception:
       intent: (parsed.intent as string) || 'search',
       ui_hint: (parsed.ui_hint as UIHint) || undefined,
       follow_up_questions: Array.isArray(parsed.follow_up_questions)
-        ? (parsed.follow_up_questions as string[]).slice(0, 3)
+        ? (parsed.follow_up_questions as string[]).slice(0, 4)
         : undefined,
     };
   }

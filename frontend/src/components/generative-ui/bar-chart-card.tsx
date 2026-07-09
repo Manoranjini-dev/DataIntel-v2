@@ -12,7 +12,13 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE } from '@/lib/chart-format';
+import {
+  xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE,
+  humanizeField, measureColumns, pickLabelColumn, isIdentifierColumn,
+} from '@/lib/chart-format';
+
+/** Prefix for identifier values carried on each data point for the tooltip only (never plotted). */
+const META_PREFIX = '__meta_';
 
 const COLORS = [
   '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
@@ -29,10 +35,6 @@ interface BarChartCardProps {
   showLegend?: boolean;
 }
 
-function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
-  return rows.slice(0, 20).filter((r) => r[col] != null).every((r) => !isNaN(Number(r[col])));
-}
-
 function truncate(label: string, max = 14): string {
   return label != null && String(label).length > max
     ? String(label).slice(0, max) + '…'
@@ -45,16 +47,28 @@ const CustomTooltip = ({
   label,
 }: {
   active?: boolean;
-  payload?: { name: string; value: number; color: string }[];
+  payload?: { name: string; value: number; color: string; payload?: Record<string, unknown> }[];
   label?: string;
 }) => {
   if (!active || !payload?.length) return null;
+  // Identifier fields (clinic_id, …) travel on the point as `__meta_*` — shown
+  // here as reference context but never plotted as a bar.
+  const point = payload[0]?.payload ?? {};
+  const metaEntries = Object.keys(point)
+    .filter((k) => k.startsWith(META_PREFIX))
+    .map((k) => [humanizeField(k.slice(META_PREFIX.length)), point[k]] as const);
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-2.5 text-xs shadow-md">
       <p className="mb-1.5 font-medium text-zinc-800">{label}</p>
+      {metaEntries.map(([name, value]) => (
+        <p key={name} className="flex gap-2">
+          <span className="text-zinc-500">{name}:</span>
+          <span className="font-medium text-zinc-800">{String(value ?? '')}</span>
+        </p>
+      ))}
       {payload.map((p) => (
         <p key={p.name} style={{ color: p.color }} className="flex gap-2">
-          <span className="text-zinc-500">{p.name}:</span>
+          <span className="text-zinc-500">{humanizeField(p.name)}:</span>
           <span className="font-medium text-zinc-800">{p.value?.toLocaleString()}</span>
         </p>
       ))}
@@ -116,13 +130,20 @@ export function BarChartCard({ execution, title, compact, stacked, showLegend = 
 
   const schema = useMemo(() => {
     if (!rows || rows.length === 0 || columns.length < 2) return null;
-    const numericCols = columns.filter((c) => isNumeric(rows, c));
+    // Plot real measures only — identifier columns (clinic_id, doctor_id, …) are
+    // excluded from the bars and instead carried into the tooltip as context.
+    const numericCols = measureColumns(rows, columns);
     if (numericCols.length === 0) return null;
-    const labelCol = columns.find((c) => !numericCols.includes(c)) || columns[0];
     const chosen = numericCols.slice(0, 4);
+    const labelCol = pickLabelColumn(columns, chosen);
+    // Identifier columns become tooltip-only metadata (excluding the label col).
+    const metaCols = columns.filter(
+      (c) => isIdentifierColumn(c) && !chosen.includes(c) && c !== labelCol,
+    );
     const data = rows.map((row) => {
       const point: Record<string, unknown> = { _label: String(row[labelCol] ?? '') };
       chosen.forEach((c) => { point[c] = Number(row[c]); });
+      metaCols.forEach((c) => { point[`${META_PREFIX}${c}`] = row[c]; });
       return point;
     });
     return { labelCol, numericCols: chosen, data };

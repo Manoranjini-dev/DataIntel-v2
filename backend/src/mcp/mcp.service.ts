@@ -34,6 +34,7 @@ import { BigQueryConnector } from './connectors/bigquery.connector';
 import { RedshiftConnector } from './connectors/redshift.connector';
 import { OracleConnector } from './connectors/oracle.connector';
 import { DatabricksConnector } from './connectors/databricks.connector';
+import { FabricConnector } from './connectors/fabric.connector';
 
 @Injectable()
 export class MCPService implements OnModuleDestroy {
@@ -94,6 +95,7 @@ export class MCPService implements OnModuleDestroy {
       [ConnectorType.REDSHIFT, new RedshiftConnector()],
       [ConnectorType.ORACLE, new OracleConnector()],
       [ConnectorType.DATABRICKS, new DatabricksConnector()],
+      [ConnectorType.FABRIC, new FabricConnector()],
     ]);
 
     this.logger.log(

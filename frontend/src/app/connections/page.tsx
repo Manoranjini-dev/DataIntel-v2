@@ -29,6 +29,7 @@ const CONNECTORS = [
   { type: 'mongodb',       label: 'MongoDB',         color: '#47A248', defaultPort: 27017 },
   { type: 'elasticsearch', label: 'Elasticsearch',   color: '#FEC514', defaultPort: 9200  },
   { type: 'redshift',      label: 'Redshift',        color: '#8C4FFF', defaultPort: 5439  },
+  { type: 'fabric',        label: 'MS Fabric',       color: '#10B981', defaultPort: 1433  },
 ] as const;
 
 type ConnType = typeof CONNECTORS[number]['type'];

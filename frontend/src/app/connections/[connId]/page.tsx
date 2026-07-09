@@ -18,6 +18,7 @@ const CONNECTOR_COLOR: Record<string, { bg: string; text: string; label: string 
   snowflake:     { bg: 'bg-cyan-500/15',   text: 'text-cyan-400',   label: 'SF'  },
   bigquery:      { bg: 'bg-amber-500/15',  text: 'text-amber-400',  label: 'BQ'  },
   redshift:      { bg: 'bg-red-500/15',    text: 'text-red-400',    label: 'RS'  },
+  fabric:        { bg: 'bg-emerald-500/15', text: 'text-emerald-400', label: 'FB' },
 };
 
 const STATUS_COLORS: Record<string, string> = {

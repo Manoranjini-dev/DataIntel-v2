@@ -632,6 +632,17 @@ export class DashboardController {
     return { filter };
   }
 
+  @Put(':dashId/filters')
+  @ApiOperation({ summary: 'Replace the entire dashboard filter set (DC-04: preserves locks transactionally)' })
+  async replaceFilters(
+    @Param('dashId') dashId: string,
+    @CurrentUser() user: SafeAccount,
+    @Body() body: { filters: AddDashboardFilterDto[] },
+  ) {
+    const filters = await this.builder.replaceFilters(dashId, user, body?.filters || []);
+    return { filters };
+  }
+
   @Put(':dashId/filters/:filterId')
   @ApiOperation({ summary: 'Update dashboard filter' })
   async updateFilter(

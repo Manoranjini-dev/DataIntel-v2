@@ -13,6 +13,7 @@ import { SchemaExplorerController } from './schema-explorer.controller';
 import { ConnectionHealthService } from './connection-health.service';
 import { ConnectionHealthController } from './connection-health.controller';
 import { ConnectionPermissionsService } from './connection-permissions.service';
+import { TableSourceService } from './table-source.service';
 import { ConnectionRefreshService } from './connection-refresh.service';
 import { ConnectionRefreshScheduler } from './connection-refresh.scheduler';
 import { SchemaModule } from '../schema/schema.module';
@@ -32,6 +33,7 @@ import { CacheModule } from '../cache/cache.module';
     PersistentConnectionService,
     ConnectionHealthService,
     ConnectionPermissionsService,
+    TableSourceService,
     ConnectionRefreshService,
     ConnectionRefreshScheduler,
   ],
@@ -40,6 +42,7 @@ import { CacheModule } from '../cache/cache.module';
     PersistentConnectionService,
     ConnectionHealthService,
     ConnectionPermissionsService,
+    TableSourceService,
     ConnectionRefreshService,
   ],
 })

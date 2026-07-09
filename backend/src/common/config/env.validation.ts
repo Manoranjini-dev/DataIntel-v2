@@ -96,8 +96,23 @@ export class EnvironmentVariables {
   @IsString() @IsOptional()
   COOKIE_SECURE: string = 'false';
 
+  // Absolute maximum session lifetime (hard cap from creation). A session can
+  // never live past created_at + this, even under continuous activity. Also
+  // drives the session cookie maxAge. (Historically this was the sole TTL.)
   @IsNumber() @IsOptional()
   SESSION_TTL_HOURS: number = 168;
+
+  // AUTH-03 — sliding inactivity window. A session expires this many minutes
+  // after the LAST authenticated request; each request slides the deadline
+  // forward (capped by SESSION_TTL_HOURS). Default 7 days preserves prior
+  // behavior; shorten it to enforce stricter inactivity timeouts.
+  @IsNumber() @IsOptional()
+  SESSION_INACTIVITY_MINUTES: number = 10080;
+
+  // AUTH-03 — minimum gap between sliding-expiry writes. Prevents a DB write on
+  // every request; the deadline is only pushed forward once per this interval.
+  @IsNumber() @IsOptional()
+  SESSION_SLIDE_THROTTLE_SECONDS: number = 60;
 
   // ── Encryption ────────────────────────────────
 

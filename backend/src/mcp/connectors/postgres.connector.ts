@@ -35,9 +35,8 @@ export class PostgresConnector extends BaseMCPConnector {
 
   async testConnection(params: ConnectionParams): Promise<MCPToolResult<boolean>> {
     return this.executeWithResult(async () => {
-      const client = this.createClient(params);
+      const client = await this.connectClient(params);
       try {
-        await client.connect();
         await client.query('SELECT 1');
         return true;
       } finally {
@@ -48,10 +47,8 @@ export class PostgresConnector extends BaseMCPConnector {
 
   async describeSchema(params: ConnectionParams): Promise<MCPToolResult<SchemaMetadata>> {
     return this.executeWithResult(async () => {
-      const client = this.createClient(params);
+      const client = await this.connectClient(params);
       try {
-        await client.connect();
-
         const tables = await this.getTables(client);
         
         const allColumnsResult = await client.query(
@@ -180,10 +177,8 @@ export class PostgresConnector extends BaseMCPConnector {
     timeoutMs: number,
   ): Promise<MCPToolResult<MCPQueryResult>> {
     return this.executeWithResult(async () => {
-      const client = this.createClient(params);
+      const client = await this.connectClient(params);
       try {
-        await client.connect();
-
         // Enforce read-only transaction
         await client.query('BEGIN TRANSACTION READ ONLY');
         await client.query(`SET statement_timeout = ${timeoutMs}`);
@@ -214,14 +209,34 @@ export class PostgresConnector extends BaseMCPConnector {
 
   // ── Private Helpers ──────────────────────────
 
+  /**
+   * Create a client AND connect it, retrying transient cold-connect timeouts.
+   * Each retry uses a FRESH client (a pg Client cannot be re-connected after a
+   * failed connect). See BaseMCPConnector.connectWithRetry.
+   */
+  private async connectClient(params: ConnectionParams): Promise<Client> {
+    return this.connectWithRetry(async () => {
+      const client = this.createClient(params);
+      try {
+        await client.connect();
+        return client;
+      } catch (err) {
+        await client.end().catch(() => {});
+        throw err;
+      }
+    }, `Postgres connect ${params.host}:${params.port}`);
+  }
+
   private createClient(params: ConnectionParams): Client {
+    // Cold connects to managed Postgres can exceed 10s; make it configurable.
+    const connectionTimeoutMillis = Number(process.env.MCP_CONNECT_TIMEOUT_MS) || 12000;
     const config: any = {
       host: params.host,
       port: params.port,
       user: params.username,
       password: params.password,
       database: params.database,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis,
     };
     if (params.ssl) {
       config.ssl = { rejectUnauthorized: false };

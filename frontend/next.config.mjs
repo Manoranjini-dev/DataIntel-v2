@@ -7,6 +7,21 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
 
+  // ── Rewrite proxy timeout ──────────────────────────────────────
+  // The `/api/:path*` rewrite below proxies to the backend. Next.js defaults
+  // this proxy to a 30s timeout — but a single chat turn legitimately runs
+  // longer (LLM SQL generation ~20-30s + result interpretation ~10s + a cold
+  // managed-DB connect the backend retries), routinely 30-55s. At 30s Next.js
+  // aborts the upstream and returns an opaque plain-text `500 Internal Server
+  // Error` to the browser while the backend keeps running and succeeds — the
+  // intermittent "server ran into a problem" 500. Raise it above the axios
+  // client timeout (120s in src/lib/api.ts) so the CLIENT's own timeout governs
+  // a genuinely-hung request (clean, structured timeout message) instead of the
+  // proxy severing a slow-but-valid response.
+  experimental: {
+    proxyTimeout: 130_000,
+  },
+
   // ── Transpile three so its ESM imports resolve cleanly ─────────
   transpilePackages: ['three'],
 

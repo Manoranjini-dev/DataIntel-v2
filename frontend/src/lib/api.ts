@@ -32,10 +32,13 @@ export const apiClient = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
   // Bound every request so a hung backend/LLM call surfaces as a clear
-  // timeout error instead of leaving the UI spinning forever. Sits above
-  // the backend's own 30s LLM timeout, leaving headroom for SQL execution
-  // and result interpretation.
-  timeout: 60_000,
+  // timeout error instead of leaving the UI spinning forever. A single chat
+  // turn can legitimately take a while: LLM SQL generation (~20-30s) + result
+  // interpretation (~10s) + a cold managed-DB connect (which the backend now
+  // retries). 60s was too tight and produced false "timed out" errors on slow
+  // cold connections; 120s covers the realistic worst case while still
+  // bounding a truly hung request.
+  timeout: 120_000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -368,6 +371,24 @@ export const connectionApi = {
     return handleResponse<{ success: boolean }>(r);
   },
 
+  // ── DS-02 Table-as-source ─────────────────
+  /** List introspected schemas/tables for the table picker. */
+  listSchemaTables: async (connId: string, q?: string) => {
+    const r = await apiFetch(`/connections/${connId}/schema/tables${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    return handleResponse<{ tables: { schema_name: string; table_name: string; column_count?: number }[] }>(r);
+  },
+
+  /** Preview an entire table: validated read-only SELECT * + first 10 rows. */
+  previewTable: async (connId: string, tableName: string, schema?: string) => {
+    const qs = schema ? `?schema=${encodeURIComponent(schema)}` : '';
+    const r = await apiFetch(`/connections/${connId}/schema/tables/${encodeURIComponent(tableName)}/preview${qs}`);
+    return handleResponse<{
+      schema: string | null; table: string;
+      previewSql: string; sourceSql: string;
+      rows: Record<string, unknown>[]; columns: string[]; rowCount: number;
+    }>(r);
+  },
+
   // ── Sharing ──────────────────────────────
 
   /** Search Admins/Analysts that a connection can be shared with (excludes Viewers and the caller). */
@@ -462,6 +483,12 @@ export const chatApi = {
       body: JSON.stringify({ prompt, autoExecute }),
     });
     return handleResponse<any>(r);
+  },
+
+  /** Part 1 — datasource-aware starter questions for the chat landing page. */
+  starterQuestions: async (connectionId: string) => {
+    const r = await apiFetch(`/chats/starter-questions?connectionId=${encodeURIComponent(connectionId)}`);
+    return handleResponse<{ questions: string[] }>(r);
   },
   executeDraft: async (chatId: string, executionId: string, sql: string) => {
     const r = await apiFetch(`/chats/${chatId}/execute-draft`, {
@@ -751,6 +778,9 @@ export const dashboardApi = {
         result_rows: data.result_rows,
         result_columns: data.result_columns,
         ui_hint: data.ui_hint,
+        // DS-02 — 'table' makes the widget refresh by running its SQL directly
+        // (no LLM). Omitted unless set, so prompt/AI widgets are unaffected.
+        ...(data.source_type ? { sourceType: data.source_type } : {}),
         // Static content for non-query widgets (Free Text / Image cards) — optional, additive.
         ...(data.text_content !== undefined ? { text_content: data.text_content } : {}),
         ...(data.image_url !== undefined ? { image_url: data.image_url } : {}),
@@ -813,6 +843,16 @@ export const dashboardApi = {
   removeFilter: async (dashId: string, filterId: string) => {
     const r = await apiFetch(`/dashboards/${dashId}/filters/${filterId}`, { method: 'DELETE' });
     return handleResponse<{ success: boolean }>(r);
+  },
+
+  // DC-04 — replace the whole filter set transactionally (preserves locks;
+  // avoids the remove-all/add-all sequence tripping the per-filter lock guard).
+  replaceFilters: async (dashId: string, filters: any[]) => {
+    const r = await apiFetch(`/dashboards/${dashId}/filters`, {
+      method: 'PUT',
+      body: JSON.stringify({ filters }),
+    });
+    return handleResponse<{ filters: any[] }>(r);
   },
 
   listVersions: async (dashId: string) => {

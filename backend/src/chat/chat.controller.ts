@@ -3,7 +3,7 @@
 // ──────────────────────────────────────────────
 
 import {
-  Controller, Get, Post, Delete, Body, Param, HttpCode, HttpStatus, Query, Patch, Logger,
+  Controller, Get, Post, Delete, Body, Param, HttpCode, HttpStatus, Query, Patch, Logger, HttpException,
 } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { ChatQueryService } from './chat-query.service';
@@ -53,6 +53,21 @@ export class ChatController {
     const isArchivedBool = isArchived === 'true' ? true : isArchived === 'false' ? false : undefined;
     const chats = await this.chatService.list(user.id, { connectionId, comboId, isArchived: isArchivedBool });
     return { chats };
+  }
+
+  /**
+   * Part 1 — datasource-aware starter questions for the chat landing page.
+   * Declared before the `:chatId` routes so "starter-questions" is not captured
+   * as a chat id.
+   */
+  @Get('starter-questions')
+  async starterQuestions(
+    @CurrentUser() user: SafeAccount,
+    @Query('connectionId') connectionId: string,
+  ) {
+    if (!connectionId) return { questions: [] };
+    const questions = await this.chatQueryService.generateStarterQuestions(connectionId, user);
+    return { questions };
   }
 
   @Post()
@@ -166,6 +181,21 @@ Rules:
     @Param('chatId') chatId: string,
   ) {
     const messages = await this.chatService.getMessages(chatId, user.id);
+    if (messages.length > 0) {
+      const latest = messages[messages.length - 1];
+      if (latest.role === 'assistant' && (!latest.followUpQuestions || latest.followUpQuestions.length === 0)) {
+        try {
+          const chat = await this.chatService.get(chatId, user.id) as any;
+          if (chat?.connection_id) {
+            const followUps = await this.chatQueryService.regenerateFollowUpsForMessage(chatId, latest, messages, chat.connection_id);
+            if (followUps && followUps.length > 0) {
+              latest.followUpQuestions = followUps;
+              await this.chatService.updateFollowUps(latest.id, followUps).catch(() => {});
+            }
+          }
+        } catch {}
+      }
+    }
     return { messages };
   }
 
@@ -176,7 +206,26 @@ Rules:
     @Param('chatId') chatId: string,
     @Body() dto: AskDto,
   ) {
-    return this.chatQueryService.query(chatId, user, dto.prompt);
+    try {
+      return await this.chatQueryService.query(chatId, user, dto.prompt);
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      const response = err instanceof HttpException ? err.getResponse() : null;
+      const rawMessage = typeof response === 'object' && response !== null ? (response as any).message || (response as any).error : (typeof response === 'string' ? response : err?.message);
+      const friendlyMessage = Array.isArray(rawMessage) ? rawMessage.join('; ') : (rawMessage || 'Something went wrong while generating your query.');
+      return {
+        success: false,
+        message: 'Unable to generate an answer for this query.',
+        reason: friendlyMessage,
+        suggestions: ['Show me all tables', 'How many records are in each table?'],
+        sql: null,
+        chart: null,
+        userMessage: { id: `u-${Date.now()}`, chat_id: chatId, role: 'user', content: dto?.prompt || '', created_at: new Date().toISOString() },
+        assistantMessage: { id: `err-${Date.now()}`, chat_id: chatId, role: 'assistant', content: friendlyMessage, created_at: new Date().toISOString() },
+        followUpQuestions: ['Show me all tables', 'How many records are in each table?'],
+        execution: { status: 'failed', error_message: friendlyMessage, rows: [], columns: [] },
+      };
+    }
   }
 
   /** Re-execute a (possibly user-edited) SQL draft */
@@ -187,7 +236,28 @@ Rules:
     @Param('chatId') chatId: string,
     @Body() dto: ExecuteDraftDto,
   ) {
-    return this.chatQueryService.executeDraft(chatId, user, dto.executionId || '', dto.sql);
+    try {
+      return await this.chatQueryService.executeDraft(chatId, user, dto.executionId || '', dto.sql);
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      const response = err instanceof HttpException ? err.getResponse() : null;
+      const rawMessage = typeof response === 'object' && response !== null ? (response as any).message || (response as any).error : (typeof response === 'string' ? response : err?.message);
+      const errorMsg = Array.isArray(rawMessage) ? rawMessage.join('; ') : (rawMessage || 'Execution failed');
+      return {
+        success: false,
+        status: 'failed',
+        rows: [],
+        columns: [],
+        row_count: 0,
+        execution_time_ms: 0,
+        error_message: errorMsg,
+        message: 'Unable to execute query draft.',
+        reason: errorMsg,
+        suggestions: [],
+        sql: dto?.sql || '',
+        chart: null,
+      };
+    }
   }
 
   /**
@@ -201,11 +271,16 @@ Rules:
     @Param('chatId') chatId: string,
     @Body('executionIds') executionIds: string[],
   ) {
-    if (!Array.isArray(executionIds) || executionIds.length === 0) {
+    try {
+      if (!Array.isArray(executionIds) || executionIds.length === 0) {
+        return { results: [] };
+      }
+      const results = await this.chatQueryService.refreshMessages(chatId, user, executionIds);
+      return { results };
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
       return { results: [] };
     }
-    const results = await this.chatQueryService.refreshMessages(chatId, user, executionIds);
-    return { results };
   }
 
   /**
@@ -219,11 +294,16 @@ Rules:
     @Param('chatId') chatId: string,
     @Body('executionIds') executionIds: string[],
   ) {
-    if (!Array.isArray(executionIds) || executionIds.length === 0) {
+    try {
+      if (!Array.isArray(executionIds) || executionIds.length === 0) {
+        return { results: [] };
+      }
+      const results = await this.chatQueryService.refreshComboMessages(chatId, user, executionIds);
+      return { results };
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
       return { results: [] };
     }
-    const results = await this.chatQueryService.refreshComboMessages(chatId, user, executionIds);
-    return { results };
   }
 
 

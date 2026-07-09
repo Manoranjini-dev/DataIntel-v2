@@ -61,14 +61,42 @@ export interface SafeAccount {
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
   private readonly BCRYPT_ROUNDS = 12;
-  private readonly sessionTtlHours: number;
+
+  // AUTH-03 — session lifetime policy.
+  //  • sessionAbsoluteTtlHours: hard cap from created_at (SESSION_TTL_HOURS).
+  //  • sessionInactivityMinutes: sliding idle window; each authenticated
+  //    request pushes expires_at to now + this (capped by the absolute TTL).
+  //  • slideThrottleSeconds: min gap between slide writes (prevents write
+  //    amplification). Clamped below half the inactivity window so the deadline
+  //    is always refreshed well before it lapses.
+  private readonly sessionAbsoluteTtlHours: number;
+  private readonly sessionInactivityMinutes: number;
+  private readonly slideThrottleSeconds: number;
 
   constructor(
     private readonly db: DatabaseService,
     private readonly audit: AuditService,
     private readonly config: ConfigService,
   ) {
-    this.sessionTtlHours = this.config.get<number>('SESSION_TTL_HOURS', 168); // 7 days
+    this.sessionAbsoluteTtlHours = this.config.get<number>('SESSION_TTL_HOURS', 168); // 7 days
+    this.sessionInactivityMinutes = this.config.get<number>('SESSION_INACTIVITY_MINUTES', 10080); // 7 days
+    const configuredThrottle = this.config.get<number>('SESSION_SLIDE_THROTTLE_SECONDS', 60);
+    this.slideThrottleSeconds = Math.max(
+      0,
+      Math.min(configuredThrottle, Math.floor((this.sessionInactivityMinutes * 60) / 2)),
+    );
+  }
+
+  /**
+   * AUTH-03 — the fresh expiry for a session becoming active NOW: the sliding
+   * inactivity window, capped by the absolute lifetime measured from
+   * `createdAt`. For a brand-new session, pass now as createdAt (the cap is far
+   * away, so the inactivity window governs).
+   */
+  private computeExpiry(createdAt: Date, now: Date = new Date()): Date {
+    const slide = new Date(now.getTime() + this.sessionInactivityMinutes * 60 * 1000);
+    const hardCap = new Date(createdAt.getTime() + this.sessionAbsoluteTtlHours * 60 * 60 * 1000);
+    return slide < hardCap ? slide : hardCap;
   }
 
   /** Register a new account */
@@ -212,7 +240,7 @@ export class AuthService {
     
     // Find valid session
     const session = await this.db.queryOne<SessionRow>(
-      'SELECT id, account_id FROM sessions WHERE token_hash = $1 AND expires_at > NOW()',
+      'SELECT id, account_id, created_at FROM sessions WHERE token_hash = $1 AND expires_at > NOW()',
       [oldTokenHash],
     );
 
@@ -223,10 +251,10 @@ export class AuthService {
     // Generate new token
     const newToken = crypto.randomBytes(32).toString('hex');
     const newTokenHash = crypto.createHash('sha256').update(newToken).digest('hex');
-    
-    // Calculate new expiration
-    const expiresAt = new Date();
-    expiresAt.setHours(expiresAt.getHours() + this.sessionTtlHours);
+
+    // AUTH-03: rotation counts as activity — slide the inactivity deadline,
+    // still capped by the original session's absolute lifetime (created_at).
+    const expiresAt = this.computeExpiry(new Date(session.created_at));
 
     // Update session with new token
     await this.db.query(
@@ -253,10 +281,29 @@ export class AuthService {
       return null;
     }
 
-    // Update last_active_at
+    // AUTH-03 — slide the inactivity deadline forward on activity, throttled to
+    // at most one write per `slideThrottleSeconds` to avoid a DB write on every
+    // request. Single atomic statement (race-safe under concurrent requests):
+    //   • re-checks validity (expires_at > NOW()) inside the UPDATE,
+    //   • only writes when the throttle window has elapsed,
+    //   • caps the new deadline at created_at + absolute TTL.
+    // make_interval avoids app/DB clock-skew and SQL string interpolation.
     await this.db.query(
-      'UPDATE sessions SET last_active_at = NOW() WHERE id = $1',
-      [session.id],
+      `UPDATE sessions
+          SET last_active_at = NOW(),
+              expires_at = LEAST(
+                NOW() + make_interval(mins => $2::int),
+                created_at + make_interval(hours => $3::int)
+              )
+        WHERE id = $1
+          AND expires_at > NOW()
+          AND last_active_at <= NOW() - make_interval(secs => $4::int)`,
+      [
+        session.id,
+        this.sessionInactivityMinutes,
+        this.sessionAbsoluteTtlHours,
+        this.slideThrottleSeconds,
+      ],
     );
 
     const account = await this.db.queryOne<AccountRow>(
@@ -462,17 +509,14 @@ export class AuthService {
     method = 'sso',
   ): Promise<{ account: SafeAccount; sessionToken: string }> {
     const account = await this.db.queryOne<AccountRow>(
-      'SELECT * FROM accounts WHERE id = $1',
+      `SELECT * FROM accounts
+       WHERE id = $1 AND is_deleted = false AND status = 'ACTIVE' AND is_active = true`,
       [accountId],
     );
     if (!account) {
-      throw new UnauthorizedException('Account not found');
-    }
-    if (account.is_deleted || account.status === 'DELETED') {
-      throw new UnauthorizedException('This account no longer exists');
-    }
-    if (account.status !== 'ACTIVE' || !account.is_active) {
-      throw new UnauthorizedException('This account is not active. Contact your administrator.');
+      // The SQL filter above covers not-found, deleted, and inactive accounts.
+      // A single message avoids leaking which condition triggered the denial.
+      throw new UnauthorizedException('Access denied. Your account is not active or does not exist. Contact your administrator.');
     }
 
     await this.db.query(
@@ -499,7 +543,10 @@ export class AuthService {
   private async createSession(accountId: string, ipAddress?: string, userAgent?: string): Promise<string> {
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const tokenHash = this.hashToken(sessionToken);
-    const expiresAt = new Date(Date.now() + this.sessionTtlHours * 60 * 60 * 1000);
+    // AUTH-03: initial deadline is the sliding inactivity window (a fresh
+    // session's absolute cap is always further out, so the window governs).
+    const now = new Date();
+    const expiresAt = this.computeExpiry(now, now);
 
     await this.db.query(
       `INSERT INTO sessions (account_id, token_hash, ip_address, user_agent, expires_at)

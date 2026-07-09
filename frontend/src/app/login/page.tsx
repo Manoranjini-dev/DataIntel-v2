@@ -25,9 +25,24 @@ export default function LoginPage() {
   useEffect(() => {
     // Surface an error passed back from an SSO redirect callback.
     const ssoError = new URLSearchParams(window.location.search).get('sso_error');
-    if (ssoError) setError(ssoError);
+    if (ssoError) {
+      // Map backend error messages to friendly, actionable UI text.
+      const lower = ssoError.toLowerCase();
+      if (lower.includes('not been set up') || lower.includes('no account') || lower.includes('not provisioned')) {
+        setError('Your Google account is not registered with this application. Please contact your administrator to get access.');
+      } else if (lower.includes('deactivated') || lower.includes('not active') || lower.includes('access denied')) {
+        setError('Your account has been deactivated. Please contact your administrator to restore access.');
+      } else if (lower.includes('domain') && lower.includes('not permitted')) {
+        setError('Your email domain is not allowed for this application. Contact your administrator.');
+      } else if (lower.includes('no longer exists')) {
+        setError('This account no longer exists. Contact your administrator.');
+      } else {
+        // Unknown SSO error — show a generic but actionable message.
+        setError('Google sign-in failed. If you need access, ask your administrator to invite you.');
+      }
+    }
     // Load which SSO providers the admin has enabled (used for LDAP).
-    ssoApi.providers().then((r) => setProviders(r.providers)).catch(() => {});
+    ssoApi.providers().then((r) => setProviders(r.providers || [])).catch(() => {});
   }, []);
 
   function afterLogin() {
@@ -80,7 +95,7 @@ export default function LoginPage() {
     }
   }
 
-  const ldapProvider = providers.find((p) => p.kind === 'password');
+  const ldapProvider = (providers || []).find((p) => p.kind === 'password');
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">

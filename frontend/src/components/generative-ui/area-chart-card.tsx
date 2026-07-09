@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE } from '@/lib/chart-format';
+import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn } from '@/lib/chart-format';
 
 const COLORS = [
   { stroke: '#6366f1', fill: '#6366f130' },
@@ -94,10 +94,11 @@ export function AreaChartCard({ execution, title, compact, stacked, showLegend =
 
   const schema = useMemo(() => {
     if (!rows || rows.length < 2 || columns.length < 2) return null;
-    const numericCols = columns.filter((c) => isNumeric(rows, c));
+    // Plot real measures only — identifier columns are excluded from the areas.
+    const numericCols = measureColumns(rows, columns);
     if (numericCols.length === 0) return null;
-    const labelCol = columns.find((c) => !numericCols.includes(c)) || columns[0];
     const chosen = numericCols.slice(0, 4);
+    const labelCol = pickLabelColumn(columns, chosen);
     const data = rows.slice(0, 100).map((row) => {
       const point: Record<string, unknown> = { _label: truncate(String(row[labelCol] ?? ''), 40) };
       chosen.forEach((c) => { point[c] = Number(row[c]); });

@@ -89,7 +89,7 @@ export class ChatService {
   /** Get messages for a chat */
   async getMessages(chatId: string, accountId: string) {
     await this.get(chatId, accountId);
-    return this.db.queryMany(
+    const messages = await this.db.queryMany<any>(
       `SELECT m.*, qe.generated_query, qe.status AS exec_status,
               qe.row_count, qe.execution_time_ms, qe.error_message,
               qe.result_preview, qe.result_columns, qe.insight
@@ -99,6 +99,23 @@ export class ChatService {
        ORDER BY m.created_at ASC`,
       [chatId],
     );
+
+    return messages.map((m) => {
+      let followUpQuestions: string[] | undefined;
+      if (m.follow_up_questions) {
+        try {
+          followUpQuestions = typeof m.follow_up_questions === 'string'
+            ? JSON.parse(m.follow_up_questions)
+            : m.follow_up_questions;
+        } catch {
+          followUpQuestions = undefined;
+        }
+      }
+      return {
+        ...m,
+        followUpQuestions: Array.isArray(followUpQuestions) ? followUpQuestions : undefined,
+      };
+    });
   }
 
   /** Add a message to a chat */
@@ -108,12 +125,20 @@ export class ChatService {
     content: string,
     executionId?: string,
     uiHint?: string,
+    followUpQuestions?: string[] | null,
   ) {
     const msg = await this.db.queryOne(
-      `INSERT INTO chat_messages (chat_id, role, content, execution_id, ui_hint)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO chat_messages (chat_id, role, content, execution_id, ui_hint, follow_up_questions)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [chatId, role, content, executionId || null, uiHint || null],
+      [
+        chatId,
+        role,
+        content,
+        executionId || null,
+        uiHint || null,
+        followUpQuestions && followUpQuestions.length > 0 ? JSON.stringify(followUpQuestions) : null,
+      ],
     );
 
     // Update chat's updated_at
@@ -123,6 +148,17 @@ export class ChatService {
     );
 
     return msg;
+  }
+
+  /** Update follow-up questions for a specific message */
+  async updateFollowUps(messageId: string, followUpQuestions: string[]) {
+    await this.db.query(
+      'UPDATE chat_messages SET follow_up_questions = $2 WHERE id = $1',
+      [
+        messageId,
+        followUpQuestions && followUpQuestions.length > 0 ? JSON.stringify(followUpQuestions) : null,
+      ],
+    );
   }
 
   /** Archive a chat */

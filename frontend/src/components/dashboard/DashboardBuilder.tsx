@@ -12,7 +12,7 @@ import {
   Sparkles, Plus, History, Save, LayoutGrid, X, ChevronDown,
   MoreHorizontal, RefreshCw, Type, Trash2, Play, Check, GripHorizontal,
   MessageSquare, LayoutDashboard, Download, FileText, ImageDown, Edit3, GripVertical, Share2,
-  Copy, ArrowRightLeft, Search, Code2, Presentation,
+  Copy, ArrowRightLeft, Search, Code2, Presentation, Table as TableIcon,
 } from 'lucide-react';
 import {
   DndContext, DragOverlay, PointerSensor, useDroppable,
@@ -68,6 +68,9 @@ const gridCollisionDetection: CollisionDetection = (args) => {
 interface WidgetData {
   id: string;
   sql?: string;
+  /** DS-02 — 'table' marks a widget whose SQL is a whole-table source (runs
+   *  directly, no LLM). Absent for prompt/AI-driven widgets. */
+  source_type?: string | null;
   title: string;
   widget_type: string;
   query_prompt: string;
@@ -1603,6 +1606,18 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   const [preview, setPreview] = useState<{ rows: Record<string, unknown>[]; fullRows: Record<string, unknown>[]; columns: string[]; ui_hint: string; llm_suggested_hint?: string } | null>(null);
   const [error, setError] = useState('');
 
+  // ── DS-02 Table-as-source — pick an entire table instead of writing SQL.
+  // Seed sourceType from the widget so a re-opened table card is recognized.
+  const initialQd = (() => {
+    try { return typeof widget.query_definition === 'string' ? JSON.parse(widget.query_definition) : (widget.query_definition || {}); }
+    catch { return {}; }
+  })();
+  const [sourceType, setSourceType] = useState<string | null>(initialQd?.sourceType || null);
+  const [tablePickerOpen, setTablePickerOpen] = useState(false);
+  const [tableList, setTableList] = useState<{ schema_name: string; table_name: string }[]>([]);
+  const [tablesLoading, setTablesLoading] = useState(false);
+  const [tableSearch, setTableSearch] = useState('');
+
   // ── Visualization Settings — chart type, axes, group by, aggregation,
   // sort, legend. Purely client-side: reshapes the already-returned rows,
   // never touches the SQL. Seeded from the widget's saved config so it's
@@ -1725,6 +1740,9 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   async function runPromptGeneration(p: string) {
     const finalPrompt = (p || '').trim();
     if (!finalPrompt) return;
+    // A prompt-driven run supersedes any table source — the widget goes back to
+    // the LLM refresh path.
+    setSourceType(null);
     setRunning(true); setError(''); setPreview(null);
     try {
       const cid = await getChat();
@@ -1845,6 +1863,39 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
     await runPromptGeneration(finalPrompt);
   }
 
+  // DS-02 — open the table picker and lazily load this connection's tables.
+  async function openTablePicker() {
+    setTablePickerOpen((o) => !o);
+    if (tableList.length || tablesLoading || !effectiveConnectionId) return;
+    setTablesLoading(true);
+    try {
+      const { tables } = await connectionApi.listSchemaTables(effectiveConnectionId);
+      setTableList(tables || []);
+    } catch (e: any) {
+      setError('Could not load tables: ' + (e?.message || 'unknown error'));
+    } finally {
+      setTablesLoading(false);
+    }
+  }
+
+  // DS-02 — select a table: generate a read-only SELECT *, preview 10 rows, and
+  // load the source query into the SQL editor. Saved via the same SQL path.
+  async function pickTable(schema: string, table: string) {
+    if (!effectiveConnectionId) { setError('Pick a connection first.'); return; }
+    setRunning(true); setError(''); setPreview(null); setTablePickerOpen(false);
+    try {
+      const res = await connectionApi.previewTable(effectiveConnectionId, table, schema);
+      setSql(res.sourceSql);
+      setSourceType('table');
+      setLastRanVia('sql');
+      setPreview({ rows: res.rows.slice(0, 10), fullRows: res.rows, columns: res.columns, ui_hint: widget.widget_type });
+    } catch (e: any) {
+      setError(formatQueryError(e?.message));
+    } finally {
+      setRunning(false);
+    }
+  }
+
   async function handleRunSQL() {
     if (!sql.trim()) return;
     setRunning(true); setError(''); setPreview(null);
@@ -1877,6 +1928,9 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
         query_prompt: lastRanVia === 'prompt' ? prompt : widget.query_prompt,
         // Always save the SQL that was actually executed (so inspect finds it next time)
         sql: sql,
+        // DS-02 — persist the table-source marker so the widget refreshes by
+        // re-running the SQL directly (no LLM). Cleared when a prompt is run.
+        source_type: lastRanVia === 'prompt' ? null : sourceType,
       };
       // Persist to DB (sql goes into query_definition.sql via updateWidget)
       await dashboardApi.updateWidget(dashId, pageId, widget.id, {
@@ -2008,7 +2062,53 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-xs font-semibold text-foreground">Generated SQL</label>
-              <span className="text-[10px] text-muted-foreground">Edit directly and run</span>
+              {/* DS-02 — pick an entire table as the source (no SQL required). */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={openTablePicker}
+                  disabled={running || saving || noConnection}
+                  title="Use an entire table as the data source"
+                  className="flex items-center gap-1 text-[10px] text-primary hover:underline disabled:opacity-40 disabled:no-underline"
+                >
+                  <TableIcon className="w-3 h-3" />From a table
+                </button>
+                {tablePickerOpen && (
+                  <div className="absolute right-0 top-6 z-20 w-64 max-h-64 overflow-auto bg-card border border-border rounded-xl shadow-xl p-2" style={{ boxShadow: 'var(--shadow-elevated)' }}>
+                    <input
+                      autoFocus
+                      value={tableSearch}
+                      onChange={(e) => setTableSearch(e.target.value)}
+                      placeholder="Search tables…"
+                      className="w-full mb-2 px-2 py-1.5 bg-muted/50 border border-border rounded-lg text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                    />
+                    {tablesLoading ? (
+                      <div className="flex items-center gap-2 py-2 px-1 text-xs text-muted-foreground">
+                        <span className="w-3 h-3 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Loading tables…
+                      </div>
+                    ) : tableList.length === 0 ? (
+                      <p className="text-xs text-muted-foreground px-1 py-2">No tables found. Sync the connection schema first.</p>
+                    ) : (
+                      tableList
+                        .filter((t) => {
+                          const q = tableSearch.trim().toLowerCase();
+                          return !q || t.table_name.toLowerCase().includes(q) || (t.schema_name || '').toLowerCase().includes(q);
+                        })
+                        .slice(0, 100)
+                        .map((t) => (
+                          <button
+                            key={`${t.schema_name}.${t.table_name}`}
+                            type="button"
+                            onClick={() => pickTable(t.schema_name, t.table_name)}
+                            className="w-full text-left px-2 py-1.5 rounded-lg text-xs text-foreground hover:bg-muted/70 transition-colors truncate"
+                          >
+                            <span className="text-muted-foreground">{t.schema_name}.</span>{t.table_name}
+                          </button>
+                        ))
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             {sqlLoading ? (
               <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
@@ -2286,7 +2386,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
             <div className="mt-4 pt-3 border-t border-border/60">
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">Filters</p>
               <p className="text-[10px] text-muted-foreground mb-2">Filter this card&apos;s rows. Operators adapt to each dimension&apos;s data type (number / text / date).</p>
-              <FilterBuilder value={filters} onChange={setFilters} columns={availableColumns} rows={sampleRows} />
+              <FilterBuilder value={filters} onChange={setFilters} columns={availableColumns} rows={sampleRows} canLock />
             </div>
 
             {/* ── Custom Measures (calculated fields) ── */}
@@ -3093,13 +3193,10 @@ export function DashboardBuilder({
   async function saveGlobalFilters() {
     setSavingFilters(true);
     try {
-      // Replace-all: the row set is small and this keeps the author's on-screen
-      // set authoritative without diffing individual conditions.
-      const existing = await dashboardApi.listFilters(dashId);
-      await Promise.all((existing.filters || []).map((f: any) => dashboardApi.removeFilter(dashId, f.id)));
-      for (const c of globalFilters.conditions) {
-        await dashboardApi.addFilter(dashId, conditionToDbPayload(c));
-      }
+      // DC-04 — transactional replace-all preserving each condition's lock. A
+      // single authoritative call (editor-only) avoids the old remove-all/
+      // add-all sequence, which would trip the backend's locked-filter guard.
+      await dashboardApi.replaceFilters(dashId, globalFilters.conditions.map(conditionToDbPayload));
       await loadGlobalFilters();
     } finally {
       setSavingFilters(false);
@@ -4646,9 +4743,10 @@ Based on the above data context, suggest a highly relevant dashboard card title.
                       columns={filterableColumns}
                       rows={filterSampleRows}
                       compact
+                      canLock={canEdit}
                     />
                     {!canEdit && (
-                      <p className="text-[10px] text-muted-foreground mt-2">Changes apply to your current view only.</p>
+                      <p className="text-[10px] text-muted-foreground mt-2">Changes apply to your current view only. Locked filters are read-only.</p>
                     )}
                   </div>
                 )}

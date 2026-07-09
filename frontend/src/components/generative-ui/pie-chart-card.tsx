@@ -10,6 +10,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
+import { measureColumns, pickLabelColumn } from '@/lib/chart-format';
 
 const COLORS = [
   '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
@@ -52,10 +53,11 @@ export function PieChartCard({ execution, title, compact, showLegend = true, don
 
   const schema = useMemo(() => {
     if (!rows || rows.length < 2 || columns.length < 2) return null;
-    const numericCols = columns.filter((c) => isNumeric(rows, c));
+    // Slice by a real measure only — identifier columns are never a pie metric.
+    const numericCols = measureColumns(rows, columns);
     if (numericCols.length === 0) return null;
-    const labelCol = columns.find((c) => !numericCols.includes(c)) || columns[0];
     const metricCol = numericCols[0];
+    const labelCol = pickLabelColumn(columns, [metricCol]);
 
     const data = rows.slice(0, 10).map((row) => ({
       _label: String(row[labelCol] ?? ''),

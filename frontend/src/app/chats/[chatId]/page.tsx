@@ -62,6 +62,7 @@ interface MessageBubble {
   ui_hint?: string;
   showQuery?: boolean;
   execution_id?: string;
+  followUpQuestions?: string[];
 }
 
 function ChatBubble({ message, onExecuteDraft, onAddToDashboard, onSaveAsCard }: {
@@ -225,6 +226,13 @@ export default function ChatPage() {
   const [autoExecute, setAutoExecute] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Part 1/2 — datasource-aware starter questions + per-response follow-ups.
+  // `starterLoading` gates the empty-state UI so we render shimmer placeholders
+  // while the AI analyzes the schema — never static/generic questions that would
+  // flicker and get replaced once the real suggestions arrive.
+  const [starterQuestions, setStarterQuestions] = useState<string[]>([]);
+  const [starterLoading, setStarterLoading] = useState(true);
+  const [followUps, setFollowUps] = useState<string[]>([]);
 
   useEffect(() => {
     if (chatId === 'new') {
@@ -238,6 +246,21 @@ export default function ChatPage() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Part 1 — datasource-aware starter questions (connection-scoped chats only).
+  const starterConnId = chat?.connection_id || connectionId;
+  useEffect(() => {
+    let cancelled = false;
+    setStarterQuestions([]);
+    // No connection to analyze (e.g. combo chat) — nothing to load, no shimmer.
+    if (!starterConnId) { setStarterLoading(false); return; }
+    setStarterLoading(true);
+    chatApi.starterQuestions(starterConnId)
+      .then(({ questions }) => { if (!cancelled) setStarterQuestions(questions || []); })
+      .catch(() => { if (!cancelled) setStarterQuestions([]); })
+      .finally(() => { if (!cancelled) setStarterLoading(false); });
+    return () => { cancelled = true; };
+  }, [starterConnId]);
 
   async function loadNewChatSetup() {
     try {
@@ -274,8 +297,19 @@ export default function ChatPage() {
         result_columns: typeof m.result_columns === 'string'
           ? JSON.parse(m.result_columns)
           : (m.result_columns || []),
+        followUpQuestions: m.followUpQuestions || (typeof m.follow_up_questions === 'string' ? JSON.parse(m.follow_up_questions) : m.follow_up_questions),
       }));
       setMessages(normalized);
+      if (normalized.length > 0) {
+        const last = normalized[normalized.length - 1];
+        if (last.role === 'assistant' && last.followUpQuestions && Array.isArray(last.followUpQuestions) && last.followUpQuestions.length > 0) {
+          setFollowUps(last.followUpQuestions);
+        } else {
+          setFollowUps([]);
+        }
+      } else {
+        setFollowUps([]);
+      }
 
       // Find current chat info from list for sidebar highlighting
       const currentChat = chatList.find((c: any) => c.id === chatId);
@@ -288,11 +322,12 @@ export default function ChatPage() {
     router.push(`/chats/new${connectionId ? `?connectionId=${connectionId}` : ''}`);
   }
 
-  async function handleSend(e?: React.FormEvent) {
+  async function handleSend(e?: React.FormEvent, promptOverride?: string) {
     e?.preventDefault();
-    if (!input.trim() || sending) return;
-    const prompt = input.trim();
+    const prompt = (promptOverride ?? input).trim();
+    if (!prompt || sending) return;
     setInput('');
+    setFollowUps([]);
     setSending(true);
 
     const tempId = `temp-${Date.now()}`;
@@ -341,6 +376,7 @@ export default function ChatPage() {
             result_preview: result.execution?.rows?.slice(0, 25) || [],
             result_columns: result.execution?.columns || [],
             ui_hint: result.execution?.ui_hint,
+            followUpQuestions: result.followUpQuestions || result.assistantMessage?.followUpQuestions,
           });
         }
         return [...filtered, ...newMsgs];
@@ -354,6 +390,9 @@ export default function ChatPage() {
         updated[idx] = { ...updated[idx], message_count: (updated[idx].message_count || 0) + 2 };
         return updated;
       });
+
+      // Part 2 — context-aware follow-up suggestions for this answer.
+      setFollowUps(autoExecute && Array.isArray(result.followUpQuestions) ? result.followUpQuestions : []);
     } catch (err: any) {
       setMessages(ms => ms.filter(m => m.id !== tempId));
       setMessages(ms => [...ms, {
@@ -479,13 +518,6 @@ export default function ChatPage() {
     ? `/connections/${connectionId}`
     : `/chats`;
 
-  const SUGGESTIONS = [
-    'Show me all tables',
-    'How many records are in each table?',
-    'Show me the latest 10 records',
-    'What are the top 5 by count?',
-  ];
-
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* ── Sidebar: Chat History ─────────────────── */}
@@ -597,24 +629,62 @@ export default function ChatPage() {
                 <p className="text-muted-foreground text-sm">Natural language queries, instant answers</p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 max-w-md">
-                {SUGGESTIONS.map(s => (
-                  <button key={s} onClick={() => setInput(s)}
-                    className="text-xs px-3 py-1.5 border border-border rounded-full text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all">
-                    {s}
-                  </button>
-                ))}
+                {starterLoading ? (
+                  // Shimmer placeholders while the AI analyzes the schema — never
+                  // render static/generic questions that would flicker away.
+                  [176, 232, 200, 216].map((w, i) => (
+                    <div
+                      key={i}
+                      className="h-8 rounded-full bg-muted animate-pulse"
+                      style={{ width: w, maxWidth: '100%' }}
+                    />
+                  ))
+                ) : (
+                  starterQuestions.map(s => (
+                    <button key={s} onClick={() => handleSend(undefined, s)} disabled={sending}
+                      className="text-xs px-3 py-1.5 border border-border rounded-full text-muted-foreground hover:text-foreground hover:border-primary/30 transition-all disabled:opacity-50 animate-fade-in">
+                      {s}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           ) : (
-            messages.map((m, i) => (
-              <ChatBubble 
-                key={m.id || i} 
-                message={m} 
-                onExecuteDraft={handleExecuteDraft}
-                onAddToDashboard={handleAddToDashboard}
-                onSaveAsCard={handleSaveAsCard}
-              />
-            ))
+            messages.map((m, i) => {
+              const isLatestAssistant = m.role === 'assistant' && i === messages.length - 1;
+              const activeChips = isLatestAssistant
+                ? (followUps.length > 0 ? followUps : (m.followUpQuestions || []))
+                : [];
+              return (
+                <div key={m.id || i} className="flex flex-col">
+                  <ChatBubble 
+                    message={m} 
+                    onExecuteDraft={handleExecuteDraft}
+                    onAddToDashboard={handleAddToDashboard}
+                    onSaveAsCard={handleSaveAsCard}
+                  />
+                  {activeChips.length > 0 && !sending && (
+                    <div className="mt-3 mb-4 ml-12 animate-fade-in max-w-3xl">
+                      <p className="text-[11px] font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-primary" /> Suggested questions
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {activeChips.map(q => (
+                          <button
+                            key={q}
+                            onClick={() => handleSend(undefined, q)}
+                            disabled={sending}
+                            className="text-xs px-3.5 py-1.5 border border-primary/30 bg-primary/5 rounded-full text-foreground hover:bg-primary/10 hover:border-primary/50 transition-all text-left disabled:opacity-50 shadow-sm"
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
           <div ref={bottomRef} />
         </div>

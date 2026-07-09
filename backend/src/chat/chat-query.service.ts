@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, HttpException } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseService } from '../database/database.service';
 import { AuditService } from '../audit/audit.service';
@@ -45,40 +46,97 @@ export class ChatQueryService {
     user: SafeAccount,
     prompt: string,
   ): Promise<{
+    success?: boolean;
+    message?: string;
+    reason?: string | null;
+    suggestions?: string[];
+    sql?: string | null;
+    chart?: string | null;
     userMessage: any;
     assistantMessage: any;
     execution: any;
+    followUpQuestions?: string[];
   }> {
+    // Structured request tracing — every stage logs {reqId, chatId, connId,
+    // userId, stage, ms}; on any failure we log the stage + full stack so the
+    // real exception is never hidden behind the user-facing message.
+    const reqId = randomUUID();
+    const start = Date.now();
+    let stage = 'incoming_request';
+    let connIdForLog: string | null = null;
+    const stageLog = (s: string, extra = '') => {
+      stage = s;
+      try {
+        this.logger.log(`[chat ${reqId}] ${s} (chat=${chatId} conn=${connIdForLog ?? '—'} user=${user?.id ?? 'unknown'} ms=${Date.now() - start})${extra ? ' ' + extra : ''}`);
+      } catch {}
+    };
+
+    stageLog('IncomingRequest', `prompt="${prompt?.slice(0, 80)}"`);
+
     if (!prompt?.trim()) {
       throw new BadRequestException('Please enter a question to generate a query.');
     }
 
-    // Load chat
-    const chat = await this.chatService.get(chatId, user.id) as any;
+    // Pre-flight loads (chat, connection, history, user message). A failure here
+    // is logged with full context and re-thrown so its HTTP status is preserved
+    // (400/403/404) instead of surfacing as an opaque 500.
+    let chat: any;
+    let conn: any;
+    let recentMessages: { role: 'user' | 'assistant'; content: string }[];
+    let userMsg: any;
+    try {
+      this.logger.log(`STEP 1 Loading chat`);
+      chat = await this.chatService.get(chatId, user?.id) as any;
+      if (!chat?.connection_id) {
+        throw new BadRequestException('This endpoint is for connection-scoped chats only.');
+      }
+      connIdForLog = chat.connection_id;
 
-    if (!chat.connection_id) {
-      throw new BadRequestException('This endpoint is for connection-scoped chats only.');
+      this.logger.log(`STEP 2 Loading datasource`);
+      conn = await this.db.queryOne<any>(
+        'SELECT * FROM datasource_connections WHERE id = $1',
+        [chat.connection_id],
+      );
+      if (!conn) throw new BadRequestException('Connection not found');
+      stageLog('DatasourceLoaded', `type=${conn.connector_type} host=${conn.host}`);
+
+      // Load conversation history BEFORE persisting the new user message so it is not
+      // included in recentMessages (which would cause it to appear twice in the LLM
+      // context: once from history, once from userPrompt — confusing the model).
+      recentMessages = await this.getRecentMessages(chatId, 10);
+
+      // 1. Persist user message
+      userMsg = await this.chatService.addMessage(chatId, 'user', prompt);
+    } catch (preErr: any) {
+      try {
+        this.logger.error(
+          `[chat ${reqId}] FAILED at stage=${stage} chat=${chatId} conn=${connIdForLog ?? '—'} user=${user?.id ?? 'unknown'} ms=${Date.now() - start}: ${preErr?.message}`,
+          preErr?.stack,
+        );
+      } catch {}
+      // Legitimate client errors (not found / forbidden / bad request) keep their
+      // HTTP status so the frontend can map them precisely. Any OTHER pre-flight
+      // failure (e.g. a transient app-DB hiccup) must NOT surface as an opaque
+      // 500 — return a graceful, retryable envelope instead.
+      if (preErr instanceof HttpException && preErr.getStatus() < 500) throw preErr;
+      const friendly = 'Something interrupted that request before it could run. Please try again in a moment.';
+      return {
+        success: false,
+        message: 'Unable to generate an answer for this query.',
+        reason: preErr?.message || friendly,
+        suggestions: [],
+        sql: null,
+        chart: null,
+        userMessage: userMsg ?? { id: `u-${reqId}`, chat_id: chatId, role: 'user', content: prompt, created_at: new Date().toISOString() },
+        assistantMessage: { id: `err-${reqId}`, chat_id: chatId, role: 'assistant', content: friendly, created_at: new Date().toISOString() },
+        followUpQuestions: [],
+        execution: { status: 'failed', error_message: preErr?.message || friendly, rows: [], columns: [] },
+      } as any;
     }
-
-    // Load connection
-    const conn = await this.db.queryOne<any>(
-      'SELECT * FROM datasource_connections WHERE id = $1',
-      [chat.connection_id],
-    );
-    if (!conn) throw new BadRequestException('Connection not found');
-
-    // Load conversation history BEFORE persisting the new user message so it is not
-    // included in recentMessages (which would cause it to appear twice in the LLM
-    // context: once from history, once from userPrompt — confusing the model).
-    const recentMessages = await this.getRecentMessages(chatId, 10);
-
-    // 1. Persist user message
-    const userMsg = await this.chatService.addMessage(chatId, 'user', prompt);
-
-    const start = Date.now();
 
     try {
       // 2. Build schema context from normalized tables
+      this.logger.log(`STEP 3 Loading schema`);
       const compressedSchema = await this.buildSchemaContext(conn.id);
 
       // Early-exit when schema is absent: avoids burning LLM retries on a query
@@ -89,8 +147,10 @@ export class ChatQueryService {
           'Please navigate to Connection Settings → Schema Sync and run a sync, then retry your question.',
         );
       }
+      stageLog('SchemaLoaded');
 
       // 3. Generate SQL via LLM using proper LLMContext
+      this.logger.log(`STEP 4 Generating SQL`);
       const connectorFamily = this.getConnectorFamily(conn.connector_type);
       const llmContext = this.promptBuilder.assembleContext({
         compressedSchema,
@@ -99,11 +159,14 @@ export class ChatQueryService {
         userPrompt: prompt,
         connectorFamily,
       });
+      stageLog('PromptGenerated');
 
       const llmResponse = await this.llmService.generateSQL(llmContext);
+      stageLog('SQLGenerated', `type=${llmResponse.type} conf=${llmResponse.confidence ?? '—'}`);
 
-      // Guard: empty SQL after successful LLM parse (safety net)
-      if (llmResponse.type !== 'schema_query' && llmResponse.type !== 'conversational' && !llmResponse.sql?.trim()) {
+      // Guard: empty SQL after successful LLM parse (safety net). Native-handled
+      // types (schema_query / row_counts) legitimately carry no SQL.
+      if (llmResponse.type !== 'schema_query' && llmResponse.type !== 'conversational' && llmResponse.type !== 'row_counts' && !llmResponse.sql?.trim()) {
         llmResponse.type = 'conversational';
         if (!llmResponse.explanation) {
           llmResponse.explanation = 'I could not generate a data query for your prompt. Please ensure your question relates to the available data and try refining your request.';
@@ -148,12 +211,44 @@ export class ChatQueryService {
           execError = err.message || 'Failed to fetch schema metadata';
         }
 
+      } else if (llmResponse.type === 'row_counts') {
+        // 5a-bis. "How many records are in each table?" — counted natively so we
+        // never ask the user to pick a table and never need a banned UNION in
+        // LLM-generated SQL. One UNION ALL query (backend-built from validated
+        // metadata identifiers), with a per-table fallback if the dialect balks.
+        try {
+          const tableRows = await this.db.queryMany<{ table_name: string }>(
+            `SELECT ct.table_name
+               FROM connection_schemas cs
+               JOIN connection_tables ct ON ct.schema_id = cs.id
+              WHERE cs.connection_id = $1 AND cs.deleted_at IS NULL AND ct.deleted_at IS NULL
+              ORDER BY ct.table_name`,
+            [conn.id],
+          );
+          const tables = tableRows.map((r) => r.table_name);
+          if (!tables.length) throw new Error('No tables are synced for this connection yet. Run Schema Sync first.');
+
+          const countRows = await this.countRowsPerTable(conn, tables);
+          llmResponse.sql = `-- Row counts across all ${tables.length} tables (computed natively)\n-- Prompt: ${prompt}`;
+          execResult = { rows: countRows, columns: ['table_name', 'records'], rowCount: countRows.length };
+          stageLog('SQLExecuted', `RowsReturned=${countRows.length} (row_counts)`);
+          insight = await this.llmService
+            .interpretResults(prompt, 'row counts per table', ['table_name', 'records'], countRows, countRows.length, connectorFamily as any)
+            .catch(() => `Counted records across ${countRows.length} tables.`);
+          llmResponse.explanation = insight;
+          if (!llmResponse.ui_hint) llmResponse.ui_hint = 'bar_chart';
+        } catch (err: any) {
+          execStatus = 'failed';
+          execError = err.message || 'Failed to count rows per table';
+          this.logger.warn(`[chat ${reqId}] row_counts failed (chat=${chatId}): ${execError}`);
+        }
+
       } else if (llmResponse.type === 'conversational') {
         llmResponse.sql = `-- Conversational Response\n-- No data query was executed.\n-- Prompt: ${prompt}`;
         // 5b. Conversational response — no query execution
         insight = llmResponse.explanation;
         execResult = { rows: [], columns: [], rowCount: 0 };
-        
+
       } else {
         // 5c. Validate the generated SQL deterministically before it ever touches
         // the database — catches malformed/incomplete SQL and references to
@@ -209,6 +304,7 @@ export class ChatQueryService {
         }
 
         // Execute data query via MCP (create temporary session)
+        this.logger.log(`STEP 5 Executing SQL`);
         const password = decrypt(conn.encrypted_password, this.encKey);
         const session = await this.mcpService.createSession({
           host: conn.host,
@@ -224,14 +320,17 @@ export class ChatQueryService {
           if (!mcpResult.success) {
             execStatus = 'failed';
             execError = mcpResult.error || 'Query execution failed';
+            this.logger.warn(`[chat ${reqId}] SQLExecuted FAILED (chat=${chatId}): ${execError}`);
           } else {
             execResult = mcpResult.data;
+            stageLog('SQLExecuted', `RowsReturned=${execResult?.rowCount ?? execResult?.rows?.length ?? 0}`);
           }
         } finally {
           await this.mcpService.destroySession(session.sessionId).catch(() => {});
         }
 
         // 6. Interpret results if it was a real query
+        this.logger.log(`STEP 6 Formatting response`);
         if (execStatus === 'success' && execResult) {
           insight = await this.llmService.interpretResults(
             prompt,
@@ -274,7 +373,15 @@ export class ChatQueryService {
         [userMsg!.id, execRecord!.id],
       );
 
+      // Part 2 — follow-up questions. On success: context-aware drill-downs from
+      // the LLM (deduped + padded). On a handled failure: schema-grounded, always
+      // executable ALTERNATIVES so the conversation can continue seamlessly.
+      const followUpQuestions = execStatus === 'success'
+        ? this.buildFollowUps(llmResponse.follow_up_questions, prompt, recentMessages, execResult, conn.connector_type)
+        : await this.getFailureAlternatives(conn);
+
       // 8. Persist assistant message
+      this.logger.log(`STEP 7 Saving assistant message`);
       const assistantContent = execStatus === 'success' && insight
         ? insight
         : execStatus === 'failed'
@@ -282,42 +389,139 @@ export class ChatQueryService {
           : 'Query executed successfully.';
 
       const assistantMsg = await this.chatService.addMessage(
-        chatId, 'assistant', assistantContent, execRecord!.id, llmResponse.ui_hint,
+        chatId, 'assistant', assistantContent, execRecord!.id, llmResponse.ui_hint, followUpQuestions,
       );
 
-      await this.audit.log({
-        accountId: user.id,
-        eventType: execStatus === 'success' ? 'query_executed' : 'query_failed',
-        resourceType: 'connection', resourceId: conn.id,
-        details: { chatId, execTimeMs, rowCount: execResult?.rowCount },
-      });
+      try {
+        await this.audit.log({
+          accountId: user.id,
+          eventType: execStatus === 'success' ? 'query_executed' : 'query_failed',
+          resourceType: 'connection', resourceId: conn.id,
+          details: { chatId, execTimeMs, rowCount: execResult?.rowCount },
+        });
+      } catch (auditErr: any) {
+        this.logger.warn(`Audit log failed: ${auditErr?.message}`);
+      }
 
+      this.logger.log(`STEP 8 Returning response`);
       const apiResponse = {
+        success: execStatus === 'success',
+        message: assistantContent,
+        reason: execStatus === 'failed' ? (execError || 'Execution failed') : null,
+        suggestions: followUpQuestions || [],
+        sql: llmResponse.sql || null,
+        chart: llmResponse.ui_hint || null,
         userMessage: userMsg,
-        assistantMessage: assistantMsg,
+        assistantMessage: {
+          ...assistantMsg,
+          followUpQuestions,
+        },
+        followUpQuestions,
         execution: {
           ...execRecord,
           rows: execResult?.rows || [],
           columns: execResult?.columns || [],
         },
       };
-      this.logger.log(`Chat query completed (chat=${chatId}, status=${execStatus}, rows=${apiResponse.execution.rows.length}, ms=${execTimeMs})`);
+      stageLog('ResponseSent', `status=${execStatus} rows=${apiResponse.execution.rows.length} followUps=${followUpQuestions.length}`);
       return apiResponse;
 
     } catch (err: any) {
-      const friendlyMessage = this.formatGenerationError(err);
-      this.logger.error(`Chat query failed (chat=${chatId}): ${err?.message}`);
+      let friendlyMessage = 'Something went wrong while generating your query. Please try again or rephrase your question.';
+      try {
+        friendlyMessage = this.formatGenerationError(err);
+      } catch (fmtErr: any) {
+        this.logger.warn(`formatGenerationError threw an error: ${fmtErr?.message}`);
+      }
 
-      // Persist failure message
-      const failMsg = await this.chatService.addMessage(
-        chatId, 'assistant', friendlyMessage,
-      );
+      // Task 8: Detailed structured logging
+      try {
+        this.logger.error(
+          `\n[ChatQueryService]\n\nStage:\n${stage}\n\nChat:\n${chatId}\n\nDatasource:\n${conn?.connector_type || 'unknown'} (${connIdForLog || 'none'})\n\nPrompt:\n${prompt}\n\nError:\n${err?.message || err}\n\nStack:\n${err?.stack || 'no stack'}\n`,
+        );
+      } catch {}
+
+      // Offer schema-grounded, always-executable alternatives so the user can
+      // continue the conversation instead of hitting a dead end.
+      let followUpQuestions: string[] = [
+        'Show me all tables',
+        'How many records are in each table?',
+        'Show the 10 most recent records',
+        'Which table has the most records?',
+      ];
+      try {
+        followUpQuestions = await this.getFailureAlternatives(conn);
+      } catch {}
+
+      // Persist a failure message. Guarded so a secondary DB hiccup here can't
+      // turn a handled data-path failure into an opaque 500.
+      let failMsg: any = null;
+      try {
+        failMsg = await this.chatService.addMessage(chatId, 'assistant', friendlyMessage, undefined, undefined, followUpQuestions);
+      } catch (persistErr: any) {
+        try {
+          this.logger.error(
+            `[chat ${reqId}] Could not persist failure message (chat=${chatId}): ${persistErr?.message}`,
+            persistErr?.stack,
+          );
+        } catch {}
+      }
 
       return {
-        userMessage: userMsg,
-        assistantMessage: failMsg,
-        execution: { status: 'failed', error_message: friendlyMessage },
-      };
+        success: false,
+        message: 'Unable to generate an answer for this query.',
+        reason: err?.message || friendlyMessage,
+        suggestions: followUpQuestions,
+        sql: null,
+        chart: null,
+        userMessage: userMsg || { id: `u-${reqId}`, chat_id: chatId, role: 'user', content: prompt, created_at: new Date().toISOString() },
+        assistantMessage: failMsg ? { ...failMsg, followUpQuestions } : {
+          id: `err-${reqId}`, chat_id: chatId, role: 'assistant',
+          content: friendlyMessage, created_at: new Date().toISOString(),
+          followUpQuestions,
+        },
+        followUpQuestions,
+        execution: { status: 'failed', error_message: friendlyMessage, rows: [], columns: [] },
+      } as any;
+    }
+  }
+
+  /**
+   * Schema-grounded, guaranteed-executable ALTERNATIVE questions offered when a
+   * turn fails (connection/validation/execution). No LLM, no per-column SQL —
+   * these route through the native schema_query / row_counts / simple-select
+   * paths, so they can never themselves reference a non-existent column. Never
+   * throws (a failure here must not compound the original failure).
+   */
+  private async getFailureAlternatives(conn: any): Promise<string[]> {
+    const generic = [
+      'Show me all tables',
+      'How many records are in each table?',
+      'Show the 10 most recent records',
+      'Which table has the most records?',
+    ];
+    try {
+      if (!conn?.id) return generic;
+      const rows = await this.db.queryMany<{ table_name: string; n: number }>(
+        `SELECT ct.table_name, COUNT(cc.id)::int AS n
+           FROM connection_schemas cs
+           JOIN connection_tables ct ON ct.schema_id = cs.id
+           LEFT JOIN connection_columns cc ON cc.table_id = ct.id AND cc.deleted_at IS NULL
+          WHERE cs.connection_id = $1 AND cs.deleted_at IS NULL AND ct.deleted_at IS NULL
+          GROUP BY ct.table_name ORDER BY n DESC LIMIT 1`,
+        [conn.id],
+      );
+      const top = rows[0]?.table_name;
+      if (!top) return generic;
+      // Reference a REAL table by name but only via safe, generic shapes.
+      return [
+        'How many records are in each table?',
+        `Show the 10 most recent ${top} records`,
+        `How many ${top} records are there?`,
+        'Which table has the most records?',
+      ];
+    } catch {
+      return generic;
     }
   }
 
@@ -328,12 +532,20 @@ export class ChatQueryService {
    * fragments, or repeated "attempt N" noise — never shown to the user.
    */
   private formatGenerationError(err: any): string {
-    const message: string = err?.message || 'Unknown error';
+    let message: string = 'Unknown error';
+    if (typeof err === 'string') {
+      message = err;
+    } else if (typeof err?.message === 'string') {
+      message = err.message;
+    } else if (err?.message && typeof err.message === 'object') {
+      message = JSON.stringify(err.message);
+    }
 
     // Already-friendly, purpose-written messages — pass through as-is.
     if (
-      message.startsWith('Could not generate a SQL query') ||
-      message.startsWith('validation_rejected:')
+      typeof message === 'string' &&
+      (message.startsWith('Could not generate a SQL query') ||
+       message.startsWith('validation_rejected:'))
     ) {
       return message.replace(/^validation_rejected:\s*/, '');
     }
@@ -387,44 +599,75 @@ export class ChatQueryService {
     user: SafeAccount,
     executionId: string,
     sql: string,
-  ): Promise<{ rows: any[]; columns: string[]; row_count: number; execution_time_ms: number; status: string }> {
-    const chat = await this.chatService.get(chatId, user.id) as any;
-    if (!chat.connection_id) throw new BadRequestException('Chat has no connection.');
-
-    const conn = await this.db.queryOne<any>('SELECT * FROM datasource_connections WHERE id = $1', [chat.connection_id]);
-    if (!conn) throw new BadRequestException('Connection not found');
-
-    const password = decrypt(conn.encrypted_password, this.encKey);
-    const session = await this.mcpService.createSession({
-      host: conn.host, port: conn.port, username: conn.username, password,
-      database: conn.database_name, connectorType: conn.connector_type as ConnectorType,
-    });
-
+  ): Promise<any> {
     const start = Date.now();
-    let rows: any[] = [], columns: string[] = [], rowCount = 0, status = 'success', error: string | null = null;
     try {
-      const result = await this.mcpService.executeReadQuery(session.sessionId, sql);
-      if (!result.success) { status = 'failed'; error = result.error || 'Query failed'; }
-      else { rows = result.data?.rows || []; columns = result.data?.columns || []; rowCount = result.data?.rowCount || rows.length; }
-    } finally {
-      await this.mcpService.destroySession(session.sessionId).catch(() => {});
+      const chat = await this.chatService.get(chatId, user?.id) as any;
+      if (!chat?.connection_id) throw new BadRequestException('Chat has no connection.');
+
+      const conn = await this.db.queryOne<any>('SELECT * FROM datasource_connections WHERE id = $1', [chat.connection_id]);
+      if (!conn) throw new BadRequestException('Connection not found');
+
+      const password = decrypt(conn.encrypted_password, this.encKey);
+      const session = await this.mcpService.createSession({
+        host: conn.host, port: conn.port, username: conn.username, password,
+        database: conn.database_name, connectorType: conn.connector_type as ConnectorType,
+      });
+
+      let rows: any[] = [], columns: string[] = [], rowCount = 0, status = 'success', error: string | null = null;
+      try {
+        const result = await this.mcpService.executeReadQuery(session.sessionId, sql);
+        if (!result.success) { status = 'failed'; error = result.error || 'Query failed'; }
+        else { rows = result.data?.rows || []; columns = result.data?.columns || []; rowCount = result.data?.rowCount || rows.length; }
+      } finally {
+        await this.mcpService.destroySession(session.sessionId).catch(() => {});
+      }
+
+      const execTimeMs = Date.now() - start;
+
+      // Update execution record if it exists
+      if (executionId) {
+        await this.db.query(
+          `UPDATE query_executions SET generated_query=$2, status=$3, execution_time_ms=$4,
+           row_count=$5, result_preview=$6, result_columns=$7, error_message=$8, completed_at=NOW()
+           WHERE id=$1`,
+          [executionId, sql, status, execTimeMs, rowCount,
+           JSON.stringify(rows.slice(0, 5000)), columns, error],
+        ).catch(() => {});
+      }
+
+      return {
+        success: status === 'success',
+        status,
+        rows,
+        columns,
+        row_count: rowCount,
+        execution_time_ms: execTimeMs,
+        error_message: error,
+        message: status === 'success' ? 'Draft executed successfully' : (error || 'Execution failed'),
+        reason: error,
+        suggestions: [],
+        sql,
+        chart: null,
+      };
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      const errorMsg = err?.message || 'Execution failed';
+      return {
+        success: false,
+        status: 'failed',
+        rows: [],
+        columns: [],
+        row_count: 0,
+        execution_time_ms: Date.now() - start,
+        error_message: errorMsg,
+        message: 'Unable to execute query draft.',
+        reason: errorMsg,
+        suggestions: [],
+        sql,
+        chart: null,
+      };
     }
-
-    const execTimeMs = Date.now() - start;
-
-    // Update execution record if it exists
-    if (executionId) {
-      await this.db.query(
-        `UPDATE query_executions SET generated_query=$2, status=$3, execution_time_ms=$4,
-         row_count=$5, result_preview=$6, result_columns=$7, error_message=$8, completed_at=NOW()
-         WHERE id=$1`,
-        [executionId, sql, status, execTimeMs, rowCount,
-         JSON.stringify(rows.slice(0, 5000)), columns, error],
-      ).catch(() => {});
-    }
-
-    if (status === 'failed') throw new Error(error || 'Query execution failed');
-    return { rows, columns, row_count: rowCount, execution_time_ms: execTimeMs, status };
   }
 
   /**
@@ -445,41 +688,39 @@ export class ChatQueryService {
     status: 'success' | 'failed';
     error?: string;
   }>> {
-    const chat = await this.chatService.get(chatId, user.id) as any;
-    if (!chat.connection_id) {
-      // Combo or connectionless chats cannot be refreshed this way
-      return [];
-    }
+    try {
+      const chat = await this.chatService.get(chatId, user?.id) as any;
+      if (!chat?.connection_id) return [];
 
-    const conn = await this.db.queryOne<any>(
-      'SELECT * FROM datasource_connections WHERE id = $1',
-      [chat.connection_id],
-    );
-    if (!conn) return [];
+      const conn = await this.db.queryOne<any>(
+        'SELECT * FROM datasource_connections WHERE id = $1',
+        [chat.connection_id],
+      );
+      if (!conn) return [];
 
-    // Batch-fetch all execution records at once
-    const execRecords = await this.db.queryMany<any>(
-      `SELECT id, generated_query FROM query_executions
-       WHERE id = ANY($1::uuid[]) AND connection_id = $2`,
-      [executionIds, conn.id],
-    );
-
-    if (!execRecords.length) return [];
+      // Batch-fetch all execution records at once
+      const execRecords = await this.db.queryMany<any>(
+        `SELECT id, generated_query FROM query_executions
+         WHERE id = ANY($1::uuid[]) AND connection_id = $2`,
+        [executionIds, conn.id],
+      );
+      if (!execRecords.length) return [];
 
     const password = decrypt(conn.encrypted_password, this.encKey);
 
     const results = await Promise.all(
       execRecords.map(async (rec) => {
         const sql = rec.generated_query;
-        if (!sql?.trim()) {
+        if (!sql?.trim() || sql.trim().startsWith('--')) {
           return {
             executionId: rec.id,
             rows: [],
             columns: [],
             row_count: 0,
             execution_time_ms: 0,
-            status: 'failed' as const,
-            error: 'No SQL stored for this execution',
+            status: 'success' as const,
+            error: undefined,
+            skipped: true,
           };
         }
 
@@ -539,6 +780,11 @@ export class ChatQueryService {
     );
 
     return results;
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      this.logger.warn(`refreshMessages failed outside loop: ${err?.message}`);
+      return [];
+    }
   }
 
   /**
@@ -560,25 +806,26 @@ export class ChatQueryService {
     status: 'success' | 'failed';
     error?: string;
   }>> {
-    const chat = await this.chatService.get(chatId, user.id) as any;
-    if (!chat.combo_id) return [];
+    try {
+      const chat = await this.chatService.get(chatId, user?.id) as any;
+      if (!chat?.combo_id) return [];
 
-    const execRecords = await this.db.queryMany<any>(
-      `SELECT id, generated_query, sub_queries FROM query_executions
-       WHERE id = ANY($1::uuid[]) AND combo_id = $2`,
-      [executionIds, chat.combo_id],
-    );
-    if (!execRecords.length) return [];
+      const execRecords = await this.db.queryMany<any>(
+        `SELECT id, generated_query, sub_queries FROM query_executions
+         WHERE id = ANY($1::uuid[]) AND combo_id = $2`,
+        [executionIds, chat.combo_id],
+      );
+      if (!execRecords.length) return [];
 
-    // Load all connection credentials for this combo upfront
-    const connRows = await this.db.queryMany<any>(
-      `SELECT dc.*, dcm.alias
-       FROM datasource_connections dc
-       JOIN datasource_combo_members dcm ON dcm.connection_id = dc.id
-       WHERE dcm.combo_id = $1`,
-      [chat.combo_id],
-    );
-    const connMap = new Map<string, any>(connRows.map((c: any) => [c.id, c]));
+      // Load all connection credentials for this combo upfront
+      const connRows = await this.db.queryMany<any>(
+        `SELECT dc.*, dcm.alias
+         FROM datasource_connections dc
+         JOIN datasource_combo_members dcm ON dcm.connection_id = dc.id
+         WHERE dcm.combo_id = $1`,
+        [chat.combo_id],
+      );
+      const connMap = new Map<string, any>(connRows.map((c: any) => [c.id, c]));
 
     const results = await Promise.all(
       execRecords.map(async (rec) => {
@@ -657,6 +904,11 @@ export class ChatQueryService {
     );
 
     return results;
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      this.logger.warn(`refreshComboMessages failed outside loop: ${err?.message}`);
+      return [];
+    }
   }
 
   /**
@@ -856,11 +1108,51 @@ export class ChatQueryService {
 
   private async getRecentMessages(chatId: string, limit: number) {
     const msgs = await this.db.queryMany<any>(
-      `SELECT role, content FROM chat_messages
-       WHERE chat_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      `SELECT m.role, m.content, qe.generated_query, qe.result_columns, qe.result_preview
+       FROM chat_messages m
+       LEFT JOIN query_executions qe ON qe.id = m.execution_id
+       WHERE m.chat_id = $1 ORDER BY m.created_at DESC LIMIT $2`,
       [chatId, limit],
     );
-    return msgs.reverse().map((m: any) => ({ role: m.role, content: m.content }));
+    return msgs.reverse().map((m: any) => {
+      if (m.role === 'assistant' && m.generated_query && !m.generated_query.trim().startsWith('--')) {
+        let cols = '';
+        try {
+          const cArray = typeof m.result_columns === 'string' ? JSON.parse(m.result_columns) : m.result_columns;
+          if (Array.isArray(cArray) && cArray.length) cols = `\nColumns: ${cArray.join(', ')}`;
+        } catch {}
+        let prev = '';
+        try {
+          const pArray = typeof m.result_preview === 'string' ? JSON.parse(m.result_preview) : m.result_preview;
+          if (Array.isArray(pArray) && pArray.length) prev = `\nRESULT PREVIEW:\n${JSON.stringify(pArray.slice(0, 5))}`;
+        } catch {}
+        return {
+          role: m.role,
+          content: `${m.content}\n[Executed SQL: ${m.generated_query}]${cols}${prev}`,
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
+  }
+
+  /** Regenerate follow-up questions for a specific message (used when loading un-persisted history after refresh) */
+  async regenerateFollowUpsForMessage(chatId: string, message: any, history: any[], connectionId: string): Promise<string[]> {
+    try {
+      const conn = await this.db.queryOne<any>('SELECT * FROM datasource_connections WHERE id = $1', [connectionId]);
+      if (!conn) return [];
+      if (message.exec_status === 'failed') {
+        return await this.getFailureAlternatives(conn);
+      }
+      return this.buildFollowUps(
+        [],
+        history.find((m) => m.id === message.id)?.prompt || message.content || '',
+        history,
+        { columns: message.result_columns || [] },
+        conn.connector_type,
+      );
+    } catch {
+      return [];
+    }
   }
 
   private getConnectorFamily(connectorType: string): 'sql' | 'elasticsearch' | 'document' {
@@ -868,4 +1160,155 @@ export class ChatQueryService {
     if (connectorType === 'mongodb') return 'document';
     return 'sql';
   }
+
+  /**
+   * Part 2 — assemble up to 4 follow-up questions: LLM suggestions first,
+   * de-duplicated and stripped of anything already asked in this chat, then
+   * padded (if the model returned too few) with safe, immediately-executable
+   * prompts. Guarantees uniqueness and relevance to the current turn.
+   */
+  private buildFollowUps(
+    llmFollowUps: string[] | undefined,
+    currentPrompt: string,
+    recentMessages: Array<{ role: string; content: string }>,
+    execResult: any,
+    connectorType: string,
+  ): string[] {
+    const norm = (s: string) => s.trim().toLowerCase().replace(/[?.!\s]+$/g, '').replace(/\s+/g, ' ');
+    const asked = new Set<string>([
+      norm(currentPrompt),
+      ...recentMessages.filter((m) => m.role === 'user').map((m) => norm(m.content)),
+    ]);
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const add = (q?: string) => {
+      if (out.length >= 4 || typeof q !== 'string') return;
+      const t = q.trim();
+      const n = norm(t);
+      if (!n || n.length < 4 || asked.has(n) || seen.has(n)) return;
+      seen.add(n);
+      out.push(t);
+    };
+
+    (llmFollowUps || []).forEach(add);
+
+    // Pad only if the model under-delivered — result-column-aware where possible.
+    if (out.length < 4) {
+      const cols: string[] = Array.isArray(execResult?.columns) ? execResult.columns : [];
+      const pads = [
+        'Show the 10 most recent records',
+        'Which records were added most recently?',
+        cols[0] ? `Break this down by ${cols[0]}` : 'Break this down by category',
+        'Show this as a trend over time',
+      ];
+      pads.forEach(add);
+    }
+    return out.slice(0, 4);
+  }
+
+  /** Quote an introspected identifier per SQL dialect (metadata → safe input). */
+  private quoteIdent(connectorType: string, ident: string): string {
+    switch (connectorType) {
+      case 'mysql':
+      case 'databricks':
+        return '`' + ident.replace(/`/g, '``') + '`';
+      case 'mssql':
+      case 'fabric':
+        return '[' + ident.replace(/]/g, ']]') + ']';
+      default: // postgres, redshift, snowflake, oracle, bigquery
+        return '"' + ident.replace(/"/g, '""') + '"';
+    }
+  }
+
+  /**
+   * Count rows for EVERY table in one read-only pass. Primary path: a single
+   * UNION ALL (backend-built — the UNION ban only applies to LLM-generated SQL).
+   * Fallback: per-table COUNT(*) merged here (for a dialect that rejects the
+   * combined query). Returns [{table_name, records}] sorted by records desc.
+   */
+  private async countRowsPerTable(
+    conn: any,
+    tables: string[],
+  ): Promise<Array<{ table_name: string; records: number }>> {
+    const connectorType = conn.connector_type as string;
+    const password = decrypt(conn.encrypted_password, this.encKey);
+    const session = await this.mcpService.createSession({
+      host: conn.host, port: conn.port, username: conn.username, password,
+      database: conn.database_name, connectorType: connectorType as ConnectorType,
+    });
+    try {
+      // Cap the fan-out so a pathological schema can't build a giant query.
+      const targets = tables.slice(0, 200);
+      const lit = (t: string) => `'${t.replace(/'/g, "''")}'`;
+      const unionSql = targets
+        .map((t) => `SELECT ${lit(t)} AS table_name, COUNT(*) AS records FROM ${this.quoteIdent(connectorType, t)}`)
+        .join(' UNION ALL ');
+
+      const res = await this.mcpService.executeReadQuery(session.sessionId, unionSql);
+      if (res.success) {
+        return (res.data?.rows || [])
+          .map((r: any) => ({ table_name: String(r.table_name), records: Number(r.records) || 0 }))
+          .sort((a, b) => b.records - a.records);
+      }
+
+      // Fallback — count each table independently and merge.
+      this.logger.warn(`row_counts UNION failed (${res.error}); falling back to per-table counts`);
+      const out: Array<{ table_name: string; records: number }> = [];
+      for (const t of targets) {
+        const one = await this.mcpService.executeReadQuery(
+          session.sessionId, `SELECT COUNT(*) AS records FROM ${this.quoteIdent(connectorType, t)}`,
+        );
+        out.push({ table_name: t, records: one.success ? Number(one.data?.rows?.[0]?.records) || 0 : 0 });
+      }
+      return out.sort((a, b) => b.records - a.records);
+    } finally {
+      await this.mcpService.destroySession(session.sessionId).catch(() => {});
+    }
+  }
+
+  /**
+   * Part 1 — generate datasource-aware starter questions for the landing page.
+   * Pure schema → LLM. Cached briefly per (connection, schema-sync time) so the
+   * landing page doesn't re-call the LLM on every mount, and auto-invalidated on
+   * schema re-sync. Falls back to safe generic prompts if the LLM is unavailable.
+   */
+  async generateStarterQuestions(chatConnectionId: string, user: SafeAccount): Promise<string[]> {
+    const fallback = [
+      'Show me all tables',
+      'How many records are in each table?',
+      'Show the 10 most recent records',
+      'Which table has the most records?',
+    ];
+    try {
+      const conn = await this.db.queryOne<any>(
+        'SELECT * FROM datasource_connections WHERE id = $1 AND deleted_at IS NULL',
+        [chatConnectionId],
+      );
+      if (!conn) throw new BadRequestException('Connection not found');
+
+      const cacheKey = `${conn.id}:${conn.schema_synced_at ?? 'none'}`;
+      const cached = ChatQueryService.starterCache.get(cacheKey);
+      if (cached && cached.expires > Date.now()) return cached.questions;
+
+      const compressedSchema = await this.buildSchemaContext(conn.id);
+      if (compressedSchema.startsWith('-- No schema')) return fallback;
+
+      const family = this.getConnectorFamily(conn.connector_type);
+      const questions = await this.llmService.generateStarterQuestions(compressedSchema, family, 4);
+
+      if (questions.length >= 3) {
+        const result = questions.slice(0, 4);
+        ChatQueryService.starterCache.set(cacheKey, { questions: result, expires: Date.now() + 30 * 60 * 1000 });
+        return result;
+      }
+      return fallback;
+    } catch (err: any) {
+      if (err instanceof HttpException && err.getStatus() < 500) throw err;
+      this.logger.warn(`generateStarterQuestions failed: ${err?.message}`);
+      return fallback;
+    }
+  }
+
+  /** Per-(connection, schema-sync) starter-question cache (30 min TTL). */
+  private static readonly starterCache = new Map<string, { questions: string[]; expires: number }>();
 }

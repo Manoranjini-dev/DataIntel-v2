@@ -5,6 +5,8 @@ import {
   operatorsForType,
   isConditionActive,
   mergeFilterSets,
+  conditionToDbPayload,
+  dashboardFiltersToSet,
   type FilterCondition,
   type FilterSet,
 } from './filters';
@@ -183,5 +185,37 @@ describe('mergeFilterSets', () => {
     );
     expect(merged.conjunction).toBe('and');
     expect(merged.conditions).toHaveLength(2);
+  });
+});
+
+// ── DC-04 lock flag round-trip ──────────────────────────────
+describe('DC-04 filter lock persistence', () => {
+  it('conditionToDbPayload promotes `locked` to a top-level column (not in config)', () => {
+    const c: FilterCondition = { id: 'c1', column: 'region', colType: 'string', operator: 'eq', value: 'EU', locked: true };
+    const payload = conditionToDbPayload(c);
+    expect(payload.locked).toBe(true);
+    expect((payload.config as any).locked).toBeUndefined(); // not duplicated into config
+    expect((payload.config as any).value).toBe('EU');
+  });
+
+  it('defaults locked to false when unset', () => {
+    const c: FilterCondition = { id: 'c1', column: 'region', colType: 'string', operator: 'eq' };
+    expect(conditionToDbPayload(c).locked).toBe(false);
+  });
+
+  it('dashboardFiltersToSet reads the first-class locked column', () => {
+    const set = dashboardFiltersToSet([
+      { id: 'f1', column_name: 'region', col_type: 'string', operator: 'eq', config: { value: 'EU' }, locked: true },
+      { id: 'f2', column_name: 'amount', col_type: 'numeric', operator: 'gt', config: { value: 10 }, locked: false },
+    ] as any);
+    expect(set.conditions[0].locked).toBe(true);
+    expect(set.conditions[1].locked).toBe(false);
+  });
+
+  it('falls back to config.locked for older rows without the column', () => {
+    const set = dashboardFiltersToSet([
+      { id: 'f1', column_name: 'region', col_type: 'string', operator: 'eq', config: { value: 'EU', locked: true } },
+    ] as any);
+    expect(set.conditions[0].locked).toBe(true);
   });
 });

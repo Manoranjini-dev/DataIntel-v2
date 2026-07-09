@@ -22,7 +22,7 @@ describe('ChatQueryService — SQL validation wiring', () => {
   let db: { queryOne: jest.Mock; queryMany: jest.Mock; query: jest.Mock };
   let audit: { log: jest.Mock };
   let mcpService: { createSession: jest.Mock; executeReadQuery: jest.Mock; destroySession: jest.Mock };
-  let llmService: { generateSQL: jest.Mock; interpretResults: jest.Mock };
+  let llmService: { generateSQL: jest.Mock; interpretResults: jest.Mock; generateStarterQuestions: jest.Mock };
   let promptBuilder: { assembleContext: jest.Mock };
   let chatService: { get: jest.Mock; addMessage: jest.Mock };
   let config: { getOrThrow: jest.Mock };
@@ -56,6 +56,7 @@ describe('ChatQueryService — SQL validation wiring', () => {
     llmService = {
       generateSQL: jest.fn(),
       interpretResults: jest.fn().mockResolvedValue('1 row found.'),
+      generateStarterQuestions: jest.fn().mockResolvedValue([]),
     };
     promptBuilder = {
       assembleContext: jest.fn().mockImplementation((params) => ({ systemPrompt: 'sys', ...params })),
@@ -156,5 +157,92 @@ describe('ChatQueryService — SQL validation wiring', () => {
 
     expect(validationService.validate).not.toHaveBeenCalled();
     expect(mcpService.executeReadQuery).toHaveBeenCalledWith('sess-1', '{"query":{"match_all":{}}}');
+  });
+
+  // ── Conversational suggestions (Parts 1-3) ───────────────────────
+  describe('suggestions & row_counts', () => {
+    beforeEach(() => { (ChatQueryService as any).starterCache.clear(); });
+
+    it('buildFollowUps dedups the current + previously-asked questions and pads to 4 unique', () => {
+      const out = (service as any).buildFollowUps(
+        ['Show sales by month', 'How many orders?', 'Show sales by month'], // one dup
+        'How many orders?',                                                  // current → excluded
+        [{ role: 'user', content: 'Show sales by month' }],                  // already asked → excluded
+        { columns: ['region', 'total'] },
+        'postgres',
+      );
+      expect(out).toHaveLength(4);
+      expect(new Set(out.map((q: string) => q.toLowerCase())).size).toBe(4); // unique
+      expect(out).not.toContain('How many orders?');
+      expect(out.some((q: string) => /sales by month/i.test(q))).toBe(false); // asked one dropped
+      expect(out).toContain('Break this down by region'); // result-column-aware pad
+    });
+
+    it('quoteIdent quotes/escapes per SQL dialect', () => {
+      expect((service as any).quoteIdent('mysql', 'we`ird')).toBe('`we``ird`');
+      expect((service as any).quoteIdent('postgres', 'we"ird')).toBe('"we""ird"');
+      expect((service as any).quoteIdent('mssql', 'we]ird')).toBe('[we]]ird]');
+    });
+
+    it('countRowsPerTable runs ONE UNION ALL and returns counts sorted desc', async () => {
+      mcpService.executeReadQuery.mockResolvedValueOnce({
+        success: true, data: { rows: [{ table_name: 'a', records: 5 }, { table_name: 'b', records: 20 }] },
+      });
+      const conn = { connector_type: 'mysql', host: 'h', port: 3306, username: 'u', encrypted_password: encrypt('pw', ENC_KEY), database_name: 'd' };
+      const rows = await (service as any).countRowsPerTable(conn, ['a', 'b']);
+
+      const sql = mcpService.executeReadQuery.mock.calls[0][1];
+      expect(sql).toContain('UNION ALL');
+      expect(sql).toContain('`a`');
+      expect(sql).toContain('`b`');
+      expect(rows).toEqual([{ table_name: 'b', records: 20 }, { table_name: 'a', records: 5 }]);
+      expect(mcpService.destroySession).toHaveBeenCalledWith('sess-1');
+    });
+
+    it('generateStarterQuestions returns LLM questions and caches them', async () => {
+      llmService.generateStarterQuestions = jest.fn().mockResolvedValue(['q1', 'q2', 'q3', 'q4']);
+      const res = await service.generateStarterQuestions(connId, makeUser());
+      expect(res).toEqual(['q1', 'q2', 'q3', 'q4']);
+      // second call is served from cache — LLM not called again
+      await service.generateStarterQuestions(connId, makeUser());
+      expect(llmService.generateStarterQuestions).toHaveBeenCalledTimes(1);
+    });
+
+    it('generateStarterQuestions falls back WITHOUT caching when the LLM under-delivers', async () => {
+      llmService.generateStarterQuestions = jest.fn().mockResolvedValue([]); // failure → empty
+      const res = await service.generateStarterQuestions(connId, makeUser());
+      expect(res.length).toBe(4); // generic fallback
+      await service.generateStarterQuestions(connId, makeUser()); // retries the LLM (not cached)
+      expect(llmService.generateStarterQuestions).toHaveBeenCalledTimes(2);
+    });
+
+    describe('Task 9: Failure and exception resilience (No HTTP 500s)', () => {
+      it('handles unhandled LLM timeout/error during query generation without throwing (returns structured failure)', async () => {
+        llmService.generateSQL = jest.fn().mockRejectedValue(new Error('LLM request timeout'));
+        const res = await service.query(chatId, makeUser(), 'show top doctors');
+        expect(res.success).toBe(false);
+        expect(res.message).toBe('Unable to generate an answer for this query.');
+        expect(res.reason).toBe('LLM request timeout');
+        expect((res.suggestions || []).length).toBeGreaterThan(0);
+        expect(res.execution.status).toBe('failed');
+      });
+
+      it('handles pre-flight database error cleanly and returns structured failure response', async () => {
+        chatService.addMessage = jest.fn().mockRejectedValue(new Error('connection pool exhaustion'));
+        const res = await service.query(chatId, makeUser(), 'show patients');
+        expect(res.success).toBe(false);
+        expect(res.message).toBe('Unable to generate an answer for this query.');
+        expect(res.execution.status).toBe('failed');
+        expect(res.execution.error_message).toContain('connection pool exhaustion');
+      });
+
+      it('executeDraft returns structured failure when MCP session creation throws instead of unhandled error', async () => {
+        mcpService.createSession = jest.fn().mockRejectedValue(new Error('connect ETIMEDOUT'));
+        const res = await service.executeDraft(chatId, makeUser(), 'exec-1', 'SELECT * FROM test');
+        expect(res.success).toBe(false);
+        expect(res.status).toBe('failed');
+        expect(res.error_message).toBe('connect ETIMEDOUT');
+      });
+    });
   });
 });

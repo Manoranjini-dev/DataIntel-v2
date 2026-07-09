@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { ConnectionPermissionsService } from './connection-permissions.service';
+import { TableSourceService } from './table-source.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { SafeAccount } from '../auth/auth.service';
 
@@ -18,6 +19,7 @@ export class SchemaExplorerController {
   constructor(
     private readonly db: DatabaseService,
     private readonly connectionPermissions: ConnectionPermissionsService,
+    private readonly tableSource: TableSourceService,
   ) {}
 
   /** List all schemas/tables for a connection */
@@ -103,6 +105,23 @@ export class SchemaExplorerController {
     );
 
     return { tableName, columns, incoming_references };
+  }
+
+  /**
+   * DS-02 — Preview an entire table as a data-card source. Validates the table
+   * against introspected metadata, generates a connector-correct read-only
+   * `SELECT *`, and returns the first 10 rows plus the query to persist on the
+   * card. `?schema=` disambiguates when the same table name exists in multiple
+   * schemas.
+   */
+  @Get('tables/:tableName/preview')
+  async previewTable(
+    @CurrentUser() user: SafeAccount,
+    @Param('connId') connId: string,
+    @Param('tableName') tableName: string,
+    @Query('schema') schema?: string,
+  ) {
+    return this.tableSource.previewTable(connId, user, tableName, schema?.trim() || null);
   }
 
   /** Full-text search across column names */

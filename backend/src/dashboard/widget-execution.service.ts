@@ -108,7 +108,12 @@ export class WidgetExecutionService {
       // query_definition.prompt. Empty drag-and-drop widgets have no prompt and
       // must NOT be auto-executed — bail out instead of fabricating a chart.
       const queryPrompt = this.resolveWidgetPrompt(widget);
-      if (!queryPrompt) {
+      // DS-02 — a table/SQL-sourced widget carries ready-to-run SQL in
+      // query_definition.sql and must execute it directly (no LLM). Combo
+      // contexts have no single raw-SQL target, so only direct-SQL on a single
+      // connection is honored; everything else stays prompt-driven.
+      const directSql = contextType !== 'combo' ? this.resolveWidgetSql(widget) : '';
+      if (!queryPrompt && !directSql) {
         // No query to run — the outer catch marks this execution failed.
         throw new Error('Widget has no query to execute — generate one in the widget editor first.');
       }
@@ -145,6 +150,15 @@ export class WidgetExecutionService {
         });
 
         try {
+          // DS-02 — direct-SQL path (table source / SQL card): run the stored
+          // read-only query as-is, through the same MCP read-only boundary used
+          // by hand-written SQL cards. No LLM, no schema context needed.
+          if (directSql) {
+            const mcpResult = await this.mcp.executeReadQuery(session.sessionId, directSql);
+            if (!mcpResult.success) throw new Error(mcpResult.error || 'Widget query failed');
+            rows = mcpResult.data?.rows || [];
+            columns = mcpResult.data?.columns || [];
+          } else {
           const schemaContext = await this.buildSchemaContext(conn.id);
           let validationFeedback: string | undefined = undefined;
           let mcpResult: any;
@@ -176,6 +190,7 @@ export class WidgetExecutionService {
           if (!mcpResult.success) throw new Error(mcpResult.error || 'Widget query failed after retries');
           rows = mcpResult.data?.rows || [];
           columns = mcpResult.data?.columns || [];
+          }
         } finally {
           await this.mcp.destroySession(session.sessionId).catch(() => {});
         }
@@ -529,6 +544,29 @@ ${dedupBlock}`;
     }
     const prompt = qd && typeof qd === 'object' ? (qd.prompt as string | undefined) : undefined;
     return ((prompt && prompt.trim()) || (widget.prompt && String(widget.prompt).trim()) || '').trim();
+  }
+
+  /**
+   * DS-02 — resolve ready-to-run SQL for a table/SQL-sourced widget. Returns the
+   * stored query_definition.sql only when the widget is a direct-SQL source:
+   *   • sourceType === 'table' (table picker), or
+   *   • mode === 'sql' (SQL editor), or
+   *   • it has SQL but no prompt (legacy SQL-only widgets — previously
+   *     un-refreshable; this lets them refresh with live data).
+   * A widget with a real prompt keeps the prompt→LLM path (prompt wins), so
+   * existing prompt-driven widgets are unaffected.
+   */
+  private resolveWidgetSql(widget: any): string {
+    let qd = widget.query_definition;
+    if (typeof qd === 'string') {
+      try { qd = JSON.parse(qd); } catch { qd = {}; }
+    }
+    if (!qd || typeof qd !== 'object') return '';
+    const sql = typeof qd.sql === 'string' ? qd.sql.trim() : '';
+    if (!sql) return '';
+    const prompt = typeof qd.prompt === 'string' ? qd.prompt.trim() : '';
+    const isDirect = qd.sourceType === 'table' || qd.mode === 'sql' || !prompt;
+    return isDirect ? sql : '';
   }
 
   private async buildSchemaContext(connectionId: string): Promise<string> {

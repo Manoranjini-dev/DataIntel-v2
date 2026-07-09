@@ -16,6 +16,7 @@ const CONNECTORS = [
   { type: 'elasticsearch', label: 'Elasticsearch', abbr: 'ES', color: 'text-yellow-400 bg-yellow-500/10',   defaultPort: 9200  },
   { type: 'databricks',    label: 'Databricks',    abbr: 'DB', color: 'text-orange-400 bg-orange-500/10',   defaultPort: 443   },
   { type: 'oracle',        label: 'Oracle',        abbr: 'OR', color: 'text-red-300 bg-red-400/10',         defaultPort: 1521  },
+  { type: 'fabric',        label: 'MS Fabric',     abbr: 'FB', color: 'text-emerald-400 bg-emerald-500/10', defaultPort: 1433  },
 ];
 
 const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40';
@@ -30,6 +31,13 @@ export default function NewConnectionPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // DS2-03 — Microsoft Fabric uses Entra ID (Azure AD) auth, not a SQL login.
+  const isFabric = selected.type === 'fabric';
+  const [fabric, setFabric] = useState({
+    mode: 'service_principal' as 'service_principal' | 'access_token',
+    tenantId: '', clientId: '', clientSecret: '', accessToken: '',
+  });
+
   function handleConnectorSelect(c: typeof CONNECTORS[0]) {
     setSelected(c);
     setForm(f => ({ ...f, port: c.defaultPort }));
@@ -40,7 +48,21 @@ export default function NewConnectionPage() {
     setError('');
     setLoading(true);
     try {
-      await connectionApi.create({ ...form, connectorType: selected.type });
+      let payload: any = { ...form, connectorType: selected.type };
+      if (isFabric) {
+        // Pack the Entra ID credential into `password` (encrypted at rest),
+        // matching the FabricConnector auth blob. username is unused by Fabric.
+        const blob = fabric.mode === 'access_token'
+          ? { mode: 'access_token', token: fabric.accessToken }
+          : { mode: 'service_principal', tenantId: fabric.tenantId, clientId: fabric.clientId, clientSecret: fabric.clientSecret };
+        payload = {
+          ...payload,
+          username: fabric.mode === 'service_principal' ? fabric.clientId : 'oauth',
+          password: JSON.stringify(blob),
+          sslEnabled: true,
+        };
+      }
+      await connectionApi.create(payload);
       router.push(`/connections`);
     } catch (err: any) {
       setError(err?.message || 'Failed to create connection');
@@ -118,31 +140,81 @@ export default function NewConnectionPage() {
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Database Name</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">
+              {isFabric ? 'Warehouse / Lakehouse Name' : 'Database Name'}
+            </label>
             <input value={form.databaseName} onChange={e => setForm({ ...form, databaseName: e.target.value })}
-              placeholder="my_database" required className={inputCls} />
+              placeholder={isFabric ? 'my_warehouse' : 'my_database'} required className={inputCls} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Username</label>
-              <input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
-                required className={inputCls} />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Password</label>
-              <input type="password" value={form.password}
-                onChange={e => setForm({ ...form, password: e.target.value })}
-                required className={inputCls} />
-            </div>
-          </div>
+          {!isFabric && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Username</label>
+                  <input value={form.username} onChange={e => setForm({ ...form, username: e.target.value })}
+                    required className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Password</label>
+                  <input type="password" value={form.password}
+                    onChange={e => setForm({ ...form, password: e.target.value })}
+                    required className={inputCls} />
+                </div>
+              </div>
 
-          <div className="flex items-center gap-2.5">
-            <input type="checkbox" id="ssl" checked={form.sslEnabled}
-              onChange={e => setForm({ ...form, sslEnabled: e.target.checked })}
-              className="w-4 h-4 accent-primary rounded" />
-            <label htmlFor="ssl" className="text-sm text-foreground">Enable SSL</label>
-          </div>
+              <div className="flex items-center gap-2.5">
+                <input type="checkbox" id="ssl" checked={form.sslEnabled}
+                  onChange={e => setForm({ ...form, sslEnabled: e.target.checked })}
+                  className="w-4 h-4 accent-primary rounded" />
+                <label htmlFor="ssl" className="text-sm text-foreground">Enable SSL</label>
+              </div>
+            </>
+          )}
+
+          {/* DS2-03 — Microsoft Fabric Entra ID (Azure AD) authentication */}
+          {isFabric && (
+            <div className="space-y-4 border-t border-border pt-4">
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Authentication Method</label>
+                <select value={fabric.mode} onChange={e => setFabric({ ...fabric, mode: e.target.value as any })} className={inputCls}>
+                  <option value="service_principal">Service Principal (client secret)</option>
+                  <option value="access_token">OAuth Access Token</option>
+                </select>
+              </div>
+
+              {fabric.mode === 'service_principal' ? (
+                <>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1.5">Tenant ID (Directory ID)</label>
+                    <input value={fabric.tenantId} onChange={e => setFabric({ ...fabric, tenantId: e.target.value })}
+                      placeholder="00000000-0000-0000-0000-000000000000" required className={inputCls} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1.5">Client ID (App ID)</label>
+                      <input value={fabric.clientId} onChange={e => setFabric({ ...fabric, clientId: e.target.value })}
+                        required className={inputCls} />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1.5">Client Secret</label>
+                      <input type="password" value={fabric.clientSecret} onChange={e => setFabric({ ...fabric, clientSecret: e.target.value })}
+                        required className={inputCls} />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Access Token (Bearer)</label>
+                  <input type="password" value={fabric.accessToken} onChange={e => setFabric({ ...fabric, accessToken: e.target.value })}
+                    placeholder="eyJ0eXAi…" required className={inputCls} />
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">
+                Use the Fabric SQL analytics endpoint as the Host (e.g. <code>….datawarehouse.fabric.microsoft.com</code>). Credentials are encrypted at rest.
+              </p>
+            </div>
+          )}
 
           {error && (
             <div className="px-4 py-3 bg-destructive/10 border border-destructive/20 rounded-xl text-destructive text-sm">

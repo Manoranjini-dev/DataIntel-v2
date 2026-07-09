@@ -1,4 +1,52 @@
-import { humanizeField, xAxisLabel, yAxisLabel } from './chart-format';
+import {
+  humanizeField, xAxisLabel, yAxisLabel,
+  isIdentifierColumn, measureColumns, pickLabelColumn,
+} from './chart-format';
+
+describe('isIdentifierColumn', () => {
+  it('detects id / *_id / uuid identifier columns', () => {
+    ['id', 'clinic_id', 'doctor_id', 'patient_id', 'user_id', 'clinicId', 'order_uuid', 'uuid', 'guid']
+      .forEach((c) => expect(isIdentifierColumn(c)).toBe(true));
+  });
+
+  it('strips table prefixes and quoting before matching', () => {
+    expect(isIdentifierColumn('appointments.clinic_id')).toBe(true);
+    expect(isIdentifierColumn('"clinic_id"')).toBe(true);
+  });
+
+  it('does NOT flag real measures that merely end in "id"', () => {
+    ['paid', 'amount_paid', 'valid', 'grid', 'revenue', 'cancellations', 'total', 'covid_cases']
+      .forEach((c) => expect(isIdentifierColumn(c)).toBe(false));
+  });
+});
+
+describe('measureColumns', () => {
+  const rows = [
+    { clinic_name: 'North', clinic_id: 1, cancellations: 12 },
+    { clinic_name: 'South', clinic_id: 2, cancellations: 7 },
+  ];
+  const columns = ['clinic_name', 'clinic_id', 'cancellations'];
+
+  it('excludes identifier columns from the plotted measures', () => {
+    expect(measureColumns(rows, columns)).toEqual(['cancellations']);
+  });
+
+  it('falls back to raw numerics if excluding ids would leave nothing', () => {
+    // Only numeric column is an id → keep it so the chart still renders.
+    expect(measureColumns([{ name: 'x', clinic_id: 1 }], ['name', 'clinic_id'])).toEqual(['clinic_id']);
+  });
+});
+
+describe('pickLabelColumn', () => {
+  it('prefers a non-identifier label over an id', () => {
+    expect(pickLabelColumn(['clinic_id', 'clinic_name', 'cancellations'], ['cancellations']))
+      .toBe('clinic_name');
+  });
+
+  it('falls back to an id only when nothing else is available', () => {
+    expect(pickLabelColumn(['clinic_id', 'cancellations'], ['cancellations'])).toBe('clinic_id');
+  });
+});
 
 describe('humanizeField', () => {
   it('title-cases snake_case column names', () => {

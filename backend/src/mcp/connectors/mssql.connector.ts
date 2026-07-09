@@ -13,10 +13,11 @@ import { MCPQueryResult, MCPToolResult } from '../types';
 import { BaseMCPConnector } from './base.connector';
 
 export class MSSQLConnector extends BaseMCPConnector {
-  readonly connectorType = ConnectorType.MSSQL;
+  // Typed as the enum (not the literal) so subclasses (Fabric) can override it.
+  readonly connectorType: ConnectorType = ConnectorType.MSSQL;
 
-  constructor() {
-    super('MSSQLConnector');
+  constructor(loggerContext = 'MSSQLConnector') {
+    super(loggerContext);
   }
 
   getCapabilities(): ConnectorCapabilities {
@@ -57,8 +58,9 @@ export class MSSQLConnector extends BaseMCPConnector {
         }
 
         return {
+          // this.connectorType so subclasses (e.g. Fabric) report themselves.
           database: params.database,
-          connectorType: ConnectorType.MSSQL,
+          connectorType: this.connectorType,
           tables: tableSchemas,
           extractedAt: new Date(),
         };
@@ -101,7 +103,9 @@ export class MSSQLConnector extends BaseMCPConnector {
     this.logger.log('MSSQL connector disposed');
   }
 
-  private async createPool(params: ConnectionParams): Promise<sql.ConnectionPool> {
+  // protected so subclasses (Microsoft Fabric) can override only the auth/config
+  // while reusing all introspection + query logic.
+  protected async createPool(params: ConnectionParams): Promise<sql.ConnectionPool> {
     const config: sql.config = {
       server: params.host,
       port: params.port,

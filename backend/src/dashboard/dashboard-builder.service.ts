@@ -74,6 +74,8 @@ export interface AddDashboardFilterDto {
   colType: 'numeric' | 'string' | 'date';
   operator: string;
   config?: Record<string, unknown>;
+  /** DC-04 — when true, viewers cannot modify or remove this filter. */
+  locked?: boolean;
 }
 
 @Injectable()
@@ -1244,9 +1246,9 @@ export class DashboardBuilderService {
       throw new BadRequestException('A filter requires a column and an operator.');
     }
     const filter = await this.db.queryOne(
-      `INSERT INTO dashboard_filters (dashboard_id, column_name, col_type, operator, config)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [dashId, dto.column, dto.colType || 'string', dto.operator, dto.config || {}]
+      `INSERT INTO dashboard_filters (dashboard_id, column_name, col_type, operator, config, locked)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [dashId, dto.column, dto.colType || 'string', dto.operator, dto.config || {}, dto.locked === true]
     );
     return filter;
   }
@@ -1256,12 +1258,23 @@ export class DashboardBuilderService {
     if (!dto?.column || !dto?.operator) {
       throw new BadRequestException('A filter requires a column and an operator.');
     }
+    // DC-04 — a locked filter cannot be modified until it is explicitly unlocked
+    // (the same request may unlock it by setting locked=false). This rejects
+    // silent overrides even from an editor client that ignored the lock.
+    const existing = await this.db.queryOne<{ locked: boolean }>(
+      `SELECT locked FROM dashboard_filters WHERE id = $1 AND dashboard_id = $2`,
+      [filterId, dashId],
+    );
+    if (!existing) throw new NotFoundException('Filter not found');
+    if (existing.locked && dto.locked !== false) {
+      throw new ForbiddenException('This filter is locked. Unlock it before editing.');
+    }
     const filter = await this.db.queryOne(
       `UPDATE dashboard_filters
-          SET column_name = $1, col_type = $2, operator = $3, config = $4, updated_at = NOW()
-        WHERE id = $5 AND dashboard_id = $6
+          SET column_name = $1, col_type = $2, operator = $3, config = $4, locked = $5, updated_at = NOW()
+        WHERE id = $6 AND dashboard_id = $7
         RETURNING *`,
-      [dto.column, dto.colType || 'string', dto.operator, dto.config || {}, filterId, dashId]
+      [dto.column, dto.colType || 'string', dto.operator, dto.config || {}, dto.locked === true, filterId, dashId]
     );
     if (!filter) throw new NotFoundException('Filter not found');
     return filter;
@@ -1269,7 +1282,46 @@ export class DashboardBuilderService {
 
   async removeFilter(filterId: string, dashId: string, requester: SafeAccount) {
     await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
+    // DC-04 — a locked filter is protected: unlock it before removing.
+    const existing = await this.db.queryOne<{ locked: boolean }>(
+      `SELECT locked FROM dashboard_filters WHERE id = $1 AND dashboard_id = $2`,
+      [filterId, dashId],
+    );
+    if (!existing) return; // already gone — idempotent delete
+    if (existing.locked) {
+      throw new ForbiddenException('This filter is locked. Unlock it before removing.');
+    }
     await this.db.query(`DELETE FROM dashboard_filters WHERE id = $1 AND dashboard_id = $2`, [filterId, dashId]);
+  }
+
+  /**
+   * DC-04 — replace the entire dashboard-global filter set in one transaction.
+   * Editor-authoritative: the caller supplies the complete desired set (each
+   * with its own `locked` flag), so this is the safe way to persist edits
+   * without tripping the per-filter lock guards used for granular API calls.
+   * Requires can_edit, so viewers can never override locked (or any) filters.
+   */
+  async replaceFilters(dashId: string, requester: SafeAccount, filters: AddDashboardFilterDto[]) {
+    await this.dashboardPermissions.requireAction(dashId, requester.id, 'can_edit');
+    const list = Array.isArray(filters) ? filters : [];
+    for (const f of list) {
+      if (!f?.column || !f?.operator) {
+        throw new BadRequestException('Each filter requires a column and an operator.');
+      }
+    }
+    return this.db.transaction(async (query) => {
+      await query(`DELETE FROM dashboard_filters WHERE dashboard_id = $1`, [dashId]);
+      const saved: any[] = [];
+      for (const f of list) {
+        const res = await query(
+          `INSERT INTO dashboard_filters (dashboard_id, column_name, col_type, operator, config, locked)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+          [dashId, f.column, f.colType || 'string', f.operator, f.config || {}, f.locked === true],
+        );
+        saved.push(res.rows[0]);
+      }
+      return saved;
+    });
   }
 
   // ── Versioning ───────────────────────────────────────────

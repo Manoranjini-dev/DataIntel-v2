@@ -13,6 +13,7 @@ import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { QueryExecutionResult, UIHint } from '@/lib/types';
 import type { VisualizationConfig } from '@/lib/aggregation';
+import { measureColumns } from '@/lib/chart-format';
 import { MetricCard } from './metric-card';
 import { StatGrid } from './stat-grid';
 import { BarChartCard } from './bar-chart-card';
@@ -69,9 +70,11 @@ function resolveComponent(
   // No data → table (shows "no data" message)
   if (!rows || rows.length === 0) return 'data_table';
 
-  const numericCols = columns.filter((c) =>
-    rows.slice(0, 10).filter((r) => r[c] != null).every((r) => !isNaN(Number(r[c]))),
-  );
+  // Measure columns only — identifier columns (clinic_id, doctor_id, …) are not
+  // metrics, so they don't count toward "does this data have a plottable value?"
+  // This keeps an id from mis-triggering multi-measure charts (combo/scatter/
+  // stat_grid) or being counted as a series.
+  const numericCols = measureColumns(rows, columns);
   const hasNumeric = numericCols.length > 0;
   const isSingleRow = rows.length === 1;
   const isSingleCol = columns.length <= 2;

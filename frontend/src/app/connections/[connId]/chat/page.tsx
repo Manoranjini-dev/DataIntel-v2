@@ -39,6 +39,7 @@ interface Message {
   // Marks an assistant bubble as a hard failure (network/timeout/server) so it
   // renders with distinct error styling instead of looking like a normal answer.
   isError?: boolean;
+  followUpQuestions?: string[];
 }
 
 /**
@@ -344,12 +345,32 @@ export default function ConnectionChatPage() {
   const [showChatList, setShowChatList] = useState(false);
   const [addToDashMsg, setAddToDashMsg] = useState<Message | null>(null);
   const [saveCardMsg, setSaveCardMsg] = useState<Message | null>(null);
+  // Part 1/2 — datasource-aware starter questions + per-response follow-ups.
+  // `starterLoading` gates the empty-state UI so we render shimmer placeholders
+  // while the AI analyzes the schema — never static/generic questions that would
+  // flicker and get replaced once the real suggestions arrive.
+  const [starterQuestions, setStarterQuestions] = useState<string[]>([]);
+  const [starterLoading, setStarterLoading] = useState(true);
+  const [followUps, setFollowUps] = useState<string[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { loadData(); }, [slug, connId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
+
+  // Part 1 — fetch datasource-aware starter questions once the connection is
+  // known. Regenerated per connection (never cached across datasources).
+  useEffect(() => {
+    let cancelled = false;
+    setStarterLoading(true);
+    setStarterQuestions([]);
+    chatApi.starterQuestions(connId)
+      .then(({ questions }) => { if (!cancelled) setStarterQuestions(questions || []); })
+      .catch(() => { if (!cancelled) setStarterQuestions([]); })
+      .finally(() => { if (!cancelled) setStarterLoading(false); });
+    return () => { cancelled = true; };
+  }, [connId]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -380,10 +401,21 @@ export default function ConnectionChatPage() {
         ...m,
         result_preview: typeof m.result_preview === 'string' ? JSON.parse(m.result_preview) : (m.result_preview || []),
         result_columns: typeof m.result_columns === 'string' ? JSON.parse(m.result_columns) : (m.result_columns || []),
+        followUpQuestions: m.followUpQuestions || (typeof m.follow_up_questions === 'string' ? JSON.parse(m.follow_up_questions) : m.follow_up_questions),
         // Persisted messages are already executed
         pending_execution: false,
       }));
       setMessages(msgsData);
+      if (msgsData.length > 0) {
+        const last = msgsData[msgsData.length - 1];
+        if (last.role === 'assistant' && last.followUpQuestions && Array.isArray(last.followUpQuestions) && last.followUpQuestions.length > 0) {
+          setFollowUps(last.followUpQuestions);
+        } else {
+          setFollowUps([]);
+        }
+      } else {
+        setFollowUps([]);
+      }
       // Kick off a background refresh so displayed data always reflects the live DB
       refreshMessages(cid, msgsData);
     } catch (e) { console.error(e); }
@@ -395,7 +427,7 @@ export default function ConnectionChatPage() {
    */
   async function refreshMessages(cid: string, msgsData: Message[]) {
     const toRefresh = msgsData
-      .filter(m => m.role === 'assistant' && m.exec_status && (m as any).execution_id)
+      .filter(m => m.role === 'assistant' && m.exec_status && (m as any).execution_id && m.generated_query && !m.generated_query.trim().startsWith('--'))
       .map(m => (m as any).execution_id as string);
     if (!toRefresh.length) return;
 
@@ -482,11 +514,17 @@ export default function ConnectionChatPage() {
   }
 
   // ── Send a natural-language prompt ─────────────────────────────
-  async function handleSend(e?: React.FormEvent) {
+  // `promptOverride` lets a suggested-question chip send immediately without
+  // routing through the input box.
+  async function handleSend(e?: React.FormEvent, promptOverride?: string) {
     e?.preventDefault();
-    if (!input.trim() || sending) return;
-    const prompt = input.trim();
+    const prompt = (promptOverride ?? input).trim();
+    if (!prompt || sending) return;
     setInput('');
+    // Remember the current suggestions so we can restore them if this turn fails
+    // — the conversation stays navigable and the user can pick another question.
+    const prevFollowUps = followUps;
+    setFollowUps([]); // clear stale suggestions while the new answer streams in
     setSending(true);
 
     const tempId = `temp-${Date.now()}`;
@@ -539,6 +577,7 @@ export default function ConnectionChatPage() {
             executionId: exec?.id ?? result.executionId,
             // When autoExecute=OFF, mark as pending so UI shows editable SQL
             pending_execution: !autoExecute && !!exec?.generated_query,
+            followUpQuestions: result.followUpQuestions || result.assistantMessage?.followUpQuestions,
           });
           console.log(`[DEBUG TRACE] Frontend State Count (Ask): ${autoExecute ? (exec?.rows?.length || 0) : 0}`);
         }
@@ -548,6 +587,10 @@ export default function ConnectionChatPage() {
 
       setChats(prev => prev.map(c => c.id === targetChatId
         ? { ...c, message_count: (c.message_count || 0) + 2 } : c));
+
+      // Part 2 — surface context-aware follow-up suggestions for this answer
+      // (only when auto-executed; a draft-SQL turn has no result to build on).
+      setFollowUps(autoExecute && Array.isArray(result.followUpQuestions) ? result.followUpQuestions : []);
     } catch (err: any) {
       console.error('[chat] ask failed:', err);
       const friendly = formatChatError(err);
@@ -573,13 +616,6 @@ export default function ConnectionChatPage() {
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }
-
-  const SUGGESTIONS = [
-    'Show me all tables',
-    'How many records are in each table?',
-    'What are the top 10 rows by ID?',
-    'Show column structure of each table',
-  ];
 
   const currentChat = chats.find(c => c.id === currentChatId);
 
@@ -708,29 +744,68 @@ export default function ConnectionChatPage() {
                 </p>
               </div>
               <div className="flex flex-wrap justify-center gap-2 max-w-lg">
-                {SUGGESTIONS.map(s => (
-                  <button
-                    key={s}
-                    onClick={() => setInput(s)}
-                    className="text-xs px-3.5 py-2 border border-border rounded-full text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-all"
-                  >
-                    {s}
-                  </button>
-                ))}
+                {starterLoading ? (
+                  // Shimmer placeholders while the AI analyzes the schema — never
+                  // render static/generic questions that would flicker away.
+                  [176, 232, 200, 216].map((w, i) => (
+                    <div
+                      key={i}
+                      className="h-9 rounded-full bg-muted animate-pulse"
+                      style={{ width: w, maxWidth: '100%' }}
+                    />
+                  ))
+                ) : (
+                  starterQuestions.map(s => (
+                    <button
+                      key={s}
+                      onClick={() => handleSend(undefined, s)}
+                      disabled={sending}
+                      className="text-xs px-3.5 py-2 border border-border rounded-full text-muted-foreground hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-all disabled:opacity-50 animate-fade-in"
+                    >
+                      {s}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
           ) : (
-            messages.map(msg => (
-              <ChatBubble
-                key={msg.id}
-                message={msg}
-                autoExecute={autoExecute}
-                showGeneratedSQL={showGeneratedSQL}
-                onRunSQL={handleRunSQL}
-                onAddToDashboard={setAddToDashMsg}
-                onSaveCard={setSaveCardMsg}
-              />
-            ))
+            messages.map((msg, idx) => {
+              const isLatestAssistant = msg.role === 'assistant' && idx === messages.length - 1;
+              const activeChips = isLatestAssistant
+                ? (followUps.length > 0 ? followUps : (msg.followUpQuestions || []))
+                : [];
+              return (
+                <div key={msg.id} className="flex flex-col">
+                  <ChatBubble
+                    message={msg}
+                    autoExecute={autoExecute}
+                    showGeneratedSQL={showGeneratedSQL}
+                    onRunSQL={handleRunSQL}
+                    onAddToDashboard={setAddToDashMsg}
+                    onSaveCard={setSaveCardMsg}
+                  />
+                  {activeChips.length > 0 && !sending && (
+                    <div className="mt-3 mb-4 ml-12 animate-fade-in">
+                      <p className="text-[11px] font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3 text-primary" /> Suggested questions
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {activeChips.map(q => (
+                          <button
+                            key={q}
+                            onClick={() => handleSend(undefined, q)}
+                            disabled={sending}
+                            className="text-xs px-3.5 py-1.5 border border-primary/30 bg-primary/5 rounded-full text-foreground hover:bg-primary/10 hover:border-primary/50 transition-all text-left disabled:opacity-50 shadow-sm"
+                          >
+                            {q}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
           <div ref={bottomRef} />
         </div>

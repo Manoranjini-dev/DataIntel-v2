@@ -205,13 +205,16 @@ export class MySQLConnector extends BaseMCPConnector {
   // ── Private Helpers ──────────────────────────
 
   private async createConnection(params: ConnectionParams): Promise<mysql.Connection> {
+    // Cold connects to managed MySQL (e.g. Cloud SQL) can exceed the old hard
+    // 10s limit; make it configurable and default to a more tolerant 20s.
+    const connectTimeout = Number(process.env.MCP_CONNECT_TIMEOUT_MS) || 12000;
     const options: mysql.ConnectionOptions = {
       host: params.host,
       port: params.port,
       user: params.username,
       password: params.password,
       database: params.database,
-      connectTimeout: 10000,
+      connectTimeout,
       multipleStatements: false,
       supportBigNumbers: true,
       bigNumberStrings: false,
@@ -220,7 +223,8 @@ export class MySQLConnector extends BaseMCPConnector {
     if (params.ssl) {
       options.ssl = { rejectUnauthorized: false };
     }
-    return mysql.createConnection(options);
+    // Retry transient cold-connect timeouts (see BaseMCPConnector.connectWithRetry).
+    return this.connectWithRetry(() => mysql.createConnection(options), `MySQL connect ${params.host}:${params.port}`);
   }
 
   private async getTables(connection: mysql.Connection, database: string): Promise<string[]> {

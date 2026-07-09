@@ -608,7 +608,7 @@ export default function LandingPage() {
                     <span style={{ color: '#E5E7EB' }}> sales</span><br />
                     <span style={{ color: '#60A5FA' }}>WHERE</span>
                     <span style={{ color: '#E5E7EB' }}> month = </span>
-                    <span style={{ color: '#FCD34D' }}>'2024-06'</span><br />
+                    <span style={{ color: '#FCD34D' }}>{"'2024-06'"}</span><br />
                     <span style={{ color: '#60A5FA' }}>GROUP BY</span>
                     <span style={{ color: '#E5E7EB' }}> product_name</span><br />
                     <span style={{ color: '#60A5FA' }}>ORDER BY</span>

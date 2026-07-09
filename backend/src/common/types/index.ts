@@ -14,6 +14,7 @@ export enum ConnectorType {
   MSSQL = 'mssql',
   ORACLE = 'oracle',
   REDSHIFT = 'redshift',
+  FABRIC = 'fabric',
 }
 
 /** Connector family — determines query language and validation path */
@@ -29,6 +30,9 @@ export function getConnectorFamily(type: ConnectorType): ConnectorFamily {
     case ConnectorType.MSSQL:
     case ConnectorType.ORACLE:
     case ConnectorType.REDSHIFT:
+    // Microsoft Fabric's SQL analytics endpoint speaks T-SQL (TDS) — same
+    // query/validation path as MSSQL; only its auth differs.
+    case ConnectorType.FABRIC:
       return 'sql';
     case ConnectorType.DATABRICKS:
       return 'databricks';
