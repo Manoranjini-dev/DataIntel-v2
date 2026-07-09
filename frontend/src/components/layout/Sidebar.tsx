@@ -48,7 +48,7 @@ export function Sidebar() {
     try { await authApi.logout(); } catch { /* ignore network errors */ }
     clearUser();
     // Use a full page reload to clear all in-memory React state cleanly.
-    window.location.replace('/login');
+    window.location.replace('/');
   };
 
   // ── Collapsed: thin icon-only rail with an expand button ──────────

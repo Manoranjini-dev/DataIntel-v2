@@ -106,7 +106,9 @@ export default function LandingPage() {
   }, []);
 
   const handleSignOut = async () => {
-    try { await authApi.logout(); } finally { clearUser(); }
+    try { await authApi.logout(); } catch { /* ignore network errors */ }
+    clearUser();
+    window.location.replace('/');
   };
 
   return (

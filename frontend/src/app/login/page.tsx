@@ -47,7 +47,7 @@ export default function LoginPage() {
 
   function afterLogin() {
     const redirect = new URLSearchParams(window.location.search).get('redirect');
-    if (redirect && redirect.startsWith('/') && !redirect.startsWith('/login')) {
+    if (redirect && redirect !== '/' && redirect.startsWith('/') && !redirect.startsWith('/login')) {
       router.replace(redirect);
     } else {
       router.replace('/dashboards');

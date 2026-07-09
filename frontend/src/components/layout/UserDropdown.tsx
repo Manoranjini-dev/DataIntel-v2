@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useAuthStore } from '@/lib/auth-store';
+import { authApi } from '@/lib/api';
 import { LogOut, User } from 'lucide-react';
 import { SignOutConfirmationModal } from './SignOutConfirmationModal';
 
@@ -9,9 +10,10 @@ export function UserDropdown() {
   const { user, clearUser } = useAuthStore();
   const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try { await authApi.logout(); } catch { /* ignore network errors */ }
     clearUser();
-    window.location.href = '/login';
+    window.location.replace('/');
   };
 
   if (!user) return null;
