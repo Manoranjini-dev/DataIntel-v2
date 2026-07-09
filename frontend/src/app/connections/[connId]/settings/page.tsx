@@ -243,7 +243,7 @@ export default function ConnectionSettingsPage() {
   }
 
   return (
-    <div className="flex-1 p-8 overflow-auto animate-fade-in">
+    <div className="flex-1 min-h-0 p-8 overflow-y-auto animate-fade-in">
       <div className="max-w-2xl mx-auto space-y-10">
 
         {/* Page header */}

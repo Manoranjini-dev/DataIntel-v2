@@ -46,7 +46,7 @@ export default function ConnectionOverviewPage() {
         chatApi.list({ connectionId: connId }),
       ]);
       setConn(c);
-      setRecentChats(chats.slice(0, 5));
+      setRecentChats(chats.slice(0, 15));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
@@ -78,7 +78,7 @@ export default function ConnectionOverviewPage() {
   );
 
   return (
-    <div className="flex-1 overflow-auto p-8 animate-fade-in">
+    <div className="flex-1 min-h-0 overflow-y-auto p-8 animate-fade-in">
       <div className="max-w-4xl mx-auto space-y-6">
 
         {/* Title row */}
@@ -190,7 +190,7 @@ export default function ConnectionOverviewPage() {
               </button>
             </div>
           ) : (
-            <div className="divide-y divide-border">
+            <div className="divide-y divide-border max-h-[360px] overflow-y-auto">
               {recentChats.map((chat: any) => (
                 <Link
                   key={chat.id}
