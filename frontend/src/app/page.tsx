@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useAuthStore } from '@/lib/auth-store';
 import { authApi } from '@/lib/api';
+import { SignOutConfirmationModal } from '@/components/layout/SignOutConfirmationModal';
 
 // ── SSR-safe 3D scene ─────────────────────────────────────────────
 const DataNetworkScene = dynamic(
@@ -96,6 +97,7 @@ const staggerChildren = {
 export default function LandingPage() {
   const { isAuthenticated, clearUser } = useAuthStore();
   const [scrolled, setScrolled] = useState(false);
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 24);
@@ -155,7 +157,7 @@ export default function LandingPage() {
             {isAuthenticated ? (
               <>
                 <button
-                  onClick={handleSignOut}
+                  onClick={() => setShowSignOutConfirm(true)}
                   className="px-4 py-2 text-sm font-medium transition-colors"
                   style={{ color: C.text3 }}
                 >
@@ -795,6 +797,11 @@ export default function LandingPage() {
         </div>
       </footer>
 
+      <SignOutConfirmationModal
+        isOpen={showSignOutConfirm}
+        onClose={() => setShowSignOutConfirm(false)}
+        onConfirm={handleSignOut}
+      />
     </div>
   );
 }

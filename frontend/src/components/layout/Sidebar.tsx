@@ -1,12 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, CreditCard, Database, Layers, Settings, Users, ShieldCheck, PanelLeftClose, PanelLeftOpen, LogOut } from 'lucide-react';
+import { LayoutDashboard, CreditCard, Database, Layers, Settings, Users, ShieldCheck, PanelLeftClose, PanelLeftOpen, LogOut, User } from 'lucide-react';
 import { useAuthStore } from '@/lib/auth-store';
 import { useUIStore } from '@/lib/ui-store';
 import { authApi } from '@/lib/api';
+import { SignOutConfirmationModal } from './SignOutConfirmationModal';
 
 // C1X logo — from image file
 function C1XLogo({ size = 32 }: { size?: number }) {
@@ -32,9 +34,13 @@ export function Sidebar() {
   const router = useRouter();
   const { user, clearUser } = useAuthStore();
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const [showSignOutConfirm, setShowSignOutConfirm] = useState(false);
 
   const isAdmin = user?.role === 'ADMIN';
   const adminActive = pathname.startsWith('/admin/users') || pathname.startsWith('/admin/sso');
+
+  const rawName = user?.displayName?.trim() || user?.email?.trim();
+  const userInitial = rawName ? rawName[0].toUpperCase() : null;
 
   const handleSignOut = async () => {
     // Always clear local state and navigate — even if the backend is unreachable.
@@ -109,20 +115,26 @@ export function Sidebar() {
         {/* User avatar & Logout */}
         <div className="mt-auto flex flex-col items-center gap-2 mb-4">
           <button
-            onClick={handleSignOut}
+            onClick={() => setShowSignOutConfirm(true)}
             title="Sign out"
             className="w-9 h-9 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-muted hover:text-destructive transition-all"
           >
             <LogOut className="w-[18px] h-[18px]" />
           </button>
           <div
-            className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white"
+            className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white shadow-sm"
             style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}
-            title={user?.displayName ?? 'User'}
+            title={user?.displayName || user?.email || 'User'}
           >
-            {user?.displayName?.[0]?.toUpperCase() ?? 'U'}
+            {userInitial ? userInitial : <User className="w-4 h-4 text-white shrink-0" />}
           </div>
         </div>
+
+        <SignOutConfirmationModal
+          isOpen={showSignOutConfirm}
+          onClose={() => setShowSignOutConfirm(false)}
+          onConfirm={handleSignOut}
+        />
       </aside>
     );
   }
@@ -205,24 +217,30 @@ export function Sidebar() {
       <div className="mx-3 mb-4 p-3 rounded-xl bg-muted/60 border border-border flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
           <div
-            className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white"
+            className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-xs font-bold text-white shadow-sm"
             style={{ background: 'linear-gradient(135deg,#D97A1E,#F5A623)' }}
           >
-            {user?.displayName?.[0]?.toUpperCase() ?? 'U'}
+            {userInitial ? userInitial : <User className="w-4 h-4 text-white shrink-0" />}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-foreground truncate leading-tight">{user?.displayName ?? 'User'}</p>
+            <p className="text-xs font-semibold text-foreground truncate leading-tight">{user?.displayName || user?.email || 'User'}</p>
             <p className="text-[10px] text-muted-foreground truncate">{user?.email ?? ''}</p>
           </div>
         </div>
         <button
-          onClick={handleSignOut}
+          onClick={() => setShowSignOutConfirm(true)}
           title="Sign out"
           className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-muted rounded-md transition-colors shrink-0"
         >
           <LogOut className="w-4 h-4" />
         </button>
       </div>
+
+      <SignOutConfirmationModal
+        isOpen={showSignOutConfirm}
+        onClose={() => setShowSignOutConfirm(false)}
+        onConfirm={handleSignOut}
+      />
     </aside>
   );
 }
