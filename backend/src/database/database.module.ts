@@ -28,7 +28,7 @@ export { DATABASE_POOL } from './database.constants';
           ssl: { rejectUnauthorized: false },
           max: 20,
           idleTimeoutMillis: 30000,
-          connectionTimeoutMillis: 30000,
+          connectionTimeoutMillis: 60000,
         });
 
         // Add error handler to prevent idle client errors from crashing Node.js
@@ -36,15 +36,28 @@ export { DATABASE_POOL } from './database.constants';
           logger.error(`Unexpected error on idle client: ${err.message}`, err.stack);
         });
 
-        // Test connection
-        try {
-          const client = await pool.connect();
-          const result = await client.query('SELECT NOW()');
-          logger.log(`Database connected successfully at ${result.rows[0].now}`);
-          client.release();
-        } catch (error) {
-          logger.error(`Database connection failed: ${error}`);
-          throw error;
+        // Test connection with retries for serverless cold-start
+        let lastError: any;
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          try {
+            const client = await pool.connect();
+            const result = await client.query('SELECT NOW()');
+            logger.log(`Database connected successfully at ${result.rows[0].now} (attempt ${attempt})`);
+            client.release();
+            lastError = null;
+            break;
+          } catch (error: any) {
+            lastError = error;
+            logger.warn(`Database connection attempt ${attempt}/5 failed: ${error.message || error}. Retrying in 4s...`);
+            if (attempt < 5) {
+              await new Promise(resolve => setTimeout(resolve, 4000));
+            }
+          }
+        }
+
+        if (lastError) {
+          logger.error(`Database connection failed after 5 attempts: ${lastError}`);
+          throw lastError;
         }
 
         return pool;
