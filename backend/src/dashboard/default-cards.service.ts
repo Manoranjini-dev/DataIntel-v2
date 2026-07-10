@@ -427,13 +427,18 @@ renders but is meaningless, which is worse than not generating the card at all:
 
 Technical formatting rules — follow every one strictly:
 - Return ONLY a JSON array of exactly 4 objects. No markdown, no code fences, no prose.
+- ABSOLUTELY FORBIDDEN: You must NEVER use any column with "id" or "by" in its name (e.g., account_id, user_id, clinic_id, created_by, updated_by) for grouping, categories, or axes.
+- ABSOLUTELY FORBIDDEN: You must NEVER use any unique identifier or time column (e.g., license_no, phone, email, ssn, code, hash, website, url, clinic_name, name, time, date) for grouping or categories, because it produces a meaningless chart.
+- MANDATORY: You MUST use meaningful low-cardinality business categories for grouping/axes (e.g., status, type, category, tier, role).
+- For DISTRIBUTION widgets: use a low-cardinality categorical column (status, category, type, tier, role)
+- When counting records, explicitly instruct the query to alias the count column using the entity name (e.g., "clinic_count" instead of "record_count" or "count") so users easily understand it.
 - Each object: {"title": string, "insightSummary": string, "metricContext": string, "businessSignificance": string, "widgetType": string, "prompt": string}
 - "title": a short, clear, business-friendly card title (max 6 words). No quotes.
 - "insightSummary": a concise summary of the primary insight this card reveals (max 2 sentences).
 - "metricContext": brief context about the metric being measured (e.g. "Total revenue across all regions").
 - "businessSignificance": why this insight matters for business decisions (max 1 sentence).
 - "prompt": a precise natural-language analytics question that references REAL table/column names from the schema, written so a text-to-SQL engine can answer it. Each prompt MUST return at least 1 row of data.
-- "widgetType": choose the best chart type for the insight (e.g., bar_chart, line_chart, pie_chart, metric_card, horizontal_bar, table).
+- "widgetType": choose the best chart type for the insight (e.g., bar_chart, line_chart, pie_chart, metric_card, table).
 - Write prompts that are guaranteed to return data (prefer COUNT(*), SUM, GROUP BY over filters that might exclude all rows).`;
 
     const userContent = `Database schema:\n${schema}\n\nReturn the JSON array of 4 top-tier analytical cards now.`;
@@ -518,13 +523,13 @@ Technical formatting rules — follow every one strictly:
       trend = {
         title: `${this.humanize(P)} Over Time`,
         widgetType: 'line_chart',
-        prompt: `Show the count of records in the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined date/month label (aliased as "period") and the record count — do not return separate day, month, and year columns.`,
+        prompt: `Show the count of records in the ${P} table grouped by month using the ${dates[0].name} column, for the most recent 12 months, ordered chronologically. Return exactly two columns: a single combined date/month label (aliased as "period") and the record count (aliased as "${P}_count") — do not return separate day, month, and year columns.`,
       };
     } else if (cat0) {
       trend = {
         title: `Top ${this.humanize(cat0.name)}`,
         widgetType: 'bar_chart',
-        prompt: `Show the count of records in the ${P} table grouped by ${cat0.name}, ordered from highest to lowest, limited to the top 10.`,
+        prompt: `Show the count of records in the ${P} table grouped by ${cat0.name}, ordered from highest to lowest, limited to the top 10. Alias the count column as "${P}_count".`,
       };
     } else {
       trend = {
@@ -587,7 +592,7 @@ Technical formatting rules — follow every one strictly:
       distribution = {
         title: `${this.humanize(P)} by ${this.humanize(distCol.name)}`,
         widgetType: 'pie_chart',
-        prompt: `Show the count of records in the ${P} table grouped by ${distCol.name}, limited to the top 8 groups, ordered from highest to lowest.`,
+        prompt: `Show the count of records in the ${P} table grouped by ${distCol.name}, limited to the top 8 groups, ordered from highest to lowest. Alias the count column as "${P}_count".`,
       };
     } else if (distCol && measure) {
       // Use same category but as a donut for visual variety
@@ -971,16 +976,20 @@ Technical formatting rules — follow every one strictly:
 
   private isCategorical(c: ColumnInfo): boolean {
     if (c.isPrimaryKey) return false;
-    return /(char|text|varchar|enum|bool|uuid)/.test(c.dataType) || c.isForeignKey;
+    // DO NOT treat ID columns or audit columns as categories under any circumstances
+    if (/_id$/i.test(c.name) || /^id$/i.test(c.name) || /_by$/i.test(c.name)) return false;
+    // DO NOT treat unique identifier or time columns as categories
+    if (/(no|num|number|code|hash|email|phone|url|ip|token|guid|uuid|license|ssn|website|link|name|time|date)$/i.test(c.name)) return false;
+    return /(char|text|varchar|enum|bool)/.test(c.dataType) || c.isForeignKey;
   }
 
   /** Column names that almost always hold free-running prose, not a bounded category. */
   private readonly FREE_TEXT_NAME_PATTERN =
     /(description|about|bio|notes?|comment|summary|content|message|body|details?|remarks?|narrative|overview|address)/i;
 
-  /** Column names that strongly suggest a true bounded category. */
+  /** Column names that strongly suggest a true bounded category (excluding geography). */
   private readonly CATEGORICAL_NAME_HINT =
-    /(status|type|category|kind|gender|sex|role|tier|plan|region|country|state|province|city|level|grade|segment|^group$|class|stage|priority|department|brand|channel)/i;
+    /(status|type|category|kind|gender|sex|role|tier|plan|level|grade|segment|^group$|class|stage|priority|department|brand|channel)/i;
 
   /**
    * A column is "free text" — and therefore unsuitable as a pie/bar chart

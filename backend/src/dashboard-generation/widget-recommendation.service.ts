@@ -60,13 +60,13 @@ export class WidgetRecommendationService {
         existingPrompts.map((p, i) => `${i + 1}. ${p}`).join('\n') + '\n'
       : '';
 
-    const systemPrompt = `You are a senior BI analyst generating 6 diverse, high-value dashboard widget recommendations for a business intelligence platform.
+    const systemPrompt = `You are a senior BI analyst generating 4 diverse, high-value dashboard widget recommendations for a business intelligence platform.
 
-Your job is to propose exactly 6 analytics questions that collectively give the user a complete picture of their data. Each question must be unique, actionable, and answerable from the provided schema.
+Your job is to propose exactly 4 analytics questions that collectively give the user a complete, highly meaningful picture of their data. Each question must be unique, actionable, and answerable from the provided schema.
 
-CATEGORY COVERAGE — include at least one insight from each of these 6 categories, one per widget:
+CATEGORY COVERAGE — include at least one insight from 4 of these categories:
 1. TREND       — how a key metric changes over time (requires a date column); use line_chart or area_chart
-2. RANKING     — top N or bottom N entities ranked by a numeric measure; use bar_chart or horizontal_bar
+2. RANKING     — top N or bottom N entities ranked by a numeric measure; use bar_chart
 3. DISTRIBUTION — how a measure is split across segments (share/breakdown); use pie_chart, donut_chart, or bar_chart
 4. KPI         — a single high-level business aggregate (total, average, max); use metric_card
 5. ANOMALY     — identify outliers, concentration risk, or underperformers; use bar_chart or table
@@ -75,25 +75,29 @@ CATEGORY COVERAGE — include at least one insight from each of these 6 categori
 SCHEMA GROUNDING RULES:
 - Every queryPrompt MUST reference real table and column names from the schema below
 - Prefer queries that always return data: use COUNT(*), SUM, GROUP BY rather than filters that might return 0 rows
+- ABSOLUTELY FORBIDDEN: You must NEVER use any column with "id" or "by" in its name (e.g., account_id, user_id, clinic_id, created_by, updated_by) for grouping or axes. This is a strict requirement. If you group by an ID, the dashboard will crash.
+- ABSOLUTELY FORBIDDEN: You must NEVER use any unique identifier or time column (e.g., license_no, phone, email, ssn, code, website, url, clinic_name, name, time, date) for grouping or categories, because it produces a meaningless chart.
+- MANDATORY: You MUST use meaningful low-cardinality business categories for grouping/axes (e.g., status, type, category, tier, role). DO NOT group by geographical columns (city, prefecture, region) as they often produce cluttered and unhelpful insights.
 - For TREND widgets: use an existing date/timestamp column grouped by MONTH or DAY
 - For RANKING widgets: use a numeric column for sorting (revenue, count, amount, total)
-- For DISTRIBUTION widgets: use a low-cardinality categorical column (status, category, type, region)
+- For DISTRIBUTION widgets: use a low-cardinality categorical column (status, category, type, tier, role)
 - For KPI widgets: produce exactly one number (SUM, COUNT, AVG, MAX of a key metric)
+- When counting records, explicitly alias the count column using the entity name (e.g., "clinic_count" instead of "record_count" or "count") so it is easily understandable for users.
 - queryPrompt must be specific enough that a text-to-SQL engine can generate valid SQL with no ambiguity
 ${dedupBlock}
-OUTPUT FORMAT — return ONLY a JSON array of exactly 6 objects (no markdown, no code fences):
+OUTPUT FORMAT — return ONLY a JSON array of exactly 4 objects (no markdown, no code fences):
 [
   {
     "title": "short business title (max 6 words)",
     "queryPrompt": "precise natural-language question referencing real table/column names",
-    "widgetType": "metric_card|bar_chart|line_chart|area_chart|pie_chart|donut_chart|horizontal_bar|table",
+    "widgetType": "metric_card|bar_chart|line_chart|area_chart|pie_chart|donut_chart|table",
     "category": "trend|ranking|distribution|kpi|anomaly|operational",
     "priority": 1
   },
   ...
 ]`;
 
-    const userContent = `Business intent: "${intent || 'general analytics overview'}"\n\nDatabase schema:\n${schema}\n\nReturn the JSON array of 6 diverse widget recommendations now.`;
+    const userContent = `Business intent: "${intent || 'general analytics overview'}"\n\nDatabase schema:\n${schema}\n\nReturn the JSON array of 4 diverse widget recommendations now.`;
 
     const raw = await this.llm.generateFreeText(systemPrompt, userContent, 1500);
     return this.parseRecommendations(raw) ?? [];

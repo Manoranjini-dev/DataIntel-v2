@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { measureColumns, pickLabelColumn, formatDisplayCell } from '@/lib/chart-format';
+import { measureColumns, pickLabelColumn, formatDisplayCell, humanizeField } from '@/lib/chart-format';
 
 const COLORS = [
   '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
@@ -34,16 +34,20 @@ function isNumeric(rows: Record<string, unknown>[], col: string): boolean {
 const CustomTooltip = ({
   active,
   payload,
+  metricName,
 }: {
   active?: boolean;
   payload?: { name: string; value: number; payload: { _label: string } }[];
+  metricName: string;
 }) => {
   if (!active || !payload?.length) return null;
   const item = payload[0];
   return (
     <div className="rounded-lg border border-zinc-200 bg-white p-2.5 text-xs shadow-md">
       <p className="font-medium text-zinc-800">{item.payload._label}</p>
-      <p className="text-zinc-500 mt-1">{item.value?.toLocaleString()}</p>
+      <p className="text-zinc-500 mt-1">
+        <span className="font-medium text-zinc-600">{metricName}:</span> {item.value?.toLocaleString()}
+      </p>
     </div>
   );
 };
@@ -67,6 +71,16 @@ export function PieChartCard({ execution, title, compact, showLegend = true, don
     return { metricCol, data };
   }, [rows, columns]);
 
+  const legendPayload = useMemo(() => {
+    if (!schema) return [];
+    return schema.data.map((entry, index) => ({
+      id: entry._label,
+      type: 'square' as const,
+      value: entry._label,
+      color: COLORS[index % COLORS.length],
+    }));
+  }, [schema]);
+
   if (!schema) return null;
 
   return (
@@ -86,15 +100,15 @@ export function PieChartCard({ execution, title, compact, showLegend = true, don
               cx="50%"
               cy="45%"
               outerRadius="80%"
-              innerRadius={donut ? '62%' : '45%'}
-              paddingAngle={2}
+              innerRadius={donut ? '62%' : 0}
+              paddingAngle={donut ? 2 : 0}
             >
               {schema.data.map((_entry, index) => (
                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
               ))}
             </Pie>
-            <Tooltip content={<CustomTooltip />} />
-            {showLegend && <Legend wrapperStyle={{ fontSize: 11, color: '#71717a' }} />}
+            <Tooltip content={<CustomTooltip metricName={humanizeField(schema.metricCol)} />} />
+            {showLegend && <Legend payload={legendPayload} wrapperStyle={{ fontSize: 11, color: '#71717a' }} />}
           </PieChart>
         </ResponsiveContainer>
       </div>

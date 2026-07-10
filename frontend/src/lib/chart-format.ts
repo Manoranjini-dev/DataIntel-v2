@@ -19,6 +19,7 @@ const ACRONYMS = new Set([
  *   total_travel_insurance_coverage → "Total Travel Insurance Coverage"
  *   orders.created_at               → "Created At"
  *   customerCity                    → "Customer City"
+ * 
  *   COUNT(*)                        → "Count"
  */
 export function humanizeField(name?: string | null): string {
