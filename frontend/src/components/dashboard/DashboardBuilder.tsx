@@ -1056,225 +1056,7 @@ function WidgetSidebar({ onCardClick, onTemplateClick }: {
   );
 }
 
-// ── Add Widget Dialog ──────────────────────────────────────────
-function AddWidgetDialog({ dashId, pageId, chatId, connectionId, onChatCreated, onConnectionChange, onAdd, onClose, defaultHint, defaultPosition, isGeneral, availableConnections, availablePages }: {
-  dashId: string; pageId: string; chatId?: string; connectionId?: string;
-  onChatCreated?: (id: string) => void;
-  onConnectionChange?: (id: string) => void;
-  onAdd: (widget: Record<string, unknown>) => void; onClose: () => void;
-  defaultHint?: string; defaultPosition?: { x: number; y: number; w: number; h: number };
-  isGeneral?: boolean;
-  availableConnections?: any[];
-  availablePages?: { id: string; name: string }[];
-}) {
-  const [prompt, setPrompt] = useState('');
-  const [title, setTitle] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
-  // For cards mode: user picks connection + destination page inside this dialog.
-  const [localConnectionId, setLocalConnectionId] = useState(connectionId || '');
-  const [localPageId, setLocalPageId] = useState(pageId);
 
-  const effectiveConnectionId = localConnectionId || connectionId;
-  const hasConnection = !!(chatId || effectiveConnectionId);
-
-  function handleConnectionSelect(id: string) {
-    setLocalConnectionId(id);
-    onConnectionChange?.(id);
-  }
-
-  async function handleGenerate() {
-    if (!prompt.trim()) return;
-    setLoading(true);
-    try {
-      let activeChatId = chatId;
-      if (!activeChatId && effectiveConnectionId) {
-        const { chat } = await chatApi.create({ connectionId: effectiveConnectionId });
-        activeChatId = chat.id;
-        onChatCreated?.(chat.id);
-      }
-      if (!activeChatId) return;
-      const p = defaultHint
-        ? `${prompt} (format for a ${defaultHint.replace(/_/g, ' ')}. Use human-readable names instead of IDs for categories/labels where possible)`
-        : `${prompt} (Use human-readable names instead of IDs for categories/labels where possible)`;
-      const data = await chatApi.ask(activeChatId, p, true);
-      setPreview(data as Record<string, unknown>);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }
-
-  async function handleAdd() {
-    if (!isGeneral && !preview) return;
-    setLoading(true);
-    try {
-      const exec = preview ? (preview as any).execution as Record<string, unknown> : null;
-      const llmHint = preview ? ((preview as any).assistantMessage?.ui_hint || exec?.ui_hint) : null;
-      const rawHint = defaultHint || llmHint || 'table';
-      const widgetType = normalizeWidgetType(rawHint as string);
-      // defaultPosition is ALWAYS set before this dialog opens (callers use findNextSlot).
-      // Use it for both the backend and the frontend state so positions are consistent
-      // across add, save, and reload cycles.
-      const posX = defaultPosition?.x ?? 0;
-      const posY = defaultPosition?.y ?? 0;
-      const targetPage = localPageId || pageId;
-      const widget = await dashboardApi.addWidget(dashId, targetPage, {
-        title: title || prompt,
-        widget_type: widgetType,
-        queryPrompt: prompt,
-        sql: String(exec?.generated_query || ''),
-        datasourceScopeType: 'connection',
-        resultRows: (exec?.rows as Record<string, unknown>[]) || [],
-        resultColumns: (exec?.columns as string[]) || [],
-        uiHint: widgetType,
-        gridX: posX, gridY: posY,
-        gridW: WIDGET_W, gridH: WIDGET_H,
-      });
-      onAdd({
-        id: widget.widget.id, title: widget.widget.title, widget_type: widget.widget.widget_type,
-        query_prompt: widget.widget.query_prompt,
-        position_x: posX, position_y: posY,
-        width: WIDGET_W,
-        height: WIDGET_H,
-        result_rows: (exec?.rows as Record<string, unknown>[]) || [],
-        result_columns: exec?.columns as string[] || [],
-        ui_hint: widgetType,
-        // Always true — defaultPosition is pre-computed before the dialog opens,
-        // so handleWidgetAdded should use it directly without calling findNextSlot again.
-        is_dropped: true,
-        _targetPageId: targetPage,
-      });
-      onClose();
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }
-
-  const exec = preview ? (preview as any).execution as Record<string, unknown> : null;
-  const llmSuggestedHint = preview ? ((preview as any).assistantMessage?.ui_hint || exec?.ui_hint as string | undefined) : undefined;
-  const inputCls = 'w-full px-3 py-2.5 bg-muted/50 border border-border rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all';
-  const btnRowCls = `w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-sm text-left transition-all`;
-
-  return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card border border-border rounded-2xl w-full max-w-lg shadow-2xl" onClick={e => e.stopPropagation()} style={{ boxShadow: 'var(--shadow-elevated)' }}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">Add Widget</h2>
-            {defaultHint && <p className="text-xs text-muted-foreground mt-0.5">Type: {defaultHint.replace(/_/g, ' ')}</p>}
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground transition-colors"><X className="w-4 h-4" /></button>
-        </div>
-
-        <div className="p-5 space-y-4">
-          {/* Data source picker — cards mode only, shown when no connection is pre-linked */}
-          {availableConnections && !connectionId && (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data Source</label>
-              {availableConnections.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-1">No data sources connected. Add one from Settings → Connections.</p>
-              ) : (
-                <select
-                  value={localConnectionId}
-                  onChange={e => handleConnectionSelect(e.target.value)}
-                  className="w-full px-3 py-2.5 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all text-foreground"
-                >
-                  <option value="" disabled>Select a data source…</option>
-                  {availableConnections.map((c: any) => (
-                    <option key={c.id} value={c.id}>{c.name} {c.connector_type ? `(${c.connector_type})` : ''}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-          )}
-
-          {/* Destination page picker — cards mode only, shown when multiple pages exist */}
-          {availablePages && availablePages.length > 1 && (
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Destination Page</label>
-              <div className="space-y-1.5">
-                {availablePages.map(p => (
-                  <button key={p.id} onClick={() => setLocalPageId(p.id)}
-                    className={`${btnRowCls} ${localPageId === p.id ? 'border-primary bg-primary/5 text-foreground' : 'border-border hover:border-primary/40 hover:bg-muted/40 text-foreground'}`}>
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${localPageId === p.id ? 'bg-primary' : 'bg-muted-foreground/30'}`} />
-                    <span className="font-medium">{p.name}</span>
-                    {p.id === pageId && <span className="ml-auto text-xs text-muted-foreground">current</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Widget Title</label>
-            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g., Monthly Revenue" className={inputCls} />
-          </div>
-
-          {!isGeneral && (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data Query</label>
-                <textarea value={prompt} onChange={e => setPrompt(e.target.value)}
-                  placeholder="e.g., Show total revenue by month for the last 12 months"
-                  rows={3} className={`${inputCls} resize-none`} />
-              </div>
-
-              {!hasConnection && !availableConnections && (
-                <div className="text-xs text-yellow-600 dark:text-yellow-400 bg-warning/5 border border-warning/20 rounded-xl px-3 py-2">
-                  No linked chat. Connect a data source to this dashboard first.
-                </div>
-              )}
-
-              <button onClick={handleGenerate} disabled={!prompt.trim() || loading || !hasConnection}
-                className="w-full py-2.5 bg-primary/10 border border-primary/20 hover:bg-primary/20 rounded-xl text-sm text-primary disabled:opacity-40 disabled:cursor-not-allowed transition-colors font-semibold">
-                {loading ? <span className="flex items-center justify-center gap-2"><span className="w-3.5 h-3.5 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />Generating…</span> : 'Preview Data'}
-              </button>
-            </>
-          )}
-
-          {exec && (
-            exec.status === 'failed'
-              ? (
-                <div className="bg-destructive/5 border border-destructive/20 rounded-xl p-3">
-                  <p className="text-xs flex items-start gap-2">
-                    <span className="text-destructive shrink-0 mt-0.5">✗</span>
-                    <span className="text-destructive/90">{String(exec.error_message || 'Query failed — schema may not be synced yet')}</span>
-                  </p>
-                </div>
-              )
-              : (
-                <div className="bg-success/5 border border-success/20 rounded-xl p-3 space-y-2">
-                  <p className="text-xs text-muted-foreground flex items-center gap-2">
-                    <span className="text-success">✓</span>
-                    {String(exec.row_count ?? 0)} rows returned
-                    {defaultHint && llmSuggestedHint && normalizeWidgetType(defaultHint) !== normalizeWidgetType(llmSuggestedHint) && (
-                      <span className="ml-2 text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded">
-                        💡 AI suggests: {normalizeWidgetType(llmSuggestedHint).replace(/_/g, ' ')}
-                      </span>
-                    )}
-                  </p>
-                  <div className="overflow-x-auto">
-                    <table className="text-xs w-full">
-                      <thead><tr>{(exec.columns as string[] || []).map((c: string) => <th key={c} className="px-2 py-1 text-left text-muted-foreground">{c}</th>)}</tr></thead>
-                      <tbody>{((exec.rows as any[] || []).slice(0, 5)).map((row: any, i: number) => (
-                        <tr key={i}>{(exec.columns as string[]).map((c: string) => <td key={c} className="px-2 py-1 text-foreground truncate max-w-[80px]">{String(row[c] ?? '')}</td>)}</tr>
-                      ))}</tbody>
-                    </table>
-                  </div>
-                </div>
-              )
-          )}
-        </div>
-
-        <div className="flex gap-2 px-5 pb-5">
-          <button onClick={handleAdd} disabled={(!isGeneral && !preview) || loading}
-            className="flex-1 py-2.5 bg-primary text-white hover:opacity-90 rounded-xl text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity">
-            Add to Dashboard
-          </button>
-          <button onClick={onClose} className="px-4 py-2.5 bg-muted/50 hover:bg-muted rounded-xl text-sm text-muted-foreground transition-colors">Cancel</button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── AI Generate Dashboard Dialog ───────────────────────────────
 function GenerateDialog({ chatId, connectionId, onChatCreated, onConnectionChange, onWidgetAdded, dashId, pageId, onClose, availableConnections, availablePages }: {
@@ -3282,11 +3064,8 @@ export function DashboardBuilder({
   const [cardsConnections, setCardsConnections] = useState<any[]>([]);
   const [showDataSourcePicker, setShowDataSourcePicker] = useState(false);
   // The effective connectionId for all chat/query operations in this session.
-  const activeConnectionId = isCardsMode ? cardsConnectionId : (dashboard?.connection_id as string | undefined);
-  const [showAddWidget, setShowAddWidget] = useState(false);
+  const activeConnectionId = isCardsMode ? cardsConnectionId : (dashboard?.connection_id || cardsConnectionId as string | undefined);
   const [showGenerate, setShowGenerate] = useState(false);
-  const [defaultPosition, setDefaultPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [defaultHint, setDefaultHint] = useState('');
   const [refreshingAll, setRefreshingAll] = useState(false);
 
   // Export state — a single in-flight flag prevents duplicate export requests.
@@ -3832,12 +3611,6 @@ export function DashboardBuilder({
       return;
     }
 
-    const tempId = (defaultPosition as any)?.tempId;
-    if (tempId) {
-      setWidgets(ws => ws.map(old => old.id === tempId ? { ...old, ...w, id: w.id, isLoading: false } : old));
-      return;
-    }
-
     if (raw.is_dropped) {
       setWidgets(ws => [...ws, w]);
     } else {
@@ -4051,44 +3824,45 @@ Based on the above data context, suggest a highly relevant dashboard card title.
     } catch (e) { console.error(e); }
   }
 
-  function handleTemplateClick(type: string) {
+  function createEmptyWidgetAndEdit(type: string = 'bar_chart', customSlot?: { x: number; y: number }) {
     if (!activePage) return;
-    const slot = findNextSlot(widgets);
+    const slot = customSlot || findNextSlot(widgets);
     if (type === 'text' || type === 'image') {
       addStaticWidget(type, slot);
       return;
     }
 
-    if (isCardsMode) {
-      const newWidgetId = 'temp-' + Date.now();
-      const template = WIDGET_TEMPLATES.find(t => t.type === type);
-      setWidgets(prev => [...prev, {
-        id: newWidgetId, title: template?.name || type, widget_type: type,
-        query_prompt: '', position_x: slot.x, position_y: slot.y,
-        width: WIDGET_W, height: WIDGET_H, isLoading: true,
-      }]);
-      dashboardApi.addWidget(dashId, activePage, {
-        title: template?.name || type, widget_type: type,
-        gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
-        datasourceScopeType: 'connection',
-        sql: '', queryPrompt: '', resultRows: [], resultColumns: [], uiHint: type,
-      }).then(res => {
-        setWidgets(ws => ws.map(w => w.id === newWidgetId ? { ...w, id: String(res.widget.id), isLoading: false } : w));
-        openEditQuery(String(res.widget.id));
-      }).catch(e => console.error(e));
-      return;
-    }
+    const newWidgetId = 'temp-' + Date.now();
+    const template = WIDGET_TEMPLATES.find(t => t.type === type);
+    const title = template?.name || (type ? type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'Bar Chart');
 
-    setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
-    setDefaultHint(type);
-    setShowAddWidget(true);
+    setWidgets(prev => [...prev, {
+      id: newWidgetId, title, widget_type: type,
+      query_prompt: '', position_x: slot.x, position_y: slot.y,
+      width: WIDGET_W, height: WIDGET_H, isLoading: true,
+    }]);
+
+    dashboardApi.addWidget(dashId, activePage, {
+      title, widget_type: type,
+      gridX: slot.x, gridY: slot.y, gridW: WIDGET_W, gridH: WIDGET_H,
+      datasourceScopeType: 'connection',
+      sql: '', queryPrompt: '', resultRows: [], resultColumns: [], uiHint: type,
+    }).then(res => {
+      setWidgets(ws => ws.map(w => w.id === newWidgetId ? { ...w, id: String(res.widget.id), isLoading: false } : w));
+      openEditQuery(String(res.widget.id));
+    }).catch(e => {
+      console.error(e);
+      setWidgets(ws => ws.filter(w => w.id !== newWidgetId));
+    });
+  }
+
+  function handleTemplateClick(type: string) {
+    createEmptyWidgetAndEdit(type);
   }
 
   function handleCellClick(x: number, y: number) {
     if (!activePage || !isEditing) return;
-    setDefaultPosition({ x, y, w: WIDGET_W, h: WIDGET_H });
-    setDefaultHint('');
-    setShowAddWidget(true);
+    createEmptyWidgetAndEdit('bar_chart', { x, y });
   }
 
   function openEditQuery(widgetId: string) {
@@ -4302,6 +4076,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           });
 
           setWidgets(ws => ws.map(w => w.id === newWidgetId ? { ...w, id: String(res.widget.id), isLoading: false } : w));
+          openEditQuery(String(res.widget.id));
         } catch (e) { console.error(e); }
 
       } else if (activeData.type === 'card') {
@@ -4701,11 +4476,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
           <div className="bg-primary/8 border-b border-primary/20 px-4 py-2 flex items-center gap-3 shrink-0">
             <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
             <p className="text-xs text-primary/80 font-medium">Edit mode · Drag to reposition · Resize from corners</p>
-            <button onClick={() => {
-                const slot = findNextSlot(widgets);
-                setDefaultPosition({ x: slot.x, y: slot.y, w: WIDGET_W, h: WIDGET_H });
-                setShowAddWidget(true);
-              }}
+            <button onClick={() => createEmptyWidgetAndEdit('bar_chart')}
               className="ml-auto flex items-center gap-1.5 px-3 py-1 bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-xs text-primary font-semibold transition-colors">
               <Plus className="w-3.5 h-3.5" /> Add Widget
             </button>
@@ -4935,26 +4706,6 @@ Based on the above data context, suggest a highly relevant dashboard card title.
         </div>
 
         {/* ── Modals ─────────────────────────────────────────── */}
-        {showAddWidget && activePage && (
-          <AddWidgetDialog
-            dashId={dashId} pageId={activePage}
-            chatId={activeChatId} connectionId={activeConnectionId}
-            onChatCreated={id => { setActiveChatId(id); }}
-            onConnectionChange={id => setCardsConnectionId(id)}
-            defaultHint={defaultHint} defaultPosition={defaultPosition || undefined}
-            isGeneral={isGeneral && !isCardsMode}
-            availableConnections={isCardsMode ? cardsConnections : undefined}
-            availablePages={isCardsMode ? pages.map(p => ({ id: String(p.id), name: String(p.name) })) : undefined}
-            onAdd={handleWidgetAdded} onClose={() => {
-              if ((defaultPosition as any)?.tempId) {
-                const tid = (defaultPosition as any).tempId;
-                setWidgets(ws => ws.filter(w => w.id !== tid));
-              }
-              setShowAddWidget(false); setDefaultHint(''); setDefaultPosition(null);
-            }}
-          />
-        )}
-
         {showGenerate && activePage && (
           <GenerateDialog
             dashId={dashId} pageId={activePage}
@@ -4997,7 +4748,7 @@ Based on the above data context, suggest a highly relevant dashboard card title.
               chatId={activeChatId}
               connectionId={activeConnectionId}
               isGeneral={isGeneral && !isCardsMode}
-              availableConnections={isCardsMode ? cardsConnections : undefined}
+              availableConnections={(!activeConnectionId || isCardsMode) ? cardsConnections : undefined}
               onConnectionChange={id => setCardsConnectionId(id)}
               onUpdate={patch => setWidgets(ws => ws.map(x => x.id === editQueryWidgetId ? { ...x, ...patch } : x))}
               onClose={() => setEditQueryWidgetId(null)}
