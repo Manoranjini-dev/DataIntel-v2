@@ -14,7 +14,7 @@ import {
 import type { QueryExecutionResult } from '@/lib/types';
 import {
   xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE,
-  humanizeField, measureColumns, pickLabelColumn, isIdentifierColumn,
+  humanizeField, measureColumns, pickLabelColumn, isIdentifierColumn, formatDisplayCell,
 } from '@/lib/chart-format';
 
 /** Prefix for identifier values carried on each data point for the tooltip only (never plotted). */
@@ -141,7 +141,7 @@ export function BarChartCard({ execution, title, compact, stacked, showLegend = 
       (c) => isIdentifierColumn(c) && !chosen.includes(c) && c !== labelCol,
     );
     const data = rows.map((row) => {
-      const point: Record<string, unknown> = { _label: String(row[labelCol] ?? '') };
+      const point: Record<string, unknown> = { _label: formatDisplayCell(row[labelCol]) };
       chosen.forEach((c) => { point[c] = Number(row[c]); });
       metaCols.forEach((c) => { point[`${META_PREFIX}${c}`] = row[c]; });
       return point;

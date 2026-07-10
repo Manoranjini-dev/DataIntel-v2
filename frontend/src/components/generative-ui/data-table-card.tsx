@@ -10,14 +10,16 @@ interface DataTableCardProps {
   compact?: boolean;
 }
 
+import { formatDisplayCell } from '@/lib/utils';
+
 const PAGE_SIZE = 25;
 const MAX_ROWS = 500;
 
 function formatCell(val: unknown): string {
   if (val === null || val === undefined) return '—';
-  if (typeof val === 'object') return JSON.stringify(val);
   if (typeof val === 'number' && isFinite(val)) return val.toLocaleString();
-  return String(val);
+  const str = formatDisplayCell(val);
+  return str || '—';
 }
 
 export function DataTableCard({ execution, title, compact }: DataTableCardProps) {

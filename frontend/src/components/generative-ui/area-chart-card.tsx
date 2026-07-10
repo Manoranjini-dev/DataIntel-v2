@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn } from '@/lib/chart-format';
+import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn, formatDisplayCell } from '@/lib/chart-format';
 
 const COLORS = [
   { stroke: '#6366f1', fill: '#6366f130' },
@@ -100,7 +100,7 @@ export function AreaChartCard({ execution, title, compact, stacked, showLegend =
     const chosen = numericCols.slice(0, 4);
     const labelCol = pickLabelColumn(columns, chosen);
     const data = rows.slice(0, 100).map((row) => {
-      const point: Record<string, unknown> = { _label: truncate(String(row[labelCol] ?? ''), 40) };
+      const point: Record<string, unknown> = { _label: truncate(formatDisplayCell(row[labelCol]), 40) };
       chosen.forEach((c) => { point[c] = Number(row[c]); });
       return point;
     });

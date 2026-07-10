@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, yAxisLabelRight, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn } from '@/lib/chart-format';
+import { xAxisLabel, yAxisLabel, yAxisLabelRight, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn, formatDisplayCell } from '@/lib/chart-format';
 
 const BAR_COLOR = '#6366f1';
 const LINE_COLOR = '#f59e0b';
@@ -78,7 +78,7 @@ export function ComboChartCard({ execution, title, compact, showLegend = true }:
     const [barCol, lineCol] = numericCols;
     const labelCol = pickLabelColumn(columns, [barCol, lineCol]);
     const data = rows.map((row) => ({
-      _label: truncate(String(row[labelCol] ?? '')),
+      _label: truncate(formatDisplayCell(row[labelCol])),
       [barCol]: Number(row[barCol]),
       [lineCol]: Number(row[lineCol]),
     }));

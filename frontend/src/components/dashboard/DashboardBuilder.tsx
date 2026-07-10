@@ -42,6 +42,34 @@ import {
 } from '@/lib/filters';
 import { FilterBuilder } from './FilterBuilder';
 import { useUIStore } from '@/lib/ui-store';
+import { formatDisplayCell, cleanDateString } from '@/lib/utils';
+
+function cleanRows(rows?: Record<string, unknown>[]): Record<string, unknown>[] {
+  if (!rows || !Array.isArray(rows)) return rows || [];
+  return rows.map((row) => {
+    if (!row || typeof row !== 'object') return row;
+    const clean: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(row)) {
+      if (val instanceof Date) {
+        const iso = val.toISOString();
+        clean[key] = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(iso) ? iso.slice(0, 10) : iso.replace('T', ' ').replace(/\.\d+Z$/, '');
+      } else if (typeof val === 'string') {
+        if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+          if (val.includes('T00:00:00') || val.includes('T18:30:00') || /date|day|month|year|created|updated|time/i.test(key) || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+            clean[key] = val.slice(0, 10);
+          } else {
+            clean[key] = val.replace('T', ' ').replace(/\.\d+Z?$/, '');
+          }
+        } else {
+          clean[key] = val;
+        }
+      } else {
+        clean[key] = val;
+      }
+    }
+    return clean;
+  });
+}
 
 // ── Grid geometry — MUST stay in sync with the ResponsiveGridLayout props
 // below (cols=12, rowHeight=80, margin=[12,12], containerPadding=[0,0]).
@@ -268,7 +296,7 @@ function BarWidget({ title, rows, columns }: { title: string; rows: Record<strin
           const val = Number(row[valueCol]) || 0;
           return (
             <div key={i} className="flex items-center gap-2">
-              <span className="text-[11px] text-muted-foreground w-20 truncate shrink-0">{String(row[labelCol] ?? '')}</span>
+              <span className="text-[11px] text-muted-foreground w-20 truncate shrink-0">{formatDisplayCell(row[labelCol])}</span>
               <div className="flex-1 bg-muted/40 rounded-full h-3.5 overflow-hidden">
                 <div className="h-full rounded-full" style={{ width: `${(val / maxVal) * 100}%`, background: CHART_COLORS[i % CHART_COLORS.length] + '99' }} />
               </div>
@@ -319,7 +347,7 @@ function PieWidget({ title, rows, columns }: { title: string; rows: Record<strin
     const toRad = (deg: number) => (deg - 90) * Math.PI / 180;
     const x1 = 50 + 44 * Math.cos(toRad(s)), y1 = 50 + 44 * Math.sin(toRad(s));
     const x2 = 50 + 44 * Math.cos(toRad(e)), y2 = 50 + 44 * Math.sin(toRad(e));
-    return { path: `M50,50 L${x1},${y1} A44,44 0 ${e - s > 180 ? 1 : 0},1 ${x2},${y2} Z`, color: CHART_COLORS[i % CHART_COLORS.length], label: String(row[columns[0]] ?? ''), pct: Math.round((val / total) * 100) };
+    return { path: `M50,50 L${x1},${y1} A44,44 0 ${e - s > 180 ? 1 : 0},1 ${x2},${y2} Z`, color: CHART_COLORS[i % CHART_COLORS.length], label: formatDisplayCell(row[columns[0]]), pct: Math.round((val / total) * 100) };
   });
   return (
     <div className="h-full flex items-center gap-4 px-3 py-2.5">
@@ -345,9 +373,9 @@ function MetricWidget({ title, rows, columns }: { title: string; rows: Record<st
     <div className="h-full flex flex-col justify-center items-center p-4 text-center">
       <p className="text-xs text-muted-foreground mb-2 leading-tight">{title}</p>
       <p className="text-4xl font-bold text-foreground tracking-tight leading-none">
-        {typeof value === 'number' ? value.toLocaleString() : String(value ?? '—')}
+        {typeof value === 'number' ? value.toLocaleString() : formatDisplayCell(value)}
       </p>
-      {columns[1] && <p className="text-xs text-muted-foreground mt-2">{String(row[columns[1]] ?? '')}</p>}
+      {columns[1] && <p className="text-xs text-muted-foreground mt-2">{formatDisplayCell(row[columns[1]])}</p>}
     </div>
   );
 }
@@ -364,7 +392,7 @@ function TableWidget({ title, rows, columns }: { title: string; rows: Record<str
           <tbody>
             {rows.slice(0, 50).map((row, i) => (
               <tr key={i} className="border-t border-border/50 hover:bg-muted/20 transition-colors">
-                {columns.map(c => <td key={c} className="px-3 py-2 text-foreground whitespace-nowrap max-w-[120px] truncate">{String(row[c] ?? '')}</td>)}
+                {columns.map(c => <td key={c} className="px-3 py-2 text-foreground whitespace-nowrap max-w-[120px] truncate">{formatDisplayCell(row[c])}</td>)}
               </tr>
             ))}
           </tbody>
@@ -409,7 +437,7 @@ function FunnelWidget({ title, rows, columns }: { title: string; rows: Record<st
         const pct = (val / top) * 100;
         return (
           <div key={i} className="flex items-center gap-2">
-            <span className="text-[10px] text-muted-foreground w-20 truncate shrink-0">{String(row[columns[0]] ?? '')}</span>
+            <span className="text-[10px] text-muted-foreground w-20 truncate shrink-0">{formatDisplayCell(row[columns[0]])}</span>
             <div className="flex-1 flex justify-center">
               <div className="h-5 rounded-sm" style={{ width: `${pct}%`, background: CHART_COLORS[i % CHART_COLORS.length] + 'CC', minWidth: 2 }} />
             </div>
@@ -452,7 +480,7 @@ function WaterfallWidget({ title, rows, columns }: { title: string; rows: Record
   const bars = rows.slice(0, 8).map((row, i) => {
     const val = Number(row[columns[1]]) || 0;
     const base = running; running += val;
-    return { label: String(row[columns[0]] ?? ''), val, base, pos: val >= 0 };
+    return { label: formatDisplayCell(row[columns[0]]), val, base, pos: val >= 0 };
   });
   const minV = Math.min(0, ...bars.map(b => b.base)), maxV = Math.max(...bars.map(b => b.base + b.val));
   const H = 70, W = 260;
@@ -521,7 +549,7 @@ function Widget({
     if (renaming) inputRef.current?.focus();
   }, [renaming]);
 
-  const rawRows = widget.result_rows || [];
+  const rawRows = cleanRows(widget.result_rows || []);
   const rawColumns = widget.result_columns || [];
   // Merge dashboard-global filters (scoped to this widget's columns) with the
   // widget's own filters, so both cascade through the same deterministic
@@ -822,7 +850,7 @@ function WidgetFocusOverlay({ widget, onClose, globalFilters }: { widget: Widget
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const rawRows = widget.result_rows || [];
+  const rawRows = cleanRows(widget.result_rows || []);
   const rawColumns = widget.result_columns || [];
   const scoped = scopeFilterSetToColumns(globalFilters, rawColumns);
   const effectiveConfig = scoped.conditions.length
@@ -1433,7 +1461,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
   // Prefer the freshest preview's columns/rows; fall back to the widget's
   // last-saved result so the section is usable without re-running anything.
   const availableColumns = preview?.columns?.length ? preview.columns : (widget.result_columns || []);
-  const sampleRows = preview?.fullRows?.length ? preview.fullRows : (widget.result_rows || []);
+  const sampleRows = cleanRows(preview?.fullRows?.length ? preview.fullRows : (widget.result_rows || []));
   const yAxisIsNumeric = !yAxis || isNumericColumn(sampleRows, yAxis);
 
   async function handleSaveVisualization() {
@@ -1539,7 +1567,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
         setSql(exec.generated_query); // always update SQL pane so user can see it
       }
 
-      const rows: Record<string, unknown>[] = exec?.rows || [];
+      const rows: Record<string, unknown>[] = cleanRows(exec?.rows || []);
       const llmHint: string = (result as any).assistantMessage?.ui_hint || exec?.ui_hint;
 
       if (exec?.status === 'failed') {
@@ -1667,10 +1695,11 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
     setRunning(true); setError(''); setPreview(null); setTablePickerOpen(false);
     try {
       const res = await connectionApi.previewTable(effectiveConnectionId, table, schema);
+      const cleanedRows = cleanRows(res.rows || []);
       setSql(res.sourceSql);
       setSourceType('table');
       setLastRanVia('sql');
-      setPreview({ rows: res.rows.slice(0, 10), fullRows: res.rows, columns: res.columns, ui_hint: widget.widget_type });
+      setPreview({ rows: cleanedRows.slice(0, 10), fullRows: cleanedRows, columns: res.columns, ui_hint: widget.widget_type });
     } catch (e: any) {
       setError(formatQueryError(e?.message));
     } finally {
@@ -1686,7 +1715,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
       if (!cid) { setError('No connection available to run this query.'); return; }
       const result = await chatApi.executeDraft(cid, '', sql);
       const exec = result.execution ?? result;
-      const rows: Record<string, unknown>[] = exec?.rows || [];
+      const rows: Record<string, unknown>[] = cleanRows(exec?.rows || []);
       
       if (exec?.status === 'failed') {
         setError(formatQueryError(exec.error_message));
@@ -1968,7 +1997,7 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
                       <tr key={i} className="border-t border-border/40">
                         {preview.columns.map(c => (
                           <td key={c} className="px-2 py-1 text-foreground truncate max-w-[120px]">
-                            {String(row[c] ?? '')}
+                            {formatDisplayCell(row[c])}
                           </td>
                         ))}
                       </tr>
@@ -3063,8 +3092,8 @@ export function DashboardBuilder({
   const [cardsConnectionId, setCardsConnectionId] = useState<string | undefined>();
   const [cardsConnections, setCardsConnections] = useState<any[]>([]);
   const [showDataSourcePicker, setShowDataSourcePicker] = useState(false);
-  // The effective connectionId for all chat/query operations in this session.
-  const activeConnectionId = isCardsMode ? cardsConnectionId : (dashboard?.connection_id || cardsConnectionId as string | undefined);
+  const rawActiveConn = isCardsMode ? cardsConnectionId : (dashboard?.connection_id || cardsConnectionId);
+  const activeConnectionId: string | undefined = rawActiveConn != null ? String(rawActiveConn) : undefined;
   const [showGenerate, setShowGenerate] = useState(false);
   const [refreshingAll, setRefreshingAll] = useState(false);
 

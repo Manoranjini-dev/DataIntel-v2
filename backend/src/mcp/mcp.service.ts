@@ -223,13 +223,41 @@ export class MCPService implements OnModuleDestroy {
     const sqlString = typeof sql === 'string' ? sql : JSON.stringify(sql);
     this.logger.log(`Executing query via MCP [session=${sessionId}]: ${sqlString.substring(0, 100)}...`);
 
+    const cleanRows = (rows?: Record<string, unknown>[]): Record<string, unknown>[] => {
+      if (!rows || !Array.isArray(rows)) return rows || [];
+      return rows.map((row) => {
+        if (!row || typeof row !== 'object') return row;
+        const clean: Record<string, unknown> = {};
+        for (const [key, val] of Object.entries(row)) {
+          if (val instanceof Date) {
+            const iso = val.toISOString();
+            clean[key] = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(iso) ? iso.slice(0, 10) : iso.replace('T', ' ').replace(/\.\d+Z$/, '');
+          } else if (typeof val === 'string') {
+            if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+              if (val.includes('T00:00:00') || val.includes('T18:30:00') || /date|day|month|year|created|updated|time/i.test(key) || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?$/.test(val)) {
+                clean[key] = val.slice(0, 10);
+              } else {
+                clean[key] = val.replace('T', ' ').replace(/\.\d+Z?$/, '');
+              }
+            } else {
+              clean[key] = val;
+            }
+          } else {
+            clean[key] = val;
+          }
+        }
+        return clean;
+      });
+    };
+
     // Toolbox hot path: route eligible connectors through the sidecar, falling
     // back to the native connector on ANY error so an outage never breaks queries.
     if (await this.useToolbox(session.connectorType)) {
       try {
         const sourceKey = sourceKeyFor(connectionParams);
         const data = await this.toolboxClient.invokeExecuteSql(sourceKey, sqlString);
-        return { success: true, data, executionTimeMs: data.executionTimeMs };
+        if (data && data.rows) data.rows = cleanRows(data.rows);
+        return { success: true, data, executionTimeMs: data?.executionTimeMs || 0 };
       } catch (err: any) {
         this.logger.warn(
           `Toolbox path failed for ${session.connectorType} (falling back to native): ${err?.message}`,
@@ -239,7 +267,14 @@ export class MCPService implements OnModuleDestroy {
     }
 
     const connector = this.getConnector(session.connectorType);
-    return connector.executeReadQuery(connectionParams, sqlString, this.executionTimeout);
+    const result = await connector.executeReadQuery(connectionParams, sqlString, this.executionTimeout);
+    if (result && result.data && result.data.rows) {
+      result.data.rows = cleanRows(result.data.rows);
+    } else if (result && (result as any).rows) {
+      (result as any).rows = cleanRows((result as any).rows);
+      if (!result.data) result.data = (result as any);
+    }
+    return result;
   }
 
   /**

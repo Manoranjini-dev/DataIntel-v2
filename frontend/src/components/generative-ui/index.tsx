@@ -183,9 +183,19 @@ function resolveComponent(
       case 'treemap':
         return 'data_table';
     }
+    // The hint was provided and matched a case above but fell through the
+    // validation (e.g. not enough rows). Do NOT let auto-detect override an
+    // explicitly chosen chart type — fall back to bar_chart or table instead.
+    // Charts that are always valid regardless of shape:
+    if (hint === 'donut_chart' || hint === 'pie_chart') {
+      // Even with 1 row and 1 numeric col, show as pie/donut rather than override
+      if (hasNumeric && columns.length >= 2) return hint;
+      return 'data_table';
+    }
+    if (hint === 'matrix') return columns.length >= 2 ? 'matrix' : 'data_table';
   }
 
-  // Auto-detect from data shape
+  // Auto-detect from data shape (only runs when NO hint was provided or hint had no matching case)
   if (isSingleRow && numericCols.length === 1 && columns.length <= 2) {
     return 'metric_card';
   }
@@ -199,13 +209,12 @@ function resolveComponent(
     return columns.length <= 2 ? 'list' : 'data_table';
   }
 
-  // ── Time-series auto-detection for ES aggregation results ──
-  // If a column's values look like dates/timestamps, prefer line_chart
+  // ── Time-series auto-detection ──
+  // Only applies when no explicit hint was given. If the user chose donut/pie/bar etc,
+  // we never reach here (the hint switch already returned).
   if (hasNumeric && rows.length >= 3 && columns.length >= 2) {
     const hasDateCol = columns.some((c) => {
-      // Check column name patterns
       if (/date|time|created|updated|_at$|year|month|day|period|week|daily|monthly|weekly|quarterly|histogram/i.test(c)) return true;
-      // Check value patterns (ISO dates, YYYY-MM-DD)
       const v = rows[0]?.[c];
       if (typeof v === 'string' && /^\d{4}[-/]\d{2}/.test(v)) return true;
       return false;

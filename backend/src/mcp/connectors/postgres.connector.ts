@@ -2,7 +2,12 @@
 // PostgreSQL MCP Connector — Read-Only PG Access
 // ──────────────────────────────────────────────
 
-import { Client } from 'pg';
+import pg from 'pg';
+import type { Client as PgClient } from 'pg';
+
+// Return DATE (OID 1082) as a plain string YYYY-MM-DD instead of JS Date (which shifts to UTC timestamp)
+pg.types.setTypeParser(1082, (str: string) => str);
+
 import {
   ConnectionParams,
   ConnectorCapabilities,
@@ -187,7 +192,7 @@ export class PostgresConnector extends BaseMCPConnector {
 
         await client.query('COMMIT');
 
-        const columns = result.fields.map((f) => f.name);
+        const columns = result.fields.map((f: pg.QueryResultBase['fields'][number]) => f.name);
         return {
           rows: result.rows as Record<string, unknown>[],
           columns,
@@ -214,7 +219,7 @@ export class PostgresConnector extends BaseMCPConnector {
    * Each retry uses a FRESH client (a pg Client cannot be re-connected after a
    * failed connect). See BaseMCPConnector.connectWithRetry.
    */
-  private async connectClient(params: ConnectionParams): Promise<Client> {
+  private async connectClient(params: ConnectionParams): Promise<PgClient> {
     return this.connectWithRetry(async () => {
       const client = this.createClient(params);
       try {
@@ -227,7 +232,7 @@ export class PostgresConnector extends BaseMCPConnector {
     }, `Postgres connect ${params.host}:${params.port}`);
   }
 
-  private createClient(params: ConnectionParams): Client {
+  private createClient(params: ConnectionParams): PgClient {
     // Cold connects to managed Postgres can exceed 10s; make it configurable.
     const connectionTimeoutMillis = Number(process.env.MCP_CONNECT_TIMEOUT_MS) || 12000;
     const config: any = {
@@ -241,19 +246,19 @@ export class PostgresConnector extends BaseMCPConnector {
     if (params.ssl) {
       config.ssl = { rejectUnauthorized: false };
     }
-    return new Client(config);
+    return new pg.Client(config);
   }
 
-  private async getTables(client: Client): Promise<string[]> {
+  private async getTables(client: PgClient): Promise<string[]> {
     const result = await client.query(
       `SELECT table_name FROM information_schema.tables 
        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
        ORDER BY table_name`,
     );
-    return result.rows.map((r) => r.table_name as string);
+    return result.rows.map((r: Record<string, unknown>) => r.table_name as string);
   }
 
-  private async getColumns(client: Client, table: string): Promise<TableColumn[]> {
+  private async getColumns(client: PgClient, table: string): Promise<TableColumn[]> {
     const result = await client.query(
       `SELECT 
         c.column_name, c.data_type, c.is_nullable, c.column_default,
@@ -270,7 +275,7 @@ export class PostgresConnector extends BaseMCPConnector {
       [table],
     );
 
-    return result.rows.map((r) => ({
+    return result.rows.map((r: Record<string, unknown>) => ({
       name: r.column_name as string,
       type: r.data_type as string,
       nullable: r.is_nullable === 'YES',
@@ -279,7 +284,7 @@ export class PostgresConnector extends BaseMCPConnector {
     }));
   }
 
-  private async getForeignKeys(client: Client, table: string): Promise<ForeignKey[]> {
+  private async getForeignKeys(client: PgClient, table: string): Promise<ForeignKey[]> {
     const result = await client.query(
       `SELECT 
         kcu.column_name,
@@ -295,7 +300,7 @@ export class PostgresConnector extends BaseMCPConnector {
       [table],
     );
 
-    return result.rows.map((r) => ({
+    return result.rows.map((r: Record<string, unknown>) => ({
       columnName: r.column_name as string,
       referencedTable: r.referenced_table as string,
       referencedColumn: r.referenced_column as string,
@@ -303,7 +308,7 @@ export class PostgresConnector extends BaseMCPConnector {
     }));
   }
 
-  private async getIndexes(client: Client, table: string): Promise<TableIndex[]> {
+  private async getIndexes(client: PgClient, table: string): Promise<TableIndex[]> {
     const result = await client.query(
       `SELECT 
         i.relname as index_name,

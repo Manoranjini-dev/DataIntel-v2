@@ -158,3 +158,6 @@ export function yAxisLabelRight(text?: string | null) {
 export const X_TITLE_SPACE = 20;
 /** Extra horizontal space (px) a rotated Y-axis title needs beside the ticks. */
 export const Y_TITLE_SPACE = 18;
+
+export { cleanDateString, formatDisplayCell } from './utils';
+

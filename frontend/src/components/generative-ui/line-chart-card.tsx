@@ -12,7 +12,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import type { QueryExecutionResult } from '@/lib/types';
-import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn } from '@/lib/chart-format';
+import { xAxisLabel, yAxisLabel, X_TITLE_SPACE, Y_TITLE_SPACE, measureColumns, pickLabelColumn, formatDisplayCell } from '@/lib/chart-format';
 
 const COLORS = [
   '#6366f1', '#22d3ee', '#f59e0b', '#10b981',
@@ -106,7 +106,7 @@ export function LineChartCard({ execution, title, compact, showLegend = true }: 
     const labelCol = dateCols[0] || pickLabelColumn(columns, chosen);
 
     const data = rows.slice(0, 100).map((row) => {
-      const point: Record<string, unknown> = { _label: truncate(String(row[labelCol] ?? ''), 40) }; // do not heavily truncate for CustomTick
+      const point: Record<string, unknown> = { _label: truncate(formatDisplayCell(row[labelCol]), 40) }; // do not heavily truncate for CustomTick
       chosen.forEach((c) => { point[c] = Number(row[c]); });
       return point;
     });
