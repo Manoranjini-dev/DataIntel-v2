@@ -1192,12 +1192,17 @@ export class DashboardBuilderService {
   }
 
   async inspectWidget(widgetId: string, requester: SafeAccount) {
-    const widgetRow = await this.db.queryOne<{ page_id: string }>(
-      `SELECT page_id FROM dashboard_widgets_v2 WHERE id = $1`,
+    const widgetRow = await this.db.queryOne<{ page_id: string; updated_at: Date; query_definition: any }>(
+      `SELECT page_id, updated_at, query_definition FROM dashboard_widgets_v2 WHERE id = $1`,
       [widgetId],
     );
     if (!widgetRow) throw new NotFoundException('Widget not found');
     await this.dashboardPermissions.requireWidgetAction(widgetId, requester.id, 'can_view');
+
+    const qd = typeof widgetRow.query_definition === 'string'
+      ? JSON.parse(widgetRow.query_definition)
+      : (widgetRow.query_definition || {});
+    const storedSql = typeof qd.sql === 'string' ? qd.sql.trim() : null;
 
     // Try the most-recent widget_execution → query_execution for the generated SQL
     const execution = await this.db.queryOne(
@@ -1210,24 +1215,18 @@ export class DashboardBuilderService {
       [widgetId],
     );
 
-    // Fallback: read generated_query from the widget's own query_definition JSONB
-    // (stored there by addWidget / updateWidget when the user adds or edits the widget)
-    if (!execution?.generated_query) {
-      const widget = await this.db.queryOne<{ query_definition: any }>(
-        `SELECT query_definition FROM dashboard_widgets_v2 WHERE id = $1`,
-        [widgetId],
-      );
-      const qd = typeof widget?.query_definition === 'string'
-        ? JSON.parse(widget.query_definition)
-        : (widget?.query_definition || {});
-      const fallbackSql = (qd.sql as string | undefined) || null;
-      if (fallbackSql) {
-        return {
-          execution: execution
-            ? { ...execution, generated_query: fallbackSql }
-            : { generated_query: fallbackSql },
-        };
-      }
+    const execSql = execution?.generated_query ? String(execution.generated_query).trim() : null;
+    const execNewer = execution && widgetRow.updated_at && new Date(execution.started_at).getTime() > new Date(widgetRow.updated_at).getTime();
+
+    // Prefer storedSql unless an execution occurred AFTER the widget was last modified AND produced SQL
+    const finalSql = (execNewer && execSql) ? execSql : (storedSql || execSql || null);
+
+    if (finalSql) {
+      return {
+        execution: execution
+          ? { ...execution, generated_query: finalSql }
+          : { generated_query: finalSql },
+      };
     }
 
     return { execution: execution || null };

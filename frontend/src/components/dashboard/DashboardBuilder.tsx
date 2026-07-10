@@ -569,7 +569,7 @@ function Widget({
             className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
             onClick={() => {
               if (isEditing) onSelect?.();
-              if (!isGeneral && (!isEditing || isCardsMode)) onEditQuery?.();
+              if (!isGeneral) onEditQuery?.();
             }}
             title={!isGeneral ? `Click to add ${isText ? 'text' : 'an image'}` : ''}
           >
@@ -605,7 +605,7 @@ function Widget({
         className="h-full flex flex-col p-3 transition-all duration-300 cursor-pointer group-hover/card:bg-muted/10"
         onClick={() => {
           if (isEditing) onSelect?.();
-          if (!isGeneral && (!isEditing || isCardsMode)) onEditQuery?.();
+          if (!isGeneral) onEditQuery?.();
         }}
         title={!isGeneral ? "Click to configure widget data" : ""}
       >
@@ -1920,19 +1920,34 @@ function EditQueryDialog({ widget, dashId, pageId, chatId, connectionId, onUpdat
     if (!preview) return;
     setSaving(true); setError('');
     try {
-      const patch: Partial<WidgetData> = {
-        // Always save the new results
+      const currentQd = typeof widget.query_definition === 'string'
+        ? JSON.parse(widget.query_definition)
+        : (widget.query_definition || {});
+      const effectiveHint = normalizeWidgetType(
+        vizType || preview.llm_suggested_hint || preview.ui_hint || widget.widget_type || 'table'
+      );
+      const updatedQd = {
+        ...currentQd,
+        prompt: lastRanVia === 'prompt' ? prompt : widget.query_prompt,
+        sql: sql,
         result_rows: preview.fullRows,
         result_columns: preview.columns,
-        // Only update prompt when it was the prompt that was run
-        query_prompt: lastRanVia === 'prompt' ? prompt : widget.query_prompt,
-        // Always save the SQL that was actually executed (so inspect finds it next time)
-        sql: sql,
-        // DS-02 — persist the table-source marker so the widget refreshes by
-        // re-running the SQL directly (no LLM). Cleared when a prompt is run.
-        source_type: lastRanVia === 'prompt' ? null : sourceType,
+        ui_hint: effectiveHint,
+        ...(lastRanVia === 'prompt' ? { sourceType: null } : (sourceType ? { sourceType } : {})),
       };
-      // Persist to DB (sql goes into query_definition.sql via updateWidget)
+
+      const patch: Partial<WidgetData> = {
+        result_rows: preview.fullRows,
+        result_columns: preview.columns,
+        query_prompt: lastRanVia === 'prompt' ? prompt : widget.query_prompt,
+        sql: sql,
+        source_type: lastRanVia === 'prompt' ? null : sourceType,
+        widget_type: effectiveHint,
+        ui_hint: effectiveHint,
+        visualization_config: { ...(widget.visualization_config || {}), vizType: effectiveHint },
+        query_definition: updatedQd,
+      };
+
       await dashboardApi.updateWidget(dashId, pageId, widget.id, {
         ...widget,
         ...patch,

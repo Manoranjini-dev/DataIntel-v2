@@ -112,7 +112,7 @@ export class WidgetExecutionService {
       // query_definition.sql and must execute it directly (no LLM). Combo
       // contexts have no single raw-SQL target, so only direct-SQL on a single
       // connection is honored; everything else stays prompt-driven.
-      const directSql = contextType !== 'combo' ? this.resolveWidgetSql(widget) : '';
+      const directSql = contextType !== 'combo' ? this.resolveWidgetSql(widget, forceRefresh) : '';
       if (!queryPrompt && !directSql) {
         // No query to run — the outer catch marks this execution failed.
         throw new Error('Widget has no query to execute — generate one in the widget editor first.');
@@ -556,7 +556,7 @@ ${dedupBlock}`;
    * A widget with a real prompt keeps the prompt→LLM path (prompt wins), so
    * existing prompt-driven widgets are unaffected.
    */
-  private resolveWidgetSql(widget: any): string {
+  private resolveWidgetSql(widget: any, forceRefresh = false): string {
     let qd = widget.query_definition;
     if (typeof qd === 'string') {
       try { qd = JSON.parse(qd); } catch { qd = {}; }
@@ -565,7 +565,7 @@ ${dedupBlock}`;
     const sql = typeof qd.sql === 'string' ? qd.sql.trim() : '';
     if (!sql) return '';
     const prompt = typeof qd.prompt === 'string' ? qd.prompt.trim() : '';
-    const isDirect = qd.sourceType === 'table' || qd.mode === 'sql' || !prompt;
+    const isDirect = qd.sourceType === 'table' || qd.mode === 'sql' || !prompt || !forceRefresh;
     return isDirect ? sql : '';
   }
 
